@@ -1,8 +1,8 @@
-# Change log — Fix: floating battlements (stepped-roof column support + grounded filter)
+# Change log — Symmetric window bays + lab camera refit
 
-## 1. Title of this bugfix
+## 1. Title of this milestone
 
-**Medieval tower crenellations:** remove **floating merlons** and **unsupported parapets** on **stepped** roofs by tying battlements to **per-column roof tops**, and make **`filterGrounded`** only treat **surviving** lower voxels as support (bottom-up pass).
+**Medieval tower window rhythm fix** (deterministic façade bay selection) and **VoxelViewer orbit/zoom** tuned to structure bounds for the internal **`/visualizer`** lab.
 
 ---
 
@@ -10,74 +10,96 @@
 
 | File | Change |
 |------|--------|
-| `src/lib/generation/generators/generateMedievalTower.ts` | Added **`colRoofTop`** map (`colKey(lx,lz) → max roof Y`) updated with every roof voxel; **parapet** only where that column has roof; **parapet keys** tracked; **merlons** only where a parapet was emitted at `(lx, yParapet, lz)`; replaced **`filterGrounded`** with a **bottom-up** pass (sort by `y`, then require `(x,y−1,z)` to be in the **grounded** set); removed temporary **`globalThis`** debug assignments. |
+| `src/lib/generation/generators/generateMedievalTower.ts` | Removed **`y`**-dependent hash modulo; added **symmetric along-slot** selection, **`buildWindowColumnKeySet`**, and **`shouldPlaceWindowAt`** wired through **`buildWindowGlassSet`**. |
+| `src/components/voxel/VoxelViewer.tsx` | **`LabOrbitRig`**: bbox from blocks (with **`GROUP_Y_SHIFT`**), dynamic **target / minDistance / maxDistance / polar limits / camera near-far**; **`voxelStructureLayoutKey`** to avoid refitting on unrelated re-renders; **`cameraResetNonce`** prop. |
+| `src/app/visualizer/VisualizerClient.tsx` | **`cameraResetNonce`** state, **Refit camera** button, pass **`cameraResetNonce`** to **`VoxelViewer`**. |
 
 ---
 
-## 3. Root cause of the floating blocks
+## 3. Root cause of the window issue
 
-1. **Uniform parapet height** at `yTopRoof + 1` for every façade cell assumed a roof voxel existed at **`(lx, yTopRoof, lz)`** on the **outer wall**. On a **stepped pyramid**, the **highest** roof voxels are **inset**; many perimeter columns never get roof at the global top `y`, so parapets were **unsupported** and **`filterGrounded` removed them**.
-2. **`filterGrounded`** built `below` from **all** merged voxels **before** removal, so **merlons** could still “see” **parapet keys** at `(x, y−1, z)` even when those parapets were **dropped** as ungrounded — merlons **survived** and looked **floating** above the last real roof.
-
----
-
-## 4. What fix was implemented
-
-- **`recordRoof(wx, y, wz)`** updates **`roofCells`** (unchanged stepped support) and **`colRoofTop[colKey(wx,wz)] = max(previous, y)`** for every placed roof block.
-- **Parapet:** for each **exterior** `(lx, lz)`, read `topY = colRoofTop.get(colKey(lx,lz))`. If missing, **skip**. Otherwise **`yParapet = topY + 1`** (per-column walk height), emit parapet, record **`parapetKeys.add(lk(lx, yParapet, lz))`**.
-- **Merlon:** same column `topY` / `yParapet`; emit merlon at **`yMerlon = yParapet + 1`** only if **`parapetKeys`** contains that parapet cell and the parity mask passes.
-- **`filterGrounded`:** sort blocks by **`y`** (then `x`, `z`); keep a block iff **`y ≤ 0`** or the cell **directly below** is already in the **kept-grounded** set (no phantom support from voxels that will be removed).
+- **`windowsPlacement: "symmetric"`** only meant “windows on all four sides,” **not** mirror-symmetric bays per façade.
+- **`(lx * 5 + lz * 7 + y * 11) % stride`** mixed **`y`**, so the same **(lx, lz)** column could qualify on one floor and fail on the next → **broken vertical rhythm**.
+- **`floor(slots / count)` + `u % step`** produced **off-center, sparse** columns for **`windowsCountPerSide === 2`** on **wide** façades; **Dark Wizard** looked fine mainly because **`countPerSide: 4`** collapsed **`step`** to **1**, masking the hash.
 
 ---
 
-## 5. Whether `filterGrounded` was changed
+## 4. New window bay-selection logic
 
-**Yes.** Replaced the one-pass `below = Set(all keys)` filter with a **single ascending-`y` pass** that only adds support for voxels that **actually remain** in the output.
+1. **`windowStyleStride(style)`** is the **minimum gap** (in voxel units along the façade) between selected **along** indices.
+2. **`symmetricAlongSlots(lo, hi, requestedCount, minGap)`** tries **`requestedCount` → 1`**: **`tryPlaceSymmetricAlong`** places **center first** (odd counts), then **symmetric pairs** **`(ceil(center−d), floor(center+d))`** when **both** are valid, **each** is at least **`minGap`** from existing picks, and **the pair is separated by at least `minGap`** along the façade.
+3. **`buildWindowColumnKeySet`** builds a **`Set<colKey(lx,lz)>`**:
+   - **`front_only`**: only **front** face (`lz = D − 1`) gets **`slotsX`**.
+   - **`symmetric`**: **front/back** use **`slotsX`**, **left/right** use **`slotsZ`** (square towers: same span logic on each axis).
+4. **`shouldPlaceWindowAt`** requires **`windowColumnKeys.has(colKey(lx,lz))`**, **`windowFloorOk`**, exterior, not corner, placement side rule, and **`!inDoorAperture(lx,lz,y)`** so door columns can still host glass **above** the portal.
+5. **`buildWindowGlassSet`** takes the predicate; **`isWindowColumnSeed`** uses the predicate only (no **`y`** hash).
 
 ---
 
-## 6. Whether schema changed
+## 5. Whether presets changed
+
+**No.** All six **`MEDIEVAL_TOWER_PRESETS`** authoring objects unchanged.
+
+---
+
+## 6. Whether the schema changed
 
 **No.**
 
 ---
 
-## 7. Whether sample blueprint changed
+## 7. Viewer navigation changes
 
-**No.**
-
----
-
-## 8. Final default sample block count
-
-**647** voxels for `SAMPLE_MEDIEVAL_TOWER_BLUEPRINT` after `validateBlueprint` → `generateMedievalTower` (measured with `pnpm dlx tsx` in-repo).  
-*(Count differs from the pre-battlement-bug era ~611 because parapet/merlon placement now follows real roof columns; the stepped cap may omit the outermost top roof ring where the bottom-up filter cannot chain support — see “remaining weaknesses.”)*
+- **Bounding box** of **`structure.blocks`** in the same space as the voxel **`group`** (**`y − GROUP_Y_SHIFT`** with **`GROUP_Y_SHIFT = 1.25`**).
+- **Orbit target** → bbox **center**; **`maxDistance`** scales with **`~6.5 × maxDim`** (clamped **40–320**); **`minDistance`** scales (~**12%** of max dimension, clamped **2.4–14**).
+- **`maxPolarAngle`** → **`π − 0.04`** (allows looking from **below** horizontal); **`minPolarAngle`** → **0.05**.
+- **Camera** repositioned on fit along **`(1, 0.55, 1)`** direction; **`near` / `far`** scale with size.
+- **`cameraResetNonce`**: **`Refit camera`** in **`/visualizer`** reruns the fit (and **`OrbitControls`** defaults are no longer fixed **`maxDistance: 28`** / **`maxPolarAngle: π/2`** from JSX — **`LabOrbitRig`** applies limits after mount).
+- **`voxelStructureLayoutKey`**: refit when **extent / block count** changes, not on every identical parent re-render.
 
 ---
 
-## 9. Visual verification notes for `/visualizer`
+## 8. Validation / generation safety
 
-- **Expected:** No **detached** ring of accent blocks above an empty gap; merlons sit **directly** on parapets, parapets **directly** on the **highest roof voxel in that façade column**.
-- **Crenellations:** Still appear when **`features.crenellations`** is true; pattern may be **slightly shorter** overall (`maxY` was **9** in the automated sample check vs. **12** when merlons were incorrectly kept).
-- **Manual check:** Open **`/visualizer`**, reset to sample, orbit the crown — confirm **no floating battlements**.
+- **Deterministic:** no `Math.random`; bay math is pure integer geometry from **`ResolvedMedievalTower`**.
+- **Validation order** unchanged in **`VisualizerClient`**.
+- **Merge / dedup** unchanged (**`mergePlacements`**).
+- **Battlements / roof** logic untouched (only body-shell window selection and **`buildWindowGlassSet`** call path changed).
+- **Viewer** does not modify **`VoxelBlock[]`**.
 
 ---
 
-## 10. Build / test result
+## 9. Manual QA (recommended)
+
+| Preset | Suggested check |
+|--------|-----------------|
+| **Fortified Gate Tower** | Façade windows **mirror** about center; readable rhythm on **`windowsFloors: all`**. |
+| **Tall Watchtower** | Vertical window **columns** align floor-to-floor on upper bands. |
+| **Gothic Stone Tower** | Same; **arched** style still uses stride **3** for spacing. |
+| **Dark Wizard Tower** | Still dense and readable (**regression reference**). |
+| **Northwatch / Compact Guard** | Still reasonable; **Compact** **front_only** unchanged semantically. |
+| **All stepped + crenellations** | Orbit crown — **no floating** merlon/parapet rings. |
+| **Camera** | Tall preset: **zoom out** sees full height; orbit **below** horizon sees **foundation**; **Refit camera** after messy orbit; **Compact** remains usable. |
+
+Automated **`npx tsx`** spot-check: all six presets **`validateBlueprint` → OK**; block counts **647, 1519, 2055, 1417, 134, 1438** (same totals as before this change for these presets — glass/trim distribution may still differ slightly without changing the aggregate count).
+
+---
+
+## 10. Build result
 
 | Check | Result |
 |-------|--------|
-| `pnpm run build` | **Passed** (Next.js 16.2.6 compile + TypeScript + static generation completed successfully). |
-| Quick integrity script | **0** blocks missing a voxel **directly below** in the final `VoxelBlock[]` (post-filter). |
-| `validateBlueprint(SAMPLE_MEDIEVAL_TOWER_BLUEPRINT)` | **OK** (no errors in the default configuration). |
+| **`pnpm run build`** | **Passed** (Next.js 16.2.6). |
 
 ---
 
-## Remaining weaknesses / follow-ups
+## 11. Remaining weaknesses / follow-up ideas
 
-- **Stepped + half merlons:** the topmost **roof ring** can still lose voxels if the cell below is empty on that column (pre-existing interaction with **sparse merlons** and strict vertical support). A follow-up could **raise merlons to a full belt**, **fill crenel slots**, or **reorder** “top roof cap vs. battlements” if a denser silhouette is required.
-- **`estimateTowerBlocks`** in `validateBlueprint.ts` was **not** updated in this pass; if `maxBlockCount` margins get tight on larger footprints, bump the estimate slightly.
+- **`voxelStructureLayoutKey`** is a **bbox + count** fingerprint — theoretical collisions could skip a refit (very unlikely).
+- **Rectangular `W ≠ D`** footprints (not in schema today) would want **independent** span logic per face if added later.
+- **Validation `notes`** when **`windowsCountPerSide`** is **implicitly reduced** by slot math is not implemented (silent graceful degradation only).
+- Optional: auto-increment **`cameraResetNonce`** on preset select (currently user can use **Refit camera**).
 
 ---
 
-*This file supersedes the prior CHANGE entry for handoff / review.*
+*This file was overwritten for this milestone.*

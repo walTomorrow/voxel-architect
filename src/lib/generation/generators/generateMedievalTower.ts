@@ -168,52 +168,126 @@ function isCorner(lx: number, lz: number, W: number, D: number): boolean {
   );
 }
 
-function shouldPlaceWindow(
-  r: ResolvedMedievalTower,
-  lx: number,
-  lz: number,
-  y: number,
-  W: number,
-  D: number,
-  H: number,
-): boolean {
-  if (r.openings.windowsPlacement === "none") return false;
-  if (r.openings.windowsCountPerSide <= 0) return false;
-  if (!windowFloorOk(y, H, r.openings.windowsFloors)) return false;
-  if (!isExterior(lx, lz, W, D) || isCorner(lx, lz, W, D)) return false;
+/**
+ * Try to place exactly `want` window columns on [lo, hi] inclusive, symmetric about
+ * the edge midpoint, with |p − q| ≥ `minGap` for every pair. Returns [] if impossible.
+ */
+function tryPlaceSymmetricAlong(
+  lo: number,
+  hi: number,
+  want: number,
+  minGap: number,
+): number[] {
+  if (want <= 0 || lo > hi) return [];
+  const center = (lo + hi) / 2;
+  const picked: number[] = [];
+  const ok = (p: number) =>
+    p >= lo &&
+    p <= hi &&
+    picked.every((q) => Math.abs(p - q) >= minGap);
 
-  if (r.openings.windowsPlacement === "front_only" && lz !== D - 1) {
-    return false;
+  if (want % 2 === 1) {
+    const mid = Math.round(center);
+    const midClamped = Math.max(lo, Math.min(hi, mid));
+    if (!ok(midClamped)) return [];
+    picked.push(midClamped);
   }
 
-  const stride = windowStyleStride(r.openings.windowsStyle);
-  if ((lx * 5 + lz * 7 + y * 11) % stride !== 0) return false;
+  let d = 1;
+  while (picked.length < want) {
+    const L = Math.ceil(center - d);
+    const R = Math.floor(center + d);
+    if (L < lo && R > hi) break;
+    if (
+      L < R &&
+      L >= lo &&
+      R <= hi &&
+      ok(L) &&
+      ok(R) &&
+      R - L >= minGap
+    ) {
+      picked.push(L, R);
+      d++;
+      continue;
+    }
+    d++;
+    if (d > hi - lo + 5) break;
+  }
 
-  const span = lz === 0 || lz === D - 1 ? W : D;
-  const along = lz === 0 || lz === D - 1 ? lx : lz;
-  const slots = Math.max(1, span - 2);
-  const step = Math.max(
-    1,
-    Math.floor(slots / Math.max(1, r.openings.windowsCountPerSide)),
-  );
-  const u = along - 1;
-  if (u < 0 || u >= slots) return false;
-  return u % step === 0;
+  picked.sort((a, b) => a - b);
+  return picked.length === want ? picked : [];
+}
+
+/** Symmetric facade slots: degrade count (never asymmetric) until placement fits. */
+function symmetricAlongSlots(
+  lo: number,
+  hi: number,
+  requestedCount: number,
+  minGap: number,
+): number[] {
+  const maxFit = hi - lo + 1;
+  if (maxFit <= 0 || requestedCount <= 0) return [];
+  for (let want = Math.min(requestedCount, maxFit); want >= 1; want--) {
+    const s = tryPlaceSymmetricAlong(lo, hi, want, minGap);
+    if (s.length === want) return s;
+  }
+  return [];
+}
+
+/**
+ * Deterministic façade window columns: corners excluded; door columns can remain in
+ * the set — per-floor `inDoorAperture` suppresses glass where the portal occupies.
+ */
+function buildWindowColumnKeySet(
+  r: ResolvedMedievalTower,
+  W: number,
+  D: number,
+): Set<string> {
+  const set = new Set<string>();
+  const placement = r.openings.windowsPlacement;
+  if (placement === "none" || r.openings.windowsCountPerSide <= 0) {
+    return set;
+  }
+
+  const minGap = windowStyleStride(r.openings.windowsStyle);
+  const count = r.openings.windowsCountPerSide;
+  const loX = 1;
+  const hiX = W - 2;
+  const loZ = 1;
+  const hiZ = D - 2;
+
+  const slotsX = symmetricAlongSlots(loX, hiX, count, minGap);
+  const slotsZ = symmetricAlongSlots(loZ, hiZ, count, minGap);
+
+  if (placement === "front_only") {
+    for (const lx of slotsX) {
+      set.add(colKey(lx, D - 1));
+    }
+    return set;
+  }
+
+  // symmetric: all four façades (square towers use same along pattern on X- and Z-edges)
+  for (const lx of slotsX) {
+    set.add(colKey(lx, D - 1));
+    set.add(colKey(lx, 0));
+  }
+  for (const lz of slotsZ) {
+    set.add(colKey(0, lz));
+    set.add(colKey(W - 1, lz));
+  }
+  return set;
 }
 
 /** First row of a vertical window run (avoids double-stacking on consecutive matching y). */
 function isWindowColumnSeed(
-  r: ResolvedMedievalTower,
+  shouldPlaceWindowAt: (lx: number, lz: number, y: number) => boolean,
   lx: number,
   lz: number,
   y: number,
-  W: number,
-  D: number,
-  H: number,
 ): boolean {
-  if (!shouldPlaceWindow(r, lx, lz, y, W, D, H)) return false;
+  if (!shouldPlaceWindowAt(lx, lz, y)) return false;
   if (y <= 1) return true;
-  return !shouldPlaceWindow(r, lx, lz, y - 1, W, D, H);
+  return !shouldPlaceWindowAt(lx, lz, y - 1);
 }
 
 function shellCell(
@@ -237,12 +311,13 @@ function buildWindowGlassSet(
   T: number,
   inDoorAperture: (lx: number, lz: number, y: number) => boolean,
   winH: number,
+  shouldPlaceWindowAt: (lx: number, lz: number, y: number) => boolean,
 ): Set<string> {
   const glass = new Set<string>();
   for (let y = 1; y <= H; y++) {
     for (let lx = 0; lx < W; lx++) {
       for (let lz = 0; lz < D; lz++) {
-        if (!isWindowColumnSeed(r, lx, lz, y, W, D, H)) continue;
+        if (!isWindowColumnSeed(shouldPlaceWindowAt, lx, lz, y)) continue;
         for (let dy = 0; dy < winH; dy++) {
           const yy = y + dy;
           if (yy > H) break;
@@ -305,6 +380,20 @@ export function generateMedievalTower(
     return lz >= elz0 && lz <= elz1;
   };
 
+  const windowColumnKeys = buildWindowColumnKeySet(r, W, D);
+
+  const shouldPlaceWindowAt = (lx: number, lz: number, y: number): boolean => {
+    if (r.openings.windowsPlacement === "none") return false;
+    if (r.openings.windowsCountPerSide <= 0) return false;
+    if (!windowFloorOk(y, H, r.openings.windowsFloors)) return false;
+    if (!isExterior(lx, lz, W, D) || isCorner(lx, lz, W, D)) return false;
+    if (r.openings.windowsPlacement === "front_only" && lz !== D - 1) {
+      return false;
+    }
+    if (inDoorAperture(lx, lz, y)) return false;
+    return windowColumnKeys.has(colKey(lx, lz));
+  };
+
   const winH = windowColumnHeight(r.openings.windowsStyle);
   const windowGlass = buildWindowGlassSet(
     r,
@@ -314,6 +403,7 @@ export function generateMedievalTower(
     T,
     inDoorAperture,
     winH,
+    shouldPlaceWindowAt,
   );
 
   for (let lx = 0; lx < W; lx++) {

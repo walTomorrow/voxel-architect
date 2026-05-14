@@ -1,6 +1,6 @@
 "use client";
 
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, useTexture } from "@react-three/drei";
 import { Suspense, useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
@@ -13,6 +13,97 @@ import {
 import { textureUrl } from "@/src/lib/voxel/blocks/textureUrls";
 import { SAMPLE_STRUCTURE } from "@/src/lib/voxel/sampleStructure";
 import type { VoxelBlock, VoxelStructure } from "@/src/lib/voxel/types";
+
+/** Must match `<group position={[0, -GROUP_Y_SHIFT, 0]}>` wrapping voxels. */
+const GROUP_Y_SHIFT = 1.25;
+
+type SceneBounds = {
+  readonly center: THREE.Vector3;
+  readonly maxDim: number;
+};
+
+function computeSceneBounds(structure: VoxelStructure): SceneBounds | null {
+  const { blocks } = structure;
+  if (!blocks.length) return null;
+  const box = new THREE.Box3();
+  for (const b of blocks) {
+    box.expandByPoint(
+      new THREE.Vector3(b.x, b.y - GROUP_Y_SHIFT, b.z),
+    );
+  }
+  const center = new THREE.Vector3();
+  const size = new THREE.Vector3();
+  box.getCenter(center);
+  box.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z, 1.5);
+  return { center, maxDim };
+}
+
+/** Cheap fingerprint so camera refit does not run on every new `blocks` array reference. */
+function voxelStructureLayoutKey(structure: VoxelStructure): string {
+  const { blocks } = structure;
+  const n = blocks.length;
+  if (n === 0) return "0";
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const b of blocks) {
+    minX = Math.min(minX, b.x);
+    maxX = Math.max(maxX, b.x);
+    minY = Math.min(minY, b.y);
+    maxY = Math.max(maxY, b.y);
+    minZ = Math.min(minZ, b.z);
+    maxZ = Math.max(maxZ, b.z);
+  }
+  return `${n}:${minX}:${maxX}:${minY}:${maxY}:${minZ}:${maxZ}`;
+}
+
+type OrbitControlsLike = {
+  target: THREE.Vector3;
+  minDistance: number;
+  maxDistance: number;
+  maxPolarAngle: number;
+  minPolarAngle: number;
+  update: () => void;
+};
+
+/** Fits orbit limits and camera framing to voxel bounds; relaxes polar angle for underside views. */
+function LabOrbitRig({
+  bounds,
+  resetNonce,
+}: {
+  bounds: SceneBounds | null;
+  resetNonce: number;
+}) {
+  const controls = useThree((s) => s.controls) as OrbitControlsLike | null;
+  const camera = useThree((s) => s.camera);
+
+  useLayoutEffect(() => {
+    if (!bounds || !controls || !camera) return;
+
+    controls.target.copy(bounds.center);
+    const m = bounds.maxDim;
+    controls.minDistance = THREE.MathUtils.clamp(m * 0.12, 2.4, 14);
+    controls.maxDistance = THREE.MathUtils.clamp(m * 6.5, 40, 320);
+    controls.maxPolarAngle = Math.PI - 0.04;
+    controls.minPolarAngle = 0.05;
+
+    const dir = new THREE.Vector3(1, 0.55, 1).normalize();
+    const dist = m * 2.45;
+    camera.position.copy(bounds.center).addScaledVector(dir, dist);
+    camera.near = Math.max(0.06, m / 200);
+    camera.far = Math.max(450, m * 55);
+    camera.updateProjectionMatrix();
+    camera.lookAt(bounds.center);
+
+    controls.update();
+  }, [bounds, controls, camera, resetNonce]);
+
+  return null;
+}
 
 /** Shared unit cube; InstancedMesh only mutates instance matrices. */
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
@@ -175,7 +266,13 @@ function TexturedVoxelBatch({
   );
 }
 
-function TexturedScene({ structure }: { structure: VoxelStructure }) {
+function TexturedScene({
+  structure,
+  cameraResetNonce,
+}: {
+  structure: VoxelStructure;
+  cameraResetNonce: number;
+}) {
   const byType = useMemo(() => groupBlocksByType(structure), [structure]);
 
   const sortedTypeIds = useMemo(() => {
@@ -202,6 +299,8 @@ function TexturedScene({ structure }: { structure: VoxelStructure }) {
       byType={byType}
       sortedTypeIds={sortedTypeIds}
       textureUrls={textureUrls}
+      structure={structure}
+      cameraResetNonce={cameraResetNonce}
     />
   );
 }
@@ -210,10 +309,14 @@ function TexturedSceneWithTextures({
   byType,
   sortedTypeIds,
   textureUrls,
+  structure,
+  cameraResetNonce,
 }: {
   byType: Map<string, VoxelBlock[]>;
   sortedTypeIds: BlockTypeId[];
   textureUrls: string[];
+  structure: VoxelStructure;
+  cameraResetNonce: number;
 }) {
   const loaded = useTexture(textureUrls) as THREE.Texture[];
   const textureByUrl = useMemo(() => {
@@ -241,6 +344,12 @@ function TexturedSceneWithTextures({
     return m;
   }, [textureUrls, loaded]);
 
+  const layoutKey = voxelStructureLayoutKey(structure);
+  const sceneBounds = useMemo(
+    () => computeSceneBounds(structure),
+    [layoutKey],
+  );
+
   return (
     <>
       <color attach="background" args={["#0c0c0e"]} />
@@ -258,7 +367,7 @@ function TexturedSceneWithTextures({
         intensity={0.14}
       />
 
-      <group position={[0, -1.25, 0]}>
+      <group position={[0, -GROUP_Y_SHIFT, 0]}>
         {sortedTypeIds.map((id) => {
           const blocks = byType.get(id);
           if (!blocks?.length) return null;
@@ -276,12 +385,10 @@ function TexturedSceneWithTextures({
       <OrbitControls
         enablePan
         enableZoom
-        minDistance={4}
-        maxDistance={28}
-        maxPolarAngle={Math.PI / 2 - 0.08}
-        target={[0, 1.5, 0]}
         makeDefault
       />
+
+      <LabOrbitRig bounds={sceneBounds} resetNonce={cameraResetNonce} />
     </>
   );
 }
@@ -289,9 +396,12 @@ function TexturedSceneWithTextures({
 export function VoxelViewer({
   className,
   structure = SAMPLE_STRUCTURE,
+  cameraResetNonce = 0,
 }: {
   className?: string;
   structure?: VoxelStructure;
+  /** Increment to refit camera to the current structure bounds (developer lab). */
+  cameraResetNonce?: number;
 }) {
   return (
     <div className={className}>
@@ -303,7 +413,10 @@ export function VoxelViewer({
         dpr={[1, 2]}
       >
         <Suspense fallback={null}>
-          <TexturedScene structure={structure} />
+          <TexturedScene
+            structure={structure}
+            cameraResetNonce={cameraResetNonce}
+          />
         </Suspense>
       </Canvas>
     </div>

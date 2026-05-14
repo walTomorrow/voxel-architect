@@ -2,7 +2,12 @@
 
 import { useMemo, useState } from "react";
 import type { MedievalTowerBlueprint } from "@/src/lib/blueprints/types";
-import { SAMPLE_MEDIEVAL_TOWER_BLUEPRINT } from "@/src/lib/blueprints/sampleBlueprints";
+import {
+  DEFAULT_MEDIEVAL_PRESET_ID,
+  MEDIEVAL_TOWER_PRESETS,
+  SAMPLE_MEDIEVAL_TOWER_BLUEPRINT,
+  getMedievalTowerPreset,
+} from "@/src/lib/blueprints/sampleBlueprints";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
 import { VoxelViewer } from "@/src/components/voxel/VoxelViewer";
@@ -21,6 +26,10 @@ const FLOOR_COUNT_MIN = 1;
 const FLOOR_COUNT_MAX = 30;
 const MAX_BLOCK_COUNT_MIN = 1_000;
 const MAX_BLOCK_COUNT_MAX = 500_000;
+/** Lab UI cap for wall thickness (validator allows more on large footprints). */
+const WALL_THICKNESS_UI_MAX = 8;
+/** Lab UI cap for windows per side (validator allows any non-negative int). */
+const WINDOWS_COUNT_PER_SIDE_UI_MAX = 12;
 
 function clampInt(n: number, lo: number, hi: number): number {
   if (!Number.isFinite(n)) return lo;
@@ -31,14 +40,60 @@ function cloneSampleBlueprint(): MedievalTowerBlueprint {
   return structuredClone(SAMPLE_MEDIEVAL_TOWER_BLUEPRINT) as MedievalTowerBlueprint;
 }
 
+/** Mirrors `validateBlueprint` body-layer math for helper text and input caps (read-only preview). */
+function verticalEmphasisFactor(
+  v: MedievalTowerBlueprint["massing"]["verticalEmphasis"],
+): number {
+  switch (v) {
+    case "low":
+      return 0.85;
+    case "medium":
+      return 1;
+    case "tall":
+      return 1.15;
+    default:
+      return 1;
+  }
+}
+
+function previewBodyWallLayers(bp: MedievalTowerBlueprint): number {
+  const Hbud = bp.dimensions.height;
+  const { levels, massing, roof } = bp;
+  const roofLayersEff = roof.style === "flat" ? 1 : Math.max(1, roof.height);
+  const foundationLayers = 1;
+  let bodyLayers = Math.floor(
+    levels.floorCount * verticalEmphasisFactor(massing.verticalEmphasis),
+  );
+  bodyLayers = Math.max(1, Math.min(bodyLayers, levels.floorCount + 2));
+  const minTotal = foundationLayers + bodyLayers + roofLayersEff;
+  if (minTotal > Hbud) {
+    const slack = minTotal - Hbud;
+    bodyLayers = Math.max(1, bodyLayers - slack);
+  }
+  return bodyLayers;
+}
+
+function planFootprintWD(bp: MedievalTowerBlueprint): { W: number; D: number } {
+  let W = bp.dimensions.width;
+  let D = bp.dimensions.length;
+  if (bp.massing.footprint === "square") {
+    D = W;
+  }
+  return { W, D };
+}
+
 const CLASSIC_KEYS = Object.keys(CLASSIC_BLOCK_PACK).sort((a, b) =>
   a.localeCompare(b),
 );
 
 export function VisualizerClient() {
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(
+    DEFAULT_MEDIEVAL_PRESET_ID,
+  );
   const [blueprint, setBlueprint] = useState<MedievalTowerBlueprint>(
     cloneSampleBlueprint,
   );
+  const [cameraResetNonce, setCameraResetNonce] = useState(0);
 
   const validation = useMemo(() => validateBlueprint(blueprint), [blueprint]);
 
@@ -53,6 +108,20 @@ export function VisualizerClient() {
 
   const bp = blueprint;
   const isSquare = bp.massing.footprint === "square";
+  const { W: planW, D: planD } = planFootprintWD(bp);
+  const T = bp.massing.wallThickness;
+  const maxDoorW = Math.max(1, planW - 2 * T - 2);
+  const bodyLayersPreview = previewBodyWallLayers(bp);
+  const maxEntranceHeightUi = Math.max(2, bodyLayersPreview);
+  const maxWallThicknessUi = Math.max(
+    1,
+    Math.min(
+      WALL_THICKNESS_UI_MAX,
+      bp.massing.hollowInterior
+        ? Math.min(Math.floor((planW - 2) / 2), Math.floor((planD - 2) / 2))
+        : Math.min(planW - 2, planD - 2, WALL_THICKNESS_UI_MAX),
+    ),
+  );
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-zinc-950 text-zinc-100 md:flex-row">
@@ -65,13 +134,67 @@ export function VisualizerClient() {
               deterministic. No blocks are placed by hand in the UI.
             </p>
           </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
-            onClick={() => setBlueprint(cloneSampleBlueprint())}
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
+              onClick={() => {
+                setSelectedPresetId(DEFAULT_MEDIEVAL_PRESET_ID);
+                setBlueprint(cloneSampleBlueprint());
+              }}
+            >
+              Reset to default (Northwatch)
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
+              onClick={() => {
+                const preset = getMedievalTowerPreset(selectedPresetId);
+                if (!preset) return;
+                setBlueprint(
+                  structuredClone(preset.blueprint) as MedievalTowerBlueprint,
+                );
+              }}
+            >
+              Reload preset
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
+              onClick={() => setCameraResetNonce((n) => n + 1)}
+            >
+              Refit camera
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 border-b border-zinc-800/80 pb-4">
+          <label className="block text-xs font-medium uppercase tracking-wider text-zinc-500">
+            Preset
+          </label>
+          <p className="mt-1 text-[11px] text-zinc-500">
+            Loads a frozen hand-authored blueprint (cloned). You can still edit any
+            field afterward.
+          </p>
+          <select
+            className="mt-2 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-zinc-100"
+            value={selectedPresetId}
+            onChange={(e) => {
+              const id = e.target.value;
+              const preset = getMedievalTowerPreset(id);
+              if (!preset) return;
+              setSelectedPresetId(id);
+              setBlueprint(
+                structuredClone(preset.blueprint) as MedievalTowerBlueprint,
+              );
+            }}
           >
-            Reset to sample
-          </button>
+            {MEDIEVAL_TOWER_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <dl className="mt-5 space-y-3 border-b border-zinc-800/80 pb-4 text-sm">
@@ -260,6 +383,88 @@ export function VisualizerClient() {
 
           <section>
             <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+              Massing
+            </h2>
+            <p className="mt-1 text-[11px] leading-snug text-zinc-500">
+              Vertical emphasis scales effective body wall layers (preview{" "}
+              <span className="font-mono text-zinc-400">{bodyLayersPreview}</span>
+              ) before the height budget may clamp them further in validation notes.
+              Low ≈ 0.85×, medium = 1×, tall ≈ 1.15× floor count (capped by floor count + 2
+              and by fitting foundation + body + roof in dimensions.height).
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block text-xs text-zinc-400">
+                Vertical emphasis
+                <select
+                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100"
+                  value={bp.massing.verticalEmphasis}
+                  onChange={(e) =>
+                    setBlueprint((b) => ({
+                      ...b,
+                      massing: {
+                        ...b.massing,
+                        verticalEmphasis: e.target
+                          .value as MedievalTowerBlueprint["massing"]["verticalEmphasis"],
+                      },
+                    }))
+                  }
+                >
+                  <option value="low">low (squatter shaft)</option>
+                  <option value="medium">medium</option>
+                  <option value="tall">tall (more body layers)</option>
+                </select>
+              </label>
+              <label className="block text-xs text-zinc-400">
+                Wall thickness (1–{maxWallThicknessUi}
+                {bp.massing.hollowInterior
+                  ? "; hollow needs inner void ≥ 2·T + 2 on each axis"
+                  : ""}
+                )
+                <input
+                  type="number"
+                  min={1}
+                  max={maxWallThicknessUi}
+                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-zinc-100"
+                  value={bp.massing.wallThickness}
+                  onChange={(e) => {
+                    const v = clampInt(
+                      Number.parseInt(e.target.value, 10),
+                      1,
+                      maxWallThicknessUi,
+                    );
+                    setBlueprint((b) => ({
+                      ...b,
+                      massing: { ...b.massing, wallThickness: v },
+                    }));
+                  }}
+                />
+              </label>
+              <label className="col-span-full flex cursor-pointer items-start gap-2 text-xs text-zinc-300">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 rounded border-zinc-600"
+                  checked={bp.massing.hollowInterior}
+                  onChange={(e) =>
+                    setBlueprint((b) => ({
+                      ...b,
+                      massing: {
+                        ...b.massing,
+                        hollowInterior: e.target.checked,
+                      },
+                    }))
+                  }
+                />
+                <span>
+                  Hollow interior (void inside the shell). If the footprint is too small
+                  for the chosen thickness, validation fails until you widen the tower or
+                  reduce thickness.
+                </span>
+              </label>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
               Openings
             </h2>
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -305,6 +510,49 @@ export function VisualizerClient() {
                 </select>
               </label>
               <label className="block text-xs text-zinc-400">
+                Entrance width (1–{maxDoorW} for current footprint & thickness)
+                <input
+                  type="number"
+                  min={1}
+                  max={maxDoorW}
+                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-zinc-100"
+                  value={bp.openings.entranceWidth}
+                  onChange={(e) => {
+                    const v = clampInt(
+                      Number.parseInt(e.target.value, 10),
+                      1,
+                      maxDoorW,
+                    );
+                    setBlueprint((b) => ({
+                      ...b,
+                      openings: { ...b.openings, entranceWidth: v },
+                    }));
+                  }}
+                />
+              </label>
+              <label className="block text-xs text-zinc-400">
+                Entrance height (2–{maxEntranceHeightUi} body wall layers; preview{" "}
+                <span className="font-mono text-zinc-400">{bodyLayersPreview}</span>)
+                <input
+                  type="number"
+                  min={2}
+                  max={maxEntranceHeightUi}
+                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-zinc-100"
+                  value={bp.openings.entranceHeight}
+                  onChange={(e) => {
+                    const v = clampInt(
+                      Number.parseInt(e.target.value, 10),
+                      2,
+                      maxEntranceHeightUi,
+                    );
+                    setBlueprint((b) => ({
+                      ...b,
+                      openings: { ...b.openings, entranceHeight: v },
+                    }));
+                  }}
+                />
+              </label>
+              <label className="block text-xs text-zinc-400">
                 Window style
                 <select
                   className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100"
@@ -345,6 +593,50 @@ export function VisualizerClient() {
                   <option value="front_only">front_only</option>
                   <option value="symmetric">symmetric</option>
                 </select>
+              </label>
+              <label className="block text-xs text-zinc-400">
+                Window floors
+                <select
+                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100"
+                  value={bp.openings.windowsFloors}
+                  onChange={(e) =>
+                    setBlueprint((b) => ({
+                      ...b,
+                      openings: {
+                        ...b.openings,
+                        windowsFloors: e.target
+                          .value as MedievalTowerBlueprint["openings"]["windowsFloors"],
+                      },
+                    }))
+                  }
+                >
+                  <option value="none">none (no window bands)</option>
+                  <option value="upper">
+                    upper (only above mid-body; pairs well with tall emphasis)
+                  </option>
+                  <option value="all">all (body layers y ≥ 1, still placement-gated)</option>
+                </select>
+              </label>
+              <label className="block text-xs text-zinc-400">
+                Windows per side (0–{WINDOWS_COUNT_PER_SIDE_UI_MAX}; 0 disables windows)
+                <input
+                  type="number"
+                  min={0}
+                  max={WINDOWS_COUNT_PER_SIDE_UI_MAX}
+                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 font-mono text-zinc-100"
+                  value={bp.openings.windowsCountPerSide}
+                  onChange={(e) => {
+                    const v = clampInt(
+                      Number.parseInt(e.target.value, 10),
+                      0,
+                      WINDOWS_COUNT_PER_SIDE_UI_MAX,
+                    );
+                    setBlueprint((b) => ({
+                      ...b,
+                      openings: { ...b.openings, windowsCountPerSide: v },
+                    }));
+                  }}
+                />
               </label>
             </div>
           </section>
@@ -537,14 +829,19 @@ export function VisualizerClient() {
 
       <div className="min-h-0 min-w-0 flex-1">
         {validation.ok ? (
-          <VoxelViewer className="h-full w-full" structure={structure} />
+          <VoxelViewer
+            className="h-full w-full"
+            structure={structure}
+            cameraResetNonce={cameraResetNonce}
+          />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
             <p className="text-sm font-medium text-zinc-300">
               Blueprint is invalid — geometry hidden
             </p>
             <p className="max-w-sm text-xs text-zinc-500">
-              Adjust parameters or use Reset to sample. The previous valid model
+              Adjust parameters, reload a preset, or use Reset to default (Northwatch).
+              The previous valid model
               is not shown so you are not misled by stale voxels.
             </p>
           </div>
