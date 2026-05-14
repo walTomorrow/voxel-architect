@@ -38,9 +38,11 @@ export function VoxelPreviewPanel({
     return (
       <div className="relative h-full min-h-0 w-full bg-[#0c0c0e]">
         {canvas}
-        <div className="pointer-events-none absolute bottom-3 left-0 right-0 flex justify-center gap-6 text-[10px] font-mono text-zinc-500 sm:bottom-4">
+        <div className="pointer-events-none absolute bottom-4 left-0 right-0 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 px-4 text-center font-mono text-xs font-medium tracking-wide text-zinc-300 sm:bottom-6 sm:gap-x-10 sm:text-sm md:text-base md:gap-x-14">
           <span>drag to orbit</span>
-          <span className="hidden text-zinc-600 sm:inline">sample structure</span>
+          <span className="hidden text-zinc-400 sm:inline">
+            sample structure
+          </span>
           <span>scroll to zoom</span>
         </div>
       </div>
@@ -63,9 +65,9 @@ export function VoxelPreviewPanel({
       <div className={`relative w-full ${areaClass}`}>
         {canvas}
       </div>
-      <div className="pointer-events-none absolute bottom-3 left-4 right-4 flex justify-between text-[10px] font-mono text-zinc-600 sm:bottom-4 sm:left-6 sm:right-6">
+      <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex justify-between gap-2 font-mono text-xs font-medium tracking-wide text-zinc-400 sm:bottom-5 sm:left-6 sm:right-6 sm:text-sm md:text-base">
         <span>drag to orbit</span>
-        <span className="text-zinc-700">sample structure</span>
+        <span className="text-zinc-500">sample structure</span>
         <span>scroll to zoom</span>
       </div>
     </div>
