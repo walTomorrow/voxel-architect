@@ -17,9 +17,12 @@ import type { VoxelBlock, VoxelStructure } from "@/src/lib/voxel/types";
 /** Shared unit cube; InstancedMesh only mutates instance matrices. */
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
 
+/** Pixel-art: nearest sampling, no mip chain (avoids blur at oblique angles), minimal anisotropy. */
 function configureTerrainTexture(t: THREE.Texture): void {
+  t.generateMipmaps = false;
   t.magFilter = THREE.NearestFilter;
   t.minFilter = THREE.NearestFilter;
+  t.anisotropy = 1;
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = THREE.ClampToEdgeWrapping;
   t.wrapT = THREE.ClampToEdgeWrapping;
@@ -44,13 +47,22 @@ function getPackId(blockTypeId: string): string {
 }
 
 /**
- * Box face material order in three.js BoxGeometry groups:
- * +X, -X, +Y (top), -Y (bottom), +Z, -Z
+ * Multi-material box: `THREE.BoxGeometry` assigns one material index per face, in this order:
+ *   0: +X   1: -X   2: +Y (world up / “top”)   3: -Y (“bottom”)   4: +Z   5: -Z
+ *
+ * `topSideBottom` registry faces map to materials as:
+ *   - `side`  → vertical faces (+X, -X, +Z, -Z)
+ *   - `top`   → +Y
+ *   - `bottom`→ -Y
+ * Logs and similar blocks use the same binding (often `bottom` reuses the end-grain / top file in pack data).
+ *
+ * `uniform` repeats one texture on all six faces.
  */
 function buildMaterialsForBlock(
   def: BlockTypeDefinition,
   packId: string,
   textureByUrl: Map<string, THREE.Texture>,
+  blockTypeIdForDev?: string,
 ): THREE.MeshStandardMaterial[] {
   const common = {
     metalness: def.metalness ?? 0.05,
@@ -65,6 +77,13 @@ function buildMaterialsForBlock(
     const url = textureUrl(packId, file);
     const t = textureByUrl.get(url);
     if (!t) {
+      if (process.env.NODE_ENV === "development") {
+        console.error("[VoxelViewer] Missing texture map entry", {
+          url,
+          blockTypeId: blockTypeIdForDev,
+          file,
+        });
+      }
       throw new Error(`Missing texture for ${url}`);
     }
     return t;
@@ -125,7 +144,7 @@ function TexturedVoxelBatch({
   const materials = useMemo(() => {
     if (!def || count === 0) return [];
     const packId = getPackId(blockTypeId);
-    return buildMaterialsForBlock(def, packId, textureByUrl);
+    return buildMaterialsForBlock(def, packId, textureByUrl, blockTypeId);
   }, [blockTypeId, count, def, textureByUrl]);
 
   useLayoutEffect(() => {
@@ -173,7 +192,7 @@ function TexturedScene({ structure }: { structure: VoxelStructure }) {
     return (
       <>
         <color attach="background" args={["#0c0c0e"]} />
-        <ambientLight intensity={0.35} />
+        <ambientLight intensity={0.26} />
       </>
     );
   }
@@ -206,20 +225,38 @@ function TexturedSceneWithTextures({
         m.set(url, tex);
       }
     });
+    if (process.env.NODE_ENV === "development") {
+      for (const url of textureUrls) {
+        if (!m.has(url)) {
+          console.warn("[VoxelViewer] Texture URL not mapped after load", url);
+        }
+      }
+      if (textureUrls.length > 0) {
+        console.debug(
+          "[VoxelViewer] Loaded voxel texture count:",
+          textureUrls.length,
+        );
+      }
+    }
     return m;
   }, [textureUrls, loaded]);
 
   return (
     <>
       <color attach="background" args={["#0c0c0e"]} />
-      <ambientLight intensity={0.42} />
+      <ambientLight intensity={0.28} />
       <directionalLight
         castShadow
-        position={[8, 14, 6]}
-        intensity={1.1}
+        color="#fff1e0"
+        position={[10, 16, 8]}
+        intensity={1.05}
         shadow-mapSize={[1024, 1024]}
       />
-      <directionalLight position={[-6, 4, -4]} intensity={0.22} />
+      <directionalLight
+        color="#c8d8f0"
+        position={[-8, 5, -6]}
+        intensity={0.14}
+      />
 
       <group position={[0, -1.25, 0]}>
         {sortedTypeIds.map((id) => {
