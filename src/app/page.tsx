@@ -1,95 +1,11 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Voxel Architect",
   description:
     "Conversational AI for constraint-aware voxel architecture — translate intent and visual inspiration into buildable 3D voxel structures.",
 };
-
-/** 12×10 grid: "1" = filled voxel column for a simple tower silhouette */
-const VOXEL_PATTERN: string[] = [
-  "000000000000",
-  "000001100000",
-  "000011110000",
-  "000011110000",
-  "000111111000",
-  "000111111000",
-  "000111111000",
-  "000111111000",
-  "000111111000",
-  "000111111000",
-];
-
-const VOXEL_PALETTE = [
-  "bg-emerald-600",
-  "bg-emerald-500",
-  "bg-teal-600",
-  "bg-zinc-500",
-  "bg-amber-500/90",
-  "bg-sky-600/90",
-];
-
-function VoxelPreviewPanel() {
-  return (
-    <div className="relative overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-900/40 shadow-2xl shadow-black/40 ring-1 ring-white/5 backdrop-blur-sm">
-      <div className="flex items-center justify-between border-b border-zinc-800/80 bg-zinc-950/60 px-4 py-3">
-        <div className="flex gap-1.5">
-          <span className="size-2.5 rounded-full bg-zinc-700" />
-          <span className="size-2.5 rounded-full bg-zinc-700" />
-          <span className="size-2.5 rounded-full bg-zinc-700" />
-        </div>
-        <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-          Preview · orthographic
-        </span>
-        <div className="w-14" aria-hidden />
-      </div>
-      <div className="relative aspect-[4/3] p-4 sm:p-6 md:p-8">
-        <div
-          className="absolute inset-0 opacity-40"
-          style={{
-            backgroundImage:
-              "linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px)",
-            backgroundSize: "24px 24px",
-          }}
-        />
-        <div className="relative flex h-full items-center justify-center [perspective:800px]">
-          <div
-            className="grid w-full max-w-[min(100%,280px)] gap-0.5 sm:max-w-[320px] sm:gap-1 [transform:rotateX(12deg)_rotateY(-18deg)] [transform-style:preserve-3d] sm:[transform:rotateX(14deg)_rotateY(-22deg)]"
-            style={{ gridTemplateColumns: `repeat(12, minmax(0, 1fr))` }}
-          >
-            {VOXEL_PATTERN.flatMap((row, y) =>
-              row.split("").map((cell, x) => {
-                if (cell !== "1") {
-                  return (
-                    <div
-                      key={`${x}-${y}`}
-                      className="aspect-square rounded-[2px] bg-transparent"
-                    />
-                  );
-                }
-                const depthClass =
-                  y > 6 ? "shadow-[inset_0_-2px_0_rgba(0,0,0,0.35)]" : "";
-                const color =
-                  VOXEL_PALETTE[(x + y * 3) % VOXEL_PALETTE.length] ?? "";
-                return (
-                  <div
-                    key={`${x}-${y}`}
-                    className={`aspect-square rounded-[3px] ${color} ring-1 ring-black/20 ${depthClass}`}
-                  />
-                );
-              }),
-            )}
-          </div>
-        </div>
-        <div className="pointer-events-none absolute bottom-3 left-4 right-4 flex justify-between text-[10px] font-mono text-zinc-600 sm:bottom-4 sm:left-6 sm:right-6">
-          <span>Y+</span>
-          <span className="text-zinc-700">voxel grid · mock</span>
-          <span>X+</span>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function Home() {
   return (
@@ -108,9 +24,9 @@ export default function Home() {
       />
 
       <main className="relative mx-auto flex min-h-screen max-w-6xl flex-col px-5 pb-20 pt-10 sm:px-8 sm:pb-24 sm:pt-14 md:pt-20">
-        <header className="mb-14 flex flex-col gap-6 sm:mb-20 md:mb-24 md:flex-row md:items-start md:justify-between">
-          <div className="max-w-2xl space-y-6">
-            <div className="flex flex-wrap items-center gap-3">
+        <header className="mb-14 text-center sm:mb-20 md:mb-24">
+          <div className="mx-auto max-w-2xl space-y-8">
+            <div className="flex flex-wrap items-center justify-center gap-3">
               <span className="inline-flex items-center rounded-full border border-amber-500/25 bg-amber-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-widest text-amber-200/90">
                 Prototype in Development
               </span>
@@ -119,10 +35,10 @@ export default function Home() {
               <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl md:text-6xl md:leading-[1.05]">
                 Voxel Architect
               </h1>
-              <p className="text-lg font-medium text-emerald-100/90 sm:text-xl md:max-w-xl">
+              <p className="text-lg font-medium text-emerald-100/90 sm:text-xl">
                 Conversational AI for constraint-aware voxel architecture.
               </p>
-              <p className="max-w-xl text-base leading-relaxed text-zinc-400 sm:text-[17px]">
+              <p className="mx-auto max-w-xl text-base leading-relaxed text-zinc-400 sm:text-[17px]">
                 Describe a structure in natural language, upload visual
                 inspiration, and generate editable{" "}
                 <span className="text-zinc-200">3D voxel blueprints</span> that
@@ -135,10 +51,22 @@ export default function Home() {
             <p className="text-sm text-zinc-500">
               Built as a Stanford CS 153: Frontier Systems project.
             </p>
-          </div>
 
-          <div className="w-full shrink-0 md:max-w-md md:pt-2 lg:max-w-lg">
-            <VoxelPreviewPanel />
+            <div className="mx-auto max-w-xl space-y-3 border-t border-zinc-800/80 pt-8">
+              <p className="text-sm text-zinc-400">
+                Open the interactive voxel demo: orbit, zoom, and inspect a
+                hardcoded sample tower in full view.
+              </p>
+              <Link
+                href="/preview"
+                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-400/40 bg-gradient-to-b from-emerald-500/20 to-emerald-600/10 px-8 py-5 text-center text-lg font-semibold tracking-tight text-white shadow-lg shadow-emerald-950/30 ring-1 ring-emerald-500/20 transition hover:border-emerald-300/55 hover:from-emerald-500/28 hover:to-emerald-600/18 hover:ring-emerald-400/35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400/70 sm:py-6 sm:text-xl"
+              >
+                View 3D preview
+                <span aria-hidden className="text-emerald-200/90">
+                  →
+                </span>
+              </Link>
+            </div>
           </div>
         </header>
 
@@ -150,8 +78,8 @@ export default function Home() {
             Features
           </h2>
 
-          <article className="group rounded-2xl border border-zinc-800/80 bg-zinc-900/30 p-6 shadow-lg shadow-black/20 ring-1 ring-white/5 transition-colors hover:border-zinc-700/80 hover:bg-zinc-900/50">
-            <div className="mb-4 flex size-10 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/25">
+          <article className="group rounded-2xl border border-zinc-800/80 bg-zinc-900/30 p-6 text-center shadow-lg shadow-black/20 ring-1 ring-white/5 transition-colors hover:border-zinc-700/80 hover:bg-zinc-900/50">
+            <div className="mx-auto mb-4 flex size-10 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/25">
               <span className="font-mono text-lg" aria-hidden>
                 ⌁
               </span>
@@ -166,8 +94,8 @@ export default function Home() {
             </p>
           </article>
 
-          <article className="group rounded-2xl border border-zinc-800/80 bg-zinc-900/30 p-6 shadow-lg shadow-black/20 ring-1 ring-white/5 transition-colors hover:border-zinc-700/80 hover:bg-zinc-900/50">
-            <div className="mb-4 flex size-10 items-center justify-center rounded-xl bg-sky-500/15 text-sky-400 ring-1 ring-sky-500/25">
+          <article className="group rounded-2xl border border-zinc-800/80 bg-zinc-900/30 p-6 text-center shadow-lg shadow-black/20 ring-1 ring-white/5 transition-colors hover:border-zinc-700/80 hover:bg-zinc-900/50">
+            <div className="mx-auto mb-4 flex size-10 items-center justify-center rounded-xl bg-sky-500/15 text-sky-400 ring-1 ring-sky-500/25">
               <span className="font-mono text-lg" aria-hidden>
                 ◎
               </span>
@@ -182,8 +110,8 @@ export default function Home() {
             </p>
           </article>
 
-          <article className="group rounded-2xl border border-zinc-800/80 bg-zinc-900/30 p-6 shadow-lg shadow-black/20 ring-1 ring-white/5 transition-colors hover:border-zinc-700/80 hover:bg-zinc-900/50 sm:col-span-2 lg:col-span-1">
-            <div className="mb-4 flex size-10 items-center justify-center rounded-xl bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/25">
+          <article className="group rounded-2xl border border-zinc-800/80 bg-zinc-900/30 p-6 text-center shadow-lg shadow-black/20 ring-1 ring-white/5 transition-colors hover:border-zinc-700/80 hover:bg-zinc-900/50 sm:col-span-2 lg:col-span-1">
+            <div className="mx-auto mb-4 flex size-10 items-center justify-center rounded-xl bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/25">
               <span className="font-mono text-lg" aria-hidden>
                 ⧉
               </span>
