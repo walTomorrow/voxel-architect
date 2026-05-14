@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MedievalTowerBlueprint } from "@/src/lib/blueprints/types";
 import {
   DEFAULT_MEDIEVAL_PRESET_ID,
@@ -10,8 +10,15 @@ import {
 } from "@/src/lib/blueprints/sampleBlueprints";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
+import { StructureInspectionPanel } from "@/src/components/voxel/StructureInspectionPanel";
 import { VoxelViewer } from "@/src/components/voxel/VoxelViewer";
 import type { VoxelStructure } from "@/src/lib/voxel/types";
+import {
+  type LayerViewMode,
+  clampLayerY,
+  computeLayerYExtents,
+  filterBlocksForLayerView,
+} from "@/src/lib/voxel/layerView";
 import { CLASSIC_BLOCK_PACK } from "@/src/lib/voxel/blocks/packs/classic";
 
 /** UI / perf caps (stricter than schema minimums where applicable). */
@@ -86,6 +93,11 @@ const CLASSIC_KEYS = Object.keys(CLASSIC_BLOCK_PACK).sort((a, b) =>
   a.localeCompare(b),
 );
 
+const PRESET_INSPECTION_OPTIONS = MEDIEVAL_TOWER_PRESETS.map((p) => ({
+  id: p.id,
+  label: p.label,
+}));
+
 export function VisualizerClient() {
   const [selectedPresetId, setSelectedPresetId] = useState<string>(
     DEFAULT_MEDIEVAL_PRESET_ID,
@@ -94,6 +106,8 @@ export function VisualizerClient() {
     cloneSampleBlueprint,
   );
   const [cameraResetNonce, setCameraResetNonce] = useState(0);
+  const [layerViewMode, setLayerViewMode] = useState<LayerViewMode>("full");
+  const [selectedLayer, setSelectedLayer] = useState(0);
 
   const validation = useMemo(() => validateBlueprint(blueprint), [blueprint]);
 
@@ -105,6 +119,35 @@ export function VisualizerClient() {
       blocks: generateStructureFromResolved(validation.resolved),
     };
   }, [validation]);
+
+  const layerExtents = useMemo(
+    () => computeLayerYExtents(structure.blocks),
+    [structure.blocks],
+  );
+
+  useEffect(() => {
+    if (!layerExtents) return;
+    setSelectedLayer((y) => clampLayerY(y, layerExtents));
+  }, [structure.blocks, layerExtents]);
+
+  const visibleStructure: VoxelStructure = useMemo(() => {
+    if (!validation.ok || structure.blocks.length === 0) {
+      return { blocks: [] };
+    }
+    if (layerViewMode === "full") {
+      return structure;
+    }
+    return {
+      blocks: filterBlocksForLayerView(
+        structure.blocks,
+        layerViewMode,
+        selectedLayer,
+      ),
+    };
+  }, [validation.ok, structure, layerViewMode, selectedLayer]);
+
+  const visibleCount = visibleStructure.blocks.length;
+  const totalCount = structure.blocks.length;
 
   const bp = blueprint;
   const isSquare = bp.massing.footprint === "square";
@@ -123,15 +166,32 @@ export function VisualizerClient() {
     ),
   );
 
+  const handleLayerViewModeChange = (next: LayerViewMode) => {
+    setLayerViewMode(next);
+    if (next !== "full" && layerExtents) {
+      // Start onion inspection from foundation (lowest voxel y).
+      setSelectedLayer(layerExtents.yMin);
+    }
+  };
+
+  const handlePresetIdChange = (id: string) => {
+    const preset = getMedievalTowerPreset(id);
+    if (!preset) return;
+    setSelectedPresetId(id);
+    setLayerViewMode("full");
+    setBlueprint(structuredClone(preset.blueprint) as MedievalTowerBlueprint);
+  };
+
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-zinc-950 text-zinc-100 md:flex-row">
-      <aside className="max-h-[45vh] shrink-0 overflow-y-auto border-b border-zinc-800/90 p-5 md:max-h-none md:w-[min(100%,32rem)] md:border-b-0 md:border-r md:p-6">
+    <div className="flex h-dvh flex-col overflow-hidden bg-zinc-950 text-zinc-100 lg:flex-row">
+      <aside className="max-h-[45vh] shrink-0 overflow-y-auto border-b border-zinc-800/90 p-5 lg:max-h-none lg:w-[min(100%,32rem)] lg:border-b-0 lg:border-r lg:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-lg font-semibold text-white">Blueprint editor</h1>
             <p className="mt-1 max-w-prose text-xs text-zinc-500">
               Edit the medieval tower blueprint; validation and generation stay
-              deterministic. No blocks are placed by hand in the UI.
+              deterministic. Structure inspection (preset, layers, refit) lives in
+              the right panel — no blocks are placed by hand in the UI.
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
@@ -140,6 +200,7 @@ export function VisualizerClient() {
               className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
               onClick={() => {
                 setSelectedPresetId(DEFAULT_MEDIEVAL_PRESET_ID);
+                setLayerViewMode("full");
                 setBlueprint(cloneSampleBlueprint());
               }}
             >
@@ -151,6 +212,7 @@ export function VisualizerClient() {
               onClick={() => {
                 const preset = getMedievalTowerPreset(selectedPresetId);
                 if (!preset) return;
+                setLayerViewMode("full");
                 setBlueprint(
                   structuredClone(preset.blueprint) as MedievalTowerBlueprint,
                 );
@@ -158,43 +220,7 @@ export function VisualizerClient() {
             >
               Reload preset
             </button>
-            <button
-              type="button"
-              className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
-              onClick={() => setCameraResetNonce((n) => n + 1)}
-            >
-              Refit camera
-            </button>
           </div>
-        </div>
-
-        <div className="mt-4 border-b border-zinc-800/80 pb-4">
-          <label className="block text-xs font-medium uppercase tracking-wider text-zinc-500">
-            Preset
-          </label>
-          <p className="mt-1 text-[11px] text-zinc-500">
-            Loads a frozen hand-authored blueprint (cloned). You can still edit any
-            field afterward.
-          </p>
-          <select
-            className="mt-2 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-zinc-100"
-            value={selectedPresetId}
-            onChange={(e) => {
-              const id = e.target.value;
-              const preset = getMedievalTowerPreset(id);
-              if (!preset) return;
-              setSelectedPresetId(id);
-              setBlueprint(
-                structuredClone(preset.blueprint) as MedievalTowerBlueprint,
-              );
-            }}
-          >
-            {MEDIEVAL_TOWER_PRESETS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
         </div>
 
         <dl className="mt-5 space-y-3 border-b border-zinc-800/80 pb-4 text-sm">
@@ -790,15 +816,6 @@ export function VisualizerClient() {
 
         <div className="mt-6 border-t border-zinc-800/80 pt-4">
           <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-            Block count
-          </h2>
-          <p className="mt-1 font-mono text-sm text-zinc-200">
-            {validation.ok ? structure.blocks.length : "— (invalid blueprint)"}
-          </p>
-        </div>
-
-        <div className="mt-4 border-t border-zinc-800/80 pt-4">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">
             Validation
           </h2>
           {validation.ok ? (
@@ -827,25 +844,43 @@ export function VisualizerClient() {
         </div>
       </aside>
 
-      <div className="min-h-0 min-w-0 flex-1">
-        {validation.ok ? (
-          <VoxelViewer
-            className="h-full w-full"
-            structure={structure}
-            cameraResetNonce={cameraResetNonce}
-          />
-        ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
-            <p className="text-sm font-medium text-zinc-300">
-              Blueprint is invalid — geometry hidden
-            </p>
-            <p className="max-w-sm text-xs text-zinc-500">
-              Adjust parameters, reload a preset, or use Reset to default (Northwatch).
-              The previous valid model
-              is not shown so you are not misled by stale voxels.
-            </p>
-          </div>
-        )}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
+        <div className="relative min-h-[min(50vh,28rem)] flex-1 min-w-0 md:min-h-0">
+          {validation.ok ? (
+            <VoxelViewer
+              className="h-full w-full"
+              structure={visibleStructure}
+              boundsStructure={structure}
+              cameraResetNonce={cameraResetNonce}
+            />
+          ) : (
+            <div className="flex h-full min-h-[12rem] flex-col items-center justify-center gap-2 p-8 text-center">
+              <p className="text-sm font-medium text-zinc-300">
+                Blueprint is invalid — geometry hidden
+              </p>
+              <p className="max-w-sm text-xs text-zinc-500">
+                Adjust parameters, reload a preset, or use Reset to default
+                (Northwatch). The previous valid model is not shown so you are not
+                misled by stale voxels.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <StructureInspectionPanel
+          presetOptions={PRESET_INSPECTION_OPTIONS}
+          selectedPresetId={selectedPresetId}
+          onPresetIdChange={handlePresetIdChange}
+          hasStructure={validation.ok && totalCount > 0}
+          layerViewMode={layerViewMode}
+          onLayerViewModeChange={handleLayerViewModeChange}
+          layerExtents={layerExtents}
+          selectedLayer={selectedLayer}
+          onSelectedLayerChange={setSelectedLayer}
+          visibleCount={visibleCount}
+          totalCount={totalCount}
+          onRefitCamera={() => setCameraResetNonce((n) => n + 1)}
+        />
       </div>
     </div>
   );

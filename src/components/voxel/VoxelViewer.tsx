@@ -2,7 +2,7 @@
 
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, useTexture } from "@react-three/drei";
-import { Suspense, useLayoutEffect, useMemo, useRef } from "react";
+import { Suspense, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import type { BlockTypeDefinition, BlockTypeId } from "@/src/lib/voxel/blocks/registry-types";
 import {
@@ -268,9 +268,13 @@ function TexturedVoxelBatch({
 
 function TexturedScene({
   structure,
+  boundsStructure,
   cameraResetNonce,
 }: {
+  /** Blocks drawn in the scene (may be filtered for layer view). */
   structure: VoxelStructure;
+  /** Bounds + orbit framing use this structure (typically the full generated model). */
+  boundsStructure: VoxelStructure;
   cameraResetNonce: number;
 }) {
   const byType = useMemo(() => groupBlocksByType(structure), [structure]);
@@ -285,11 +289,25 @@ function TexturedScene({
     [sortedTypeIds],
   );
 
+  const boundsLayoutKey = voxelStructureLayoutKey(boundsStructure);
+  const sceneBounds = useMemo(
+    () => computeSceneBounds(boundsStructure),
+    [boundsLayoutKey],
+  );
+
+  const controlsAndBounds = (
+    <>
+      <OrbitControls enablePan enableZoom makeDefault />
+      <LabOrbitRig bounds={sceneBounds} resetNonce={cameraResetNonce} />
+    </>
+  );
+
   if (textureUrls.length === 0) {
     return (
       <>
         <color attach="background" args={["#0c0c0e"]} />
         <ambientLight intensity={0.26} />
+        {controlsAndBounds}
       </>
     );
   }
@@ -299,8 +317,7 @@ function TexturedScene({
       byType={byType}
       sortedTypeIds={sortedTypeIds}
       textureUrls={textureUrls}
-      structure={structure}
-      cameraResetNonce={cameraResetNonce}
+      controlsAndBounds={controlsAndBounds}
     />
   );
 }
@@ -309,14 +326,12 @@ function TexturedSceneWithTextures({
   byType,
   sortedTypeIds,
   textureUrls,
-  structure,
-  cameraResetNonce,
+  controlsAndBounds,
 }: {
   byType: Map<string, VoxelBlock[]>;
   sortedTypeIds: BlockTypeId[];
   textureUrls: string[];
-  structure: VoxelStructure;
-  cameraResetNonce: number;
+  controlsAndBounds: ReactNode;
 }) {
   const loaded = useTexture(textureUrls) as THREE.Texture[];
   const textureByUrl = useMemo(() => {
@@ -343,12 +358,6 @@ function TexturedSceneWithTextures({
     }
     return m;
   }, [textureUrls, loaded]);
-
-  const layoutKey = voxelStructureLayoutKey(structure);
-  const sceneBounds = useMemo(
-    () => computeSceneBounds(structure),
-    [layoutKey],
-  );
 
   return (
     <>
@@ -382,13 +391,7 @@ function TexturedSceneWithTextures({
         })}
       </group>
 
-      <OrbitControls
-        enablePan
-        enableZoom
-        makeDefault
-      />
-
-      <LabOrbitRig bounds={sceneBounds} resetNonce={cameraResetNonce} />
+      {controlsAndBounds}
     </>
   );
 }
@@ -396,13 +399,20 @@ function TexturedSceneWithTextures({
 export function VoxelViewer({
   className,
   structure = SAMPLE_STRUCTURE,
+  boundsStructure,
   cameraResetNonce = 0,
 }: {
   className?: string;
   structure?: VoxelStructure;
+  /**
+   * When set, orbit framing and layout fingerprint use this structure (full model).
+   * When omitted, defaults to `structure` (same as today).
+   */
+  boundsStructure?: VoxelStructure;
   /** Increment to refit camera to the current structure bounds (developer lab). */
   cameraResetNonce?: number;
 }) {
+  const bounds = boundsStructure ?? structure;
   return (
     <div className={className}>
       <Canvas
@@ -415,6 +425,7 @@ export function VoxelViewer({
         <Suspense fallback={null}>
           <TexturedScene
             structure={structure}
+            boundsStructure={bounds}
             cameraResetNonce={cameraResetNonce}
           />
         </Suspense>
