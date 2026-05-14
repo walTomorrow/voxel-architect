@@ -1,113 +1,83 @@
-# Change log — Blueprint-driven medieval tower (deterministic)
+# Change log — Fix: floating battlements (stepped-roof column support + grounded filter)
 
-This document summarizes work completed for **Voxel Architect’s first full blueprint pipeline**: a rich semantic blueprint type, validation, a deterministic procedural generator for a **medieval tower**, and a **visualizer** page. **No AI**, no LLM block placement, no new API routes, auth, database, or persistence.
+## 1. Title of this bugfix
 
----
-
-## High-level architecture
-
-```text
-MedievalTowerBlueprint (authoring JSON shape)
-  → validateBlueprint()  → BlueprintValidationResult + optional ResolvedMedievalTower
-  → generateStructure() or generateStructureFromResolved()
-  → generateMedievalTower()
-  → VoxelBlock[]
-  → VoxelViewer (existing R3F component)
-```
-
-Materials in authoring blueprints use **semantic classic-pack keys** (e.g. `cobblestone`). Validation resolves them to **`BlockTypeId`** strings (e.g. `classic/cobblestone`) via the existing block registry.
+**Medieval tower crenellations:** remove **floating merlons** and **unsupported parapets** on **stepped** roofs by tying battlements to **per-column roof tops**, and make **`filterGrounded`** only treat **surviving** lower voxels as support (bottom-up pass).
 
 ---
 
-## Files touched
+## 2. Files changed
 
-| Path | Role |
-|------|------|
-| `src/lib/blueprints/types.ts` | Authoring types (`MedievalTowerBlueprint`), `StructureBlueprint` alias, `ResolvedMedievalTower` with normalized `grid` and resolved materials. |
-| `src/lib/blueprints/validateBlueprint.ts` | `validateBlueprint()`: footprint/dimension rules, material resolution, body/roof/overhang clamping to height budget, `maxBlockCount` estimate loop (may reduce roof layers), entrance/window sanity checks, returns `errors`, `notes`, and `resolved` when `ok`. |
-| `src/lib/blueprints/sampleBlueprints.ts` | `SAMPLE_MEDIEVAL_TOWER_BLUEPRINT` — default demo tower for the visualizer. |
-| `src/lib/generation/generateStructure.ts` | `generateStructure(blueprint)` validates then dispatches; `generateStructureFromResolved(resolved)` avoids double validation (used by UI). |
-| `src/lib/generation/generators/generateMedievalTower.ts` | Deterministic tower: shell, hollow interior, interior floors, door carve + door voxels, windows, flat or stepped pyramid roof, crenellations, corner pillars, grounded / no-float filtering per constraints; voxel merge with **priority + stable ordering** to prevent duplicate coordinates. |
-| `src/app/visualizer/page.tsx` | Next.js page + metadata for `/visualizer`. |
-| `src/app/visualizer/VisualizerClient.tsx` | Client: load sample blueprint → validate → generate → `VoxelViewer`; side panel (metadata, dimensions, materials, features, block count, errors, notes). |
+| File | Change |
+|------|--------|
+| `src/lib/generation/generators/generateMedievalTower.ts` | Added **`colRoofTop`** map (`colKey(lx,lz) → max roof Y`) updated with every roof voxel; **parapet** only where that column has roof; **parapet keys** tracked; **merlons** only where a parapet was emitted at `(lx, yParapet, lz)`; replaced **`filterGrounded`** with a **bottom-up** pass (sort by `y`, then require `(x,y−1,z)` to be in the **grounded** set); removed temporary **`globalThis`** debug assignments. |
 
 ---
 
-## Blueprint schema (authoring)
+## 3. Root cause of the floating blocks
 
-The tower blueprint includes, in one object:
-
-1. **Identity** — `structureType: "medieval_tower"`, `metadata` (name, description, notes).
-2. **Dimensions** — `width`, `length`, `height` (minimums enforced in validation).
-3. **Materials** — slots: `wall`, `floor`, `roof`, `window`, `door`, `accent` (classic pack local ids as strings).
-4. **Massing** — `footprint` (currently `square`), `verticalEmphasis`, `symmetry`, `wallThickness`, `hollowInterior`.
-5. **Levels** — `floorCount`, `includeInteriorFloors`.
-6. **Openings** — entrance side/style/width/height; windows style, placement, floors, `windowsCountPerSide`.
-7. **Roof** — `style` (`flat` \| `stepped_pyramid`), `height`, `overhang` (clamped in validation).
-8. **Features** — `crenellations`, `cornerPillars`.
-9. **Constraints** — `maxBlockCount`, `allowFloatingBlocks`, `enforceSymmetry`, `requireGroundedStructure`.
-
-Resolved output adds **`grid`** (`width`, `depth`, `bodyLayers`, `roofLayers`, `overhang`) after normalization.
+1. **Uniform parapet height** at `yTopRoof + 1` for every façade cell assumed a roof voxel existed at **`(lx, yTopRoof, lz)`** on the **outer wall**. On a **stepped pyramid**, the **highest** roof voxels are **inset**; many perimeter columns never get roof at the global top `y`, so parapets were **unsupported** and **`filterGrounded` removed them**.
+2. **`filterGrounded`** built `below` from **all** merged voxels **before** removal, so **merlons** could still “see” **parapet keys** at `(x, y−1, z)` even when those parapets were **dropped** as ungrounded — merlons **survived** and looked **floating** above the last real roof.
 
 ---
 
-## Generator behavior (summary)
+## 4. What fix was implemented
 
-- **Exterior shell** with configurable thickness; **hollow** interior when requested.
-- **Interior floors** at story intervals when `includeInteriorFloors` is true.
-- **Entrance** on the chosen face: aperture carved through the shell; **door** material on appropriate voxels; **arched** variant adds a deterministic lintel voxel where applicable.
-- **Windows** placed deterministically from placement/floor/count rules (including symmetric modes).
-- **Roof**: flat cap or **stepped pyramid** as stacked shrinking layers; overhang is bounded so generation stays consistent with grounded constraints.
-- **Crenellations** and **corner pillars** (accent material) when enabled.
-- **No duplicate voxels**: contributions collected then merged with explicit priority so the same `(x,y,z)` resolves once predictably.
+- **`recordRoof(wx, y, wz)`** updates **`roofCells`** (unchanged stepped support) and **`colRoofTop[colKey(wx,wz)] = max(previous, y)`** for every placed roof block.
+- **Parapet:** for each **exterior** `(lx, lz)`, read `topY = colRoofTop.get(colKey(lx,lz))`. If missing, **skip**. Otherwise **`yParapet = topY + 1`** (per-column walk height), emit parapet, record **`parapetKeys.add(lk(lx, yParapet, lz))`**.
+- **Merlon:** same column `topY` / `yParapet`; emit merlon at **`yMerlon = yParapet + 1`** only if **`parapetKeys`** contains that parapet cell and the parity mask passes.
+- **`filterGrounded`:** sort blocks by **`y`** (then `x`, `z`); keep a block iff **`y ≤ 0`** or the cell **directly below** is already in the **kept-grounded** set (no phantom support from voxels that will be removed).
 
 ---
 
-## Visualizer
+## 5. Whether `filterGrounded` was changed
 
-- **Route:** `/visualizer`
-- **Flow:** `SAMPLE_MEDIEVAL_TOWER_BLUEPRINT` → `validateBlueprint` → `generateStructureFromResolved` → `{ blocks }` passed to **`VoxelViewer`**.
-- **Panel:** structure name, type, dimensions, material keys, feature toggles, block count, validation errors, and validation/simplification **notes**.
+**Yes.** Replaced the one-pass `below = Set(all keys)` filter with a **single ascending-`y` pass** that only adds support for voxels that **actually remain** in the output.
 
 ---
 
-## Build fixes (TypeScript)
+## 6. Whether schema changed
 
-During integration, the following issues were corrected:
-
-1. **`validateBlueprint.ts`** — Removed assignment to **`resolvedDraft.grid.roofLayers`** after `ResolvedMedievalTower` was typed with a readonly `grid`; the `maxBlockCount` reduction loop now only mutates a local **`roofLayersEff`** and rebuilds objects for re-estimation.
-2. **`generateStructure.ts`** — Restored **`import type { VoxelBlock }`** for public return types.
-3. **`generateStructure.ts`** — Exhaustiveness in `generateStructureFromResolved` uses **`resolved.structureType`** in the `default` branch (single variant today) so TypeScript accepts the pattern without falsely assigning `resolved` to `never`.
-
-**Verification:** `pnpm run build` completes successfully (Next.js 16.x).
+**No.**
 
 ---
 
-## How to run (for humans or review bots)
+## 7. Whether sample blueprint changed
 
-```bash
-pnpm install   # if needed
-pnpm dev
-# Open http://localhost:3000/visualizer
-```
-
-```bash
-pnpm run build
-```
+**No.**
 
 ---
 
-## Intentionally out of scope (this milestone)
+## 8. Final default sample block count
 
-- LLM / Claude / OpenAI / prompt UI
-- API routes for generation
-- Persistence, auth, database, Cloudflare extras
-- Additional structure types (e.g. cathedral) — only **`medieval_tower`** is implemented; `generateStructure` is structured to add more `structureType` branches later.
+**647** voxels for `SAMPLE_MEDIEVAL_TOWER_BLUEPRINT` after `validateBlueprint` → `generateMedievalTower` (measured with `pnpm dlx tsx` in-repo).  
+*(Count differs from the pre-battlement-bug era ~611 because parapet/merlon placement now follows real roof columns; the stepped cap may omit the outermost top roof ring where the bottom-up filter cannot chain support — see “remaining weaknesses.”)*
 
 ---
 
-## Suggested next steps (product)
+## 9. Visual verification notes for `/visualizer`
 
-- Add a second **`structureType`** and generator module using the same validate → resolve → merge patterns.
-- In-browser blueprint editor (JSON or form) still without LLM.
-- Snapshot tests: fixed blueprints → expected block count ranges or hashed voxel sets for regression.
+- **Expected:** No **detached** ring of accent blocks above an empty gap; merlons sit **directly** on parapets, parapets **directly** on the **highest roof voxel in that façade column**.
+- **Crenellations:** Still appear when **`features.crenellations`** is true; pattern may be **slightly shorter** overall (`maxY` was **9** in the automated sample check vs. **12** when merlons were incorrectly kept).
+- **Manual check:** Open **`/visualizer`**, reset to sample, orbit the crown — confirm **no floating battlements**.
+
+---
+
+## 10. Build / test result
+
+| Check | Result |
+|-------|--------|
+| `pnpm run build` | **Passed** (Next.js 16.2.6 compile + TypeScript + static generation completed successfully). |
+| Quick integrity script | **0** blocks missing a voxel **directly below** in the final `VoxelBlock[]` (post-filter). |
+| `validateBlueprint(SAMPLE_MEDIEVAL_TOWER_BLUEPRINT)` | **OK** (no errors in the default configuration). |
+
+---
+
+## Remaining weaknesses / follow-ups
+
+- **Stepped + half merlons:** the topmost **roof ring** can still lose voxels if the cell below is empty on that column (pre-existing interaction with **sparse merlons** and strict vertical support). A follow-up could **raise merlons to a full belt**, **fill crenel slots**, or **reorder** “top roof cap vs. battlements” if a denser silhouette is required.
+- **`estimateTowerBlocks`** in `validateBlueprint.ts` was **not** updated in this pass; if `maxBlockCount` margins get tight on larger footprints, bump the estimate slightly.
+
+---
+
+*This file supersedes the prior CHANGE entry for handoff / review.*

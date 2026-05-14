@@ -53,9 +53,15 @@ function estimateTowerBlocks(r: ResolvedMedievalTower): number {
   const interiorFloors = r.levels.includeInteriorFloors
     ? Math.max(0, W - 2 * T) * Math.max(0, D - 2 * T) * H
     : 0;
-  const roofApprox = R * (2 * (W + D + 4 * O));
-  const crenel = r.features.crenellations ? 2 * (W + D) : 0;
-  return foundation + shellApprox + interiorFloors + roofApprox + crenel;
+  let roofApprox = R * (2 * (W + D + 4 * O));
+  if (r.roof.style === "stepped_pyramid" && R > 0) {
+    const inset = R - 1;
+    roofApprox +=
+      Math.max(0, W - 2 * inset) * Math.max(0, D - 2 * inset);
+  }
+  const crenel = r.features.crenellations ? Math.ceil(6 * (W + D)) : 0;
+  const facadeExtra = 4 * H + 8 * (W + D);
+  return foundation + shellApprox + interiorFloors + roofApprox + crenel + facadeExtra;
 }
 
 export function validateBlueprint(
