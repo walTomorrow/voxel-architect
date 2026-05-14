@@ -235,6 +235,127 @@ function symmetricAlongSlots(
 }
 
 /**
+ * Interior along indices reserved for portal (door span + jambs) on the entrance façade.
+ * Only indices in [interiorLo, interiorHi] are returned (corners already excluded from callers).
+ */
+function portalAlongForbiddenInterior(
+  el0: number,
+  el1: number,
+  interiorLo: number,
+  interiorHi: number,
+): Set<number> {
+  const s = new Set<number>();
+  for (let v = el0; v <= el1; v++) {
+    if (v >= interiorLo && v <= interiorHi) s.add(v);
+  }
+  const jL = el0 - 1;
+  if (jL >= interiorLo && jL <= interiorHi) s.add(jL);
+  const jR = el1 + 1;
+  if (jR >= interiorLo && jR <= interiorHi) s.add(jR);
+  return s;
+}
+
+function buildAllowedInteriorAlong(
+  interiorLo: number,
+  interiorHi: number,
+  forbidden: ReadonlySet<number>,
+): number[] {
+  const out: number[] = [];
+  for (let v = interiorLo; v <= interiorHi; v++) {
+    if (!forbidden.has(v)) out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Like `tryPlaceSymmetricAlong`, but each pick must lie in `allowed` (portal-reserved façade).
+ */
+function tryPlaceSymmetricOnAllowed(
+  allowed: ReadonlySet<number>,
+  lo: number,
+  hi: number,
+  want: number,
+  minGap: number,
+): number[] {
+  if (want <= 0 || lo > hi) return [];
+  const center = (lo + hi) / 2;
+  const picked: number[] = [];
+  const ok = (p: number) =>
+    allowed.has(p) &&
+    picked.every((q) => Math.abs(p - q) >= minGap);
+
+  if (want % 2 === 1) {
+    const mid = Math.round(center);
+    const midClamped = Math.max(lo, Math.min(hi, mid));
+    let chosen: number | undefined;
+    if (ok(midClamped)) {
+      chosen = midClamped;
+    } else {
+      // Geometric center may sit in the portal reserve. Closest allowed index to façade
+      // midpoint; equal distance → smaller index (deterministic).
+      let bestDist = Infinity;
+      for (const a of allowed) {
+        if (!ok(a)) continue;
+        const dist = Math.abs(a - center);
+        if (dist < bestDist || (dist === bestDist && (chosen === undefined || a < chosen))) {
+          bestDist = dist;
+          chosen = a;
+        }
+      }
+    }
+    if (chosen === undefined) return [];
+    picked.push(chosen);
+  }
+
+  let d = 1;
+  while (picked.length < want) {
+    const L = Math.ceil(center - d);
+    const R = Math.floor(center + d);
+    if (L < lo && R > hi) break;
+    if (
+      L < R &&
+      L >= lo &&
+      R <= hi &&
+      ok(L) &&
+      ok(R) &&
+      R - L >= minGap
+    ) {
+      picked.push(L, R);
+      d++;
+      continue;
+    }
+    d++;
+    if (d > hi - lo + 5) break;
+  }
+
+  picked.sort((a, b) => a - b);
+  return picked.length === want ? picked : [];
+}
+
+function symmetricAlongSlotsFromAllowed(
+  allowed: readonly number[],
+  requestedCount: number,
+  minGap: number,
+  facadeLo: number,
+  facadeHi: number,
+): number[] {
+  if (allowed.length === 0 || requestedCount <= 0) return [];
+  const allowedSet = new Set(allowed);
+  const maxFit = allowed.length;
+  for (let want = Math.min(requestedCount, maxFit); want >= 1; want--) {
+    const s = tryPlaceSymmetricOnAllowed(
+      allowedSet,
+      facadeLo,
+      facadeHi,
+      want,
+      minGap,
+    );
+    if (s.length === want) return s;
+  }
+  return [];
+}
+
+/**
  * Deterministic façade window columns: corners excluded; door columns can remain in
  * the set — per-floor `inDoorAperture` suppresses glass where the portal occupies.
  */
@@ -242,6 +363,10 @@ function buildWindowColumnKeySet(
   r: ResolvedMedievalTower,
   W: number,
   D: number,
+  elx0: number,
+  elx1: number,
+  elz0: number,
+  elz1: number,
 ): Set<string> {
   const set = new Set<string>();
   const placement = r.openings.windowsPlacement;
@@ -256,23 +381,71 @@ function buildWindowColumnKeySet(
   const loZ = 1;
   const hiZ = D - 2;
 
-  const slotsX = symmetricAlongSlots(loX, hiX, count, minGap);
-  const slotsZ = symmetricAlongSlots(loZ, hiZ, count, minGap);
+  let slotsFrontX = symmetricAlongSlots(loX, hiX, count, minGap);
+  let slotsBackX = symmetricAlongSlots(loX, hiX, count, minGap);
+  let slotsLeftZ = symmetricAlongSlots(loZ, hiZ, count, minGap);
+  let slotsRightZ = symmetricAlongSlots(loZ, hiZ, count, minGap);
+
+  const entrance = r.openings.entranceSide;
+  const forbiddenX = portalAlongForbiddenInterior(elx0, elx1, loX, hiX);
+  const forbiddenZ = portalAlongForbiddenInterior(elz0, elz1, loZ, hiZ);
+
+  if (entrance === "front") {
+    const allowed = buildAllowedInteriorAlong(loX, hiX, forbiddenX);
+    slotsFrontX = symmetricAlongSlotsFromAllowed(
+      allowed,
+      count,
+      minGap,
+      loX,
+      hiX,
+    );
+  } else if (entrance === "back") {
+    const allowed = buildAllowedInteriorAlong(loX, hiX, forbiddenX);
+    slotsBackX = symmetricAlongSlotsFromAllowed(
+      allowed,
+      count,
+      minGap,
+      loX,
+      hiX,
+    );
+  } else if (entrance === "left") {
+    const allowed = buildAllowedInteriorAlong(loZ, hiZ, forbiddenZ);
+    slotsLeftZ = symmetricAlongSlotsFromAllowed(
+      allowed,
+      count,
+      minGap,
+      loZ,
+      hiZ,
+    );
+  } else if (entrance === "right") {
+    const allowed = buildAllowedInteriorAlong(loZ, hiZ, forbiddenZ);
+    slotsRightZ = symmetricAlongSlotsFromAllowed(
+      allowed,
+      count,
+      minGap,
+      loZ,
+      hiZ,
+    );
+  }
 
   if (placement === "front_only") {
-    for (const lx of slotsX) {
+    for (const lx of slotsFrontX) {
       set.add(colKey(lx, D - 1));
     }
     return set;
   }
 
-  // symmetric: all four façades (square towers use same along pattern on X- and Z-edges)
-  for (const lx of slotsX) {
+  // symmetric: all four façades
+  for (const lx of slotsFrontX) {
     set.add(colKey(lx, D - 1));
+  }
+  for (const lx of slotsBackX) {
     set.add(colKey(lx, 0));
   }
-  for (const lz of slotsZ) {
+  for (const lz of slotsLeftZ) {
     set.add(colKey(0, lz));
+  }
+  for (const lz of slotsRightZ) {
     set.add(colKey(W - 1, lz));
   }
   return set;
@@ -380,7 +553,15 @@ export function generateMedievalTower(
     return lz >= elz0 && lz <= elz1;
   };
 
-  const windowColumnKeys = buildWindowColumnKeySet(r, W, D);
+  const windowColumnKeys = buildWindowColumnKeySet(
+    r,
+    W,
+    D,
+    elx0,
+    elx1,
+    elz0,
+    elz1,
+  );
 
   const shouldPlaceWindowAt = (lx: number, lz: number, y: number): boolean => {
     if (r.openings.windowsPlacement === "none") return false;

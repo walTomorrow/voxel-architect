@@ -77,9 +77,10 @@ const TALL_WATCHTOWER_BLUEPRINT = {
     name: "Tall Watchtower",
     description:
       "Narrow footprint and high vertical budget — stresses silhouette, stepped cap, and crown alignment.",
-    notes: "Thin shell (T=1) keeps door span usable on width 8. Tall emphasis + high floor count.",
+    notes:
+      "Odd 9×9 footprint so a 3-wide entrance stays bilaterally balanced (even widths cannot center an odd door span). T=1 thin shell.",
   },
-  dimensions: { width: 8, length: 8, height: 48 },
+  dimensions: { width: 9, length: 9, height: 48 },
   materials: {
     wall: "cobblestone",
     floor: "limestone_bricks",
@@ -167,9 +168,10 @@ const GOTHIC_STONE_TOWER_BLUEPRINT = {
     name: "Gothic Stone Tower",
     description:
       "Pale limestone massing with tall emphasis, arched windows, and a stepped slate crown.",
-    notes: "Exercises narrow/arched window styling and stepped roof on a mid-wide footprint.",
+    notes:
+      "Odd 11×11 footprint pairs with 3-wide entrance (even width cannot split façade evenly around an odd portal). Arched windows + stepped crown.",
   },
-  dimensions: { width: 10, length: 10, height: 32 },
+  dimensions: { width: 11, length: 11, height: 32 },
   materials: {
     wall: "limestone_bricks",
     floor: "limestone_bricks",
