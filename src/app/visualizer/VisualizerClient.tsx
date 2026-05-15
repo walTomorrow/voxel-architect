@@ -109,6 +109,7 @@ export function VisualizerClient() {
   const [cameraResetNonce, setCameraResetNonce] = useState(0);
   const [layerViewMode, setLayerViewMode] = useState<LayerViewMode>("full");
   const [selectedLayer, setSelectedLayer] = useState(0);
+  const [blueprintPanelOpen, setBlueprintPanelOpen] = useState(true);
 
   const validation = useMemo(() => validateBlueprint(blueprint), [blueprint]);
 
@@ -190,7 +191,35 @@ export function VisualizerClient() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-zinc-950 text-zinc-100 lg:flex-row">
-      <aside className="max-h-[45vh] shrink-0 overflow-y-auto border-b border-zinc-800/90 p-5 lg:max-h-none lg:w-[min(100%,32rem)] lg:border-b-0 lg:border-r lg:p-6">
+      {!blueprintPanelOpen ? (
+        <>
+          <div className="shrink-0 border-b border-zinc-800/90 bg-zinc-950/98 lg:hidden">
+            <button
+              type="button"
+              className="w-full px-4 py-3 text-left text-sm font-medium text-emerald-200/95 hover:bg-zinc-900/80"
+              onClick={() => setBlueprintPanelOpen(true)}
+            >
+              Show blueprint editor
+            </button>
+          </div>
+          <div className="hidden h-full w-10 shrink-0 flex-col border-zinc-800/90 bg-zinc-950/98 lg:flex lg:border-r">
+            <button
+              type="button"
+              className="flex flex-1 flex-col items-center justify-center px-0 py-4 text-emerald-200/95 hover:bg-zinc-900/80"
+              title="Show blueprint editor"
+              aria-label="Show blueprint editor"
+              onClick={() => setBlueprintPanelOpen(true)}
+            >
+              <span className="text-xl leading-none text-zinc-400" aria-hidden>
+                ›
+              </span>
+            </button>
+          </div>
+        </>
+      ) : null}
+      {blueprintPanelOpen ? (
+        <aside className="max-h-[45vh] shrink-0 flex min-h-0 flex-row overflow-hidden border-b border-zinc-800/90 lg:h-full lg:max-h-none lg:min-h-0 lg:w-[min(100%,32rem)] lg:border-b-0 lg:border-r">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-5 lg:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-lg font-semibold text-white">Blueprint editor</h1>
@@ -848,7 +877,22 @@ export function VisualizerClient() {
             </div>
           )}
         </div>
+        </div>
+        <button
+          type="button"
+          className="w-10 shrink-0 self-stretch min-h-0 border-l border-zinc-700/60 bg-zinc-900/40 text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-inset"
+          title="Hide blueprint editor"
+          aria-label="Hide blueprint editor"
+          onClick={() => setBlueprintPanelOpen(false)}
+        >
+          <span className="flex h-full w-full flex-col items-center justify-center">
+            <span className="text-xl leading-none text-zinc-400" aria-hidden>
+              ‹
+            </span>
+          </span>
+        </button>
       </aside>
+      ) : null}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
         <div className="relative min-h-[min(50vh,28rem)] flex-1 min-w-0 md:min-h-0">
