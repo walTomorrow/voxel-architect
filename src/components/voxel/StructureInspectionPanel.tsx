@@ -1,5 +1,6 @@
 "use client";
 
+import type { FullStructureBreakdownRow } from "@/src/lib/voxel/blockBreakdown";
 import type { LayerViewMode } from "@/src/lib/voxel/layerView";
 import { clampLayerY } from "@/src/lib/voxel/layerView";
 
@@ -21,6 +22,8 @@ type Props = {
   readonly onSelectedLayerChange: (y: number) => void;
   readonly visibleCount: number;
   readonly totalCount: number;
+  /** Full generated structure only; unchanged by layer slice / build-up. */
+  readonly fullStructureBreakdown: readonly FullStructureBreakdownRow[] | null;
   readonly onRefitCamera: () => void;
 };
 
@@ -46,6 +49,7 @@ export function StructureInspectionPanel({
   onSelectedLayerChange,
   visibleCount,
   totalCount,
+  fullStructureBreakdown,
   onRefitCamera,
 }: Props) {
   const showLayerControls =
@@ -58,8 +62,8 @@ export function StructureInspectionPanel({
       <div>
         <h2 className="text-sm font-semibold text-white">{title}</h2>
         <p className="mt-1 text-[11px] leading-snug text-zinc-500">
-          Preset loads a hand-authored tower. Layer modes filter voxels for
-          inspection only — generation is unchanged.
+          Preset loads a hand-authored tower. Layer modes filter the canvas only;
+          the block breakdown below always reflects the full generated structure.
         </p>
       </div>
 
@@ -176,6 +180,32 @@ export function StructureInspectionPanel({
           )}
         </p>
       </section>
+
+      {fullStructureBreakdown && fullStructureBreakdown.length > 0 ? (
+        <section className="space-y-2 border-t border-zinc-800/80 pt-4">
+          <span className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+            Block breakdown
+          </span>
+          <p className="text-[10px] text-zinc-500">
+            Counts by type — full structure (not layer-filtered).
+          </p>
+          <ul className="max-h-44 space-y-1 overflow-y-auto font-mono text-[11px] leading-snug text-zinc-300">
+            {fullStructureBreakdown.map((row) => (
+              <li
+                key={row.blockTypeId}
+                className="flex justify-between gap-2 border-b border-zinc-800/40 py-0.5 last:border-b-0"
+              >
+                <span className="min-w-0 truncate text-zinc-300" title={row.blockTypeId}>
+                  {row.label}
+                </span>
+                <span className="shrink-0 tabular-nums text-zinc-400">
+                  {row.count.toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <div className="mt-auto border-t border-zinc-800/80 pt-4">
         <button

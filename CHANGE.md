@@ -1,61 +1,58 @@
-# Change log — Viewer inspection UI (right panel + shared layer tools)
+# Change log — Full-structure block breakdown (Developer Lab)
 
 ## 1. Title of this milestone
 
-**Structure inspection panel:** move onion/layer controls from a cramped **top toolbar** into a dedicated **right sidebar** on **`/visualizer`**, share **`StructureInspectionPanel`** and **`layerView`** helpers with a new **`/preview`** preset inspection flow, without changing **`VoxelViewer`** camera semantics or **`VoxelPreviewPanel`** (still available for other embeds).
+**Material / block-type inventory** in **`StructureInspectionPanel`**: a compact, **full-generated-structure-only** per-**`blockTypeId`** count list (developer lab), shared by **`/visualizer`** and **`/preview`**, without per-type visible-layer counts.
 
 ## 2. Branch name
 
-`feature/onion-layer-viewer`
+`feature/material-block-breakdown`
 
 ## 3. Files changed
 
 | File | Change |
 |------|--------|
-| `src/lib/voxel/layerView.ts` | **New** — **`LayerViewMode`**, **`computeLayerYExtents`**, **`filterBlocksForLayerView`**, **`clampLayerY`** (single source for y extents / filtering / clamping). |
-| `src/components/voxel/StructureInspectionPanel.tsx` | **New** — controlled **right-rail** UI: preset `<select>`, **Full / Build-up / Slice** as **segmented buttons**, layer label + slider + prev/next, **visible / total**, **Refit camera**. |
-| `src/app/visualizer/VisualizerClient.tsx` | Removed top preview toolbar; **three-region layout** — blueprint **left**, **`VoxelViewer`** **center**, **`StructureInspectionPanel`** **right** (`md:flex-row` on the viewer column). Imports shared **`layerView`** helpers; preset handler loads blueprint + resets **Full**. |
-| `src/app/preview/PreviewInspectionClient.tsx` | **New** — read-only **`selectedPresetId`** → clone preset blueprint → validate → generate; same layer state + **`VoxelViewer`** **`boundsStructure` / `structure`** split as the lab. |
-| `src/app/preview/page.tsx` | Replaced **`VoxelPreviewPanel`** with **`PreviewInspectionClient`**; header adds link to **`/visualizer`**. |
-| `src/components/voxel/VoxelPreviewPanel.tsx` | **Unchanged** — still used only if re-wired elsewhere; **`/`** home does **not** import it. |
+| `src/lib/voxel/blockBreakdown.ts` | **New** — **`fullStructureBlockBreakdown`**, **`displayLabelForBlockTypeId`**, **`FullStructureBreakdownRow`**; pure counting + sort (desc **`count`**, tie-break **`blockTypeId`**). |
+| `src/components/voxel/StructureInspectionPanel.tsx` | New prop **`fullStructureBreakdown`**; **“Block breakdown”** section under aggregate **visible / total**; intro copy notes breakdown is full-structure only. |
+| `src/app/visualizer/VisualizerClient.tsx` | **`useMemo`** breakdown from **`structure.blocks`** only; pass to panel. |
+| `src/app/preview/PreviewInspectionClient.tsx` | Same **`useMemo`** + prop wiring. |
 
-## 4. What changed in `/visualizer` layout
+## 4. What was implemented
 
-- **Left:** Blueprint form, validation, **Reset to default** / **Reload preset** (unchanged role).
-- **Center:** Full-height **`VoxelViewer`** only (no horizontal control strip above the canvas).
-- **Right:** **`StructureInspectionPanel`** — preset, discoverable **view mode buttons**, layer tools when Build-up/Slice, counts, Refit.
+- **Aggregate line unchanged:** **visible / total** blocks still reflect the current layer mode (Full, Build-up, Slice).
+- **New section:** **Block breakdown** — one count per **`blockTypeId`** for the **entire** last successful **`structure.blocks`** only.
+- **Labels:** Local id segment with **`_` → space** when **`getBlockDefinition`** recognizes the type; otherwise full **`blockTypeId`**.
+- **Sorting:** Descending count; stable **`blockTypeId`** ascending tie-break.
+- **Rows:** Only **`count > 0`**; list scrolls inside **`max-h-44`** when long.
 
-Narrow viewports: viewer column stacks **canvas** then **inspection** (`flex-col`); inspection panel uses a **top border** so separation stays clear.
+## 5. Final scope decision (visible vs full per type)
 
-## 5. What changed in `/preview`
+- **Per-type visible counts** and **visible/total pairs per row** were **not** implemented.
+- **Reason:** Inventory of the **complete** generated model is the higher-value first step and keeps the panel simpler; layer scrub no longer changes the breakdown.
 
-- **`/preview`** is now a **preset inspection** page: same **six** medieval tower presets, **validate → generate → view**, **no** blueprint editor.
-- **`PreviewInspectionClient`** mirrors the lab’s layer filtering and **`boundsStructure`** behavior.
-- **`VoxelPreviewPanel`** is no longer used by this route (component kept intact).
+## 6. How the helper computes and sorts
 
-## 6. Shared utilities / components
+- **`fullStructureBlockBreakdown(blocks)`** walks **`blocks` once**, increments a **`Map<blockTypeId, number>`**, builds rows, drops nonpositive counts, sorts **`(b.count - a.count)`** then **`localeCompare`** on **`blockTypeId`**.
+- **Input** is always **`structure.blocks`** from existing **`useMemo`** (no extra **`generateStructureFromResolved`** calls, no mutation of **`VoxelBlock`**).
 
-- **`src/lib/voxel/layerView.ts`** — all y-based filtering math shared by **`VisualizerClient`** and **`PreviewInspectionClient`**.
-- **`StructureInspectionPanel`** — presentational; parents own React state and pass counts, extents, and callbacks.
+## 7. Where the breakdown appears in the UI
 
-## 7. How camera bounds / refit behavior was preserved
-
-- **`VoxelViewer`** unchanged: **`boundsStructure`** still drives **`LabOrbitRig`** / layout fingerprint; **`structure`** is the (possibly filtered) draw list.
-- **Layer slider** and view mode changes do **not** alter full-structure bounds → **no** automatic camera jump.
-- **Refit camera** still bumps **`cameraResetNonce`**.
+- **`StructureInspectionPanel`**, **below** “Block counts” and **above** “Refit camera”.
+- **`/visualizer`** and **`/preview`** both pass the same prop shape.
 
 ## 8. What was intentionally deferred
 
-- Autoplay, current-layer highlighting, material/block-type breakdown, AI, persistence, import/export, semantic metadata, selection, new structure types, major renderer redesign.
+- Per-layer / per-type **visible** breakdowns, charts, swatches, material categories, AI copy, persistence, import/export, semantic metadata, new structure types, **`VoxelViewer`** changes.
 
 ## 9. Manual QA notes
 
-| Area | Check |
-|------|--------|
-| **`/visualizer`** | Left / center / right on **`md+`**; preset loads blueprint; **Full / Build-up / Slice**; counts; **Refit**; layer scrub **without** camera jump; invalid blueprint does not crash the panel. |
-| **`/preview`** | All six presets render; same layer tools; no blueprint sidebar; header links work. |
-| **Home (`/`)** | Still static marketing page (no **`VoxelPreviewPanel`** dependency). |
-| **Narrow width** | Canvas + panel stack without unusable overlap. |
+| Check | Where |
+|-------|--------|
+| Six presets render; breakdown lists types; **sum of row counts = total** block line’s **total** | **`/visualizer`**, **`/preview`** |
+| **Build-up / Slice** change **visible / total** aggregate but **not** breakdown rows | Both |
+| **Preset** / **blueprint edits** refresh breakdown | **`/visualizer`** |
+| **Invalid blueprint** — no crash; breakdown hidden (`null` rows) | **`/visualizer`** |
+| **Camera** — layer scrub still no refit; **Refit** still works | Both |
 
 ## 10. Build result
 
@@ -65,9 +62,8 @@ Narrow viewports: viewer column stacks **canvas** then **inspection** (`flex-col
 
 ## 11. Remaining weaknesses / follow-up ideas
 
-- **`PRESET_INSPECTION_OPTIONS`** is duplicated between **`VisualizerClient`** and **`PreviewInspectionClient`** — could export a readonly list from **`sampleBlueprints`** later.
-- **View mode** can stay on Build-up/Slice while the blueprint becomes invalid — controls disable but mode label does not auto-revert to Full (low priority).
-- Optional: collapsible **right rail** on small tablets to reclaim canvas width.
+- Labels are **heuristic** (no registry **`displayName`** yet).
+- Optional later: **visible-per-type** column, export, or collapse long lists by category.
 
 ---
 

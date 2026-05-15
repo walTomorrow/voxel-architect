@@ -12,6 +12,7 @@ import { generateStructureFromResolved } from "@/src/lib/generation/generateStru
 import { StructureInspectionPanel } from "@/src/components/voxel/StructureInspectionPanel";
 import { VoxelViewer } from "@/src/components/voxel/VoxelViewer";
 import type { VoxelStructure } from "@/src/lib/voxel/types";
+import { fullStructureBlockBreakdown } from "@/src/lib/voxel/blockBreakdown";
 import {
   type LayerViewMode,
   clampLayerY,
@@ -87,6 +88,11 @@ export function PreviewInspectionClient() {
   const visibleCount = visibleStructure.blocks.length;
   const totalCount = structure.blocks.length;
 
+  const fullStructureBreakdown = useMemo(() => {
+    if (!validation.ok || structure.blocks.length === 0) return null;
+    return fullStructureBlockBreakdown(structure.blocks);
+  }, [validation.ok, structure.blocks]);
+
   const handleLayerViewModeChange = (next: LayerViewMode) => {
     setLayerViewMode(next);
     if (next !== "full" && layerExtents) {
@@ -138,6 +144,7 @@ export function PreviewInspectionClient() {
         onSelectedLayerChange={setSelectedLayer}
         visibleCount={visibleCount}
         totalCount={totalCount}
+        fullStructureBreakdown={fullStructureBreakdown}
         onRefitCamera={() => setCameraResetNonce((n) => n + 1)}
       />
     </div>
