@@ -1,8 +1,8 @@
-# Change log — voxel structure analysis helpers
+# Change log — generator preset invariant tests
 
 ## Title of this issue
 
-**Add reusable voxel structure analysis helpers** (Generator Reliability Testing — Issue 2)
+**Add generator invariant tests for curated presets** (Generator Reliability Testing — Issue 3)
 
 ## Branch name
 
@@ -12,90 +12,73 @@
 
 | File | Change |
 |------|--------|
-| `src/lib/voxel/structureAnalysis.ts` | **New:** Pure analysis helpers (`voxelPositionKey`, `analyzeVoxelStructure`). |
-| `src/lib/voxel/__tests__/structureAnalysis.test.ts` | **New:** Tiny Vitest specs for helpers (hand-crafted `VoxelBlock[]`). |
-| `vitest.config.ts` | `test.include` now covers generator smoke tests and voxel helper tests only. |
-| `package.json` | `test:generator` runs `vitest run` (uses configured include patterns). |
+| `src/lib/generation/__tests__/generatorPresetInvariants.test.ts` | **New:** Loop over `MEDIEVAL_TOWER_PRESETS`; validate → generate → `analyzeVoxelStructure`; assert geometric invariants. |
 
-## Helper module added
+**Unchanged (kept per plan):** `src/lib/generation/__tests__/generatorPipeline.smoke.test.ts`
 
-**`src/lib/voxel/structureAnalysis.ts`** — depends only on `./types`, `./blocks/registry`; no React / Three.js / viewer / visualizer.
+## Presets covered
 
-## Analysis fields (`analyzeVoxelStructure`)
+All entries from **`MEDIEVAL_TOWER_PRESETS`** in `src/lib/blueprints/sampleBlueprints.ts` (single source; **`structuredClone(preset.blueprint)`** — no duplicated JSON):
 
-Returned **`VoxelStructureAnalysis`** includes:
+| `id` | `label` |
+|------|---------|
+| `northwatch` | Northwatch Spire (default) |
+| `tall_watchtower` | Tall Watchtower |
+| `fortified_gate` | Fortified Gate Tower |
+| `gothic_stone` | Gothic Stone Tower |
+| `compact_guard` | Compact Guard Tower |
+| `dark_wizard` | Dark Wizard Tower |
 
-| Field | Description |
-|-------|--------------|
-| `blockCount` | Length of input list (counts duplicate-coordinate rows twice). |
-| `uniqueBlockCount` | Distinct lattice cells occupied. |
-| `bounds` | Axis-aligned extents from unique coordinates, or **`null`** if empty. |
-| `duplicateCoordinateCount` | Extra blocks beyond the first per `(x,y,z)` (`sum(count - 1)`). |
-| `duplicateCoordinates` | Sorted occupied keys with duplicates, **capped at 20** for diagnostics. |
-| `blockTypeCounts` | Tallies **per block row** in the input (`blockTypeId` → count). |
-| `invalidBlockTypeIds` | Distinct `blockTypeId` values failing **`getBlockDefinition()`**, sorted alphabetically. |
-| `groundTouchingBlockCount` | Unique cells with **`y === minY`** (`minY` from unique coordinates). |
-| `connectedComponentCount26` | 26-neighbor components over **unique** occupied cells. |
-| `largestComponentSize26` | Largest component size. |
-| `groundedReachableBlockCount26` | Unique cells 26-reachable from any **`y === minY`** seed. |
-| `ungroundedBlockCount26` | `uniqueBlockCount - groundedReachableBlockCount26`. |
-| `allBlocksGroundedConnected26` | `uniqueBlockCount > 0` and zero ungrounded cells and exactly one 26-component. |
+## Invariants enforced (per preset)
 
-Exported **`voxelPositionKey(x, y, z)`** builds the coordinate key **`${x},${y},${z}`** (matches generator lattice string usage).
+- `blocks.length > 0`
+- `analysis.blockCount === blocks.length`
+- `analysis.uniqueBlockCount > 0`
+- `analysis.invalidBlockTypeIds` empty (registry via `getBlockDefinition` inside analysis)
+- `analysis.duplicateCoordinateCount === 0`
+- `analysis.connectedComponentCount26 === 1` (**curated tower presets only** — not a universal rule for future multi-mass generators)
+- `analysis.ungroundedBlockCount26 === 0`
+- `analysis.allBlocksGroundedConnected26 === true`
+- `blocks.length <= validation.resolved.constraints.maxBlockCount`
 
-## Coordinate key strategy
+No mocks for validation, generation, registry, or analysis.
 
-- Keys are **`"${x},${y},${z}"`** for counting and occupancy maps.
-- **Connectivity** unions only **unique** occupied coordinates; duplicate list positions do not multiply graph nodes.
+## Diagnostics / failure messages
 
-## Connectivity rule
+**`invariantContext(...)`** builds one pipe-separated string appended to **`expect`** messages, including:
 
-- **26-neighbor adjacency:** all offsets `(dx, dy, dz)` with each coordinate in **`{-1, 0, 1}`**, excluding **`(0, 0, 0)`**.
-- Cells are adjacent iff both are occupied **uniquely** at that neighbor offset.
+- preset **`id`** and **`label`**
+- block count and unique block count
+- `bounds` (JSON)
+- `invalidBlockTypeIds`, `duplicateCoordinates` (from analysis; duplicates list already capped in `structureAnalysis`)
+- `connectedComponentCount26`, `ungroundedBlockCount26`
+- `maxBlockCount` from **`resolved.constraints`**
 
-## Ground-touching rule
+Validation failures surface **`validation.errors`** in the assertion message.
 
-- **`groundTouchingBlockCount`** counts unique cells whose **`y` equals structure `minY`** (computed from unique coordinates — structure-relative floor).
-- **Grounded/reachable:** BFS/seeding from **all** **`y === minY`** occupied cells via the **same** 26-neighbor graph.
-- **No change** to generator **`filterGrounded`** semantics in this issue (that logic remains orthogonal).
-
-## Valid block IDs
-
-- **`getBlockDefinition(blockTypeId)`** from **`src/lib/voxel/blocks/registry.ts`** determines validity; IDs are **not** hard-coded in the analyzer.
-
-## Helper tests added
-
-**`src/lib/voxel/__tests__/structureAnalysis.test.ts`** — scenarios:
-
-- Empty input → **`bounds === null`** and zero connectivity summaries.
-- Face-adjacent blocks → single component and fully grounded flag.
-- Diagonal/contact (`(0,0,0)` and `(1,1,0)`) → one 26-connected component.
-- Far-separated voxel → disconnected components and **`ungroundedBlockCount26`**
-- Duplicate coordinates → counts and capped sorted **`duplicateCoordinates`**
-- Invalid block types → sorted **`invalidBlockTypeIds`**
-
-**`pnpm test:generator`** still targets this milestone via **`vitest.config.ts`** **`include`** (generation + voxel `__tests__` only).
+No custom Vitest reporters.
 
 ## Intentionally deferred
 
-- Full generator invariant suite over all presets and edge-case blueprints.
-- **`maxBlockCount`** enforcement vs blueprint constraints (needs blueprint context in callers/tests).
-- Snapshots, visual/screenshot tests, Playwright, RTL.
-- `/visualizer` or viewer diagnostics UI.
-- Changes to **`filterGrounded`**, blueprint schema, or generator output rules.
-- Aesthetic / roof / entrance / window semantic assertions.
+- Extra blueprint fixtures, regression corpora, snapshotting
+- Visual / Playwright / RTL suites
+- UI diagnostics panel
+- Generator, `filterGrounded`, or blueprint schema changes
+- Aesthetic or strict roof/door/window requirements
+- Golden block counts, bounds, or material distribution assertions
+- Full `VoxelBlock[]` snapshots
 
 ## Test / build / typecheck results
 
 | Check | Result |
 |-------|--------|
-| `pnpm test:generator` | **Passed** (8 tests, 2 files: smoke + structure analysis helpers) |
+| `pnpm test:generator` | **Passed** (14 tests: 7 structure-analysis helpers + 1 smoke + **6** preset invariants) |
 | `pnpm exec tsc --noEmit` | **Passed** (exit 0) |
 | `pnpm run build` | **Passed** (Next.js 16.2.6) |
 
 ## Remaining weaknesses / follow-up ideas
 
-- **`duplicateCoordinates`** cap hides keys beyond the first 20 callers may want a **`maxDuplicateDiagnostics`** option later.
-- **Ground-touching:** `minY` is purely structure-relative — world “world floor” semantics (always `y === 0`) would be a caller policy if stacking ever shifts **`minY` > 0** without intending that layer as “sole ground.”
-- Invariant presets: **`allBlocksGroundedConnected26`**, **`invalidBlockTypeIds`**, **`duplicateCoordinateCount === 0`**, plus **`resolved.constraints.maxBlockCount`** checked in tests (not inside this module).
-- Optional **`exceedsMaxBlockCount(a, max)`** trivial helper alongside blueprint-aware tests later.
+- **Smoke overlap:** the smoke test exercises **`SAMPLE_MEDIEVAL_TOWER_BLUEPRINT`**, same blueprint object as **`northwatch`** — redundant but kept as a minimal pipeline sanity check.
+- **`connectedComponentCount26 === 1`:** if the product adds towns, compounds, or intentionally disconnected structures, split tests or gate this invariant per generator/preset kind.
+- **CI:** run `pnpm test:generator` on PRs if not already wired.
+- Optional **budget helper** if tests need shared `maxBlockCount` messaging across more suites.
