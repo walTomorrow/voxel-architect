@@ -25,3 +25,11 @@ You can start editing the page by modifying `src/app/page.tsx`. The page auto-up
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+### Generator reliability tests
+
+Structural/regression checks for the deterministic tower pipeline are documented in [`docs/generation/GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md). Run:
+
+```bash
+pnpm test:generator
+```
+

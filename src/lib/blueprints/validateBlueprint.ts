@@ -168,7 +168,7 @@ export function validateBlueprint(
     openings.entranceWidth % 2 !== W % 2
   ) {
     notes.push(
-      "Door width parity (odd/even) differs from footprint width parity; front façade composition may look less balanced (see GENERATION_DESIGN_PRINCIPLES §7.2).",
+      "Door width parity (odd/even) differs from footprint width parity; front façade composition may look less balanced (see docs/GENERATION_DESIGN_PRINCIPLES.md §7.2).",
     );
   }
 
