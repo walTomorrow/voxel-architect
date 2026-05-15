@@ -9,6 +9,12 @@ import {
   getMedievalTowerPreset,
 } from "@/src/lib/blueprints/sampleBlueprints";
 import { parseBlueprintExchange, serializeBlueprintExchange } from "@/src/lib/blueprints/blueprintExchange";
+import {
+  type BlueprintSource,
+  createImportedBlueprintSource,
+  createPresetBlueprintSource,
+  formatBlueprintSourceStatus,
+} from "@/src/lib/blueprints/blueprintSource";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
 import { StructureInspectionPanel } from "@/src/components/voxel/StructureInspectionPanel";
@@ -107,8 +113,20 @@ const PRESET_INSPECTION_OPTIONS = [
     id: p.id,
     label: p.label,
   })),
-  { id: IMPORT_DISCONNECTED_PRESET_ID, label: "Other" },
+  { id: IMPORT_DISCONNECTED_PRESET_ID, label: "Imported / Custom" },
 ];
+
+function initialBlueprintSource(): BlueprintSource {
+  const preset = getMedievalTowerPreset(DEFAULT_MEDIEVAL_PRESET_ID);
+  if (!preset) {
+    throw new Error("Default medieval tower preset is missing.");
+  }
+  return createPresetBlueprintSource(
+    preset.id,
+    preset.label,
+    preset.blueprint,
+  );
+}
 
 export function VisualizerClient() {
   const [selectedPresetId, setSelectedPresetId] = useState<string>(
@@ -128,8 +146,18 @@ export function VisualizerClient() {
   const [importText, setImportText] = useState("");
   const [importPanelError, setImportPanelError] = useState<string | null>(null);
   const [importBanner, setImportBanner] = useState<string | null>(null);
+  const [blueprintSource, setBlueprintSource] =
+    useState<BlueprintSource>(initialBlueprintSource);
 
   const validation = useMemo(() => validateBlueprint(blueprint), [blueprint]);
+
+  const sourceStatusLabel = useMemo(
+    () => formatBlueprintSourceStatus(blueprintSource, blueprint),
+    [blueprintSource, blueprint],
+  );
+
+  const presetReloadDisabled =
+    selectedPresetId === IMPORT_DISCONNECTED_PRESET_ID;
 
   const structure: VoxelStructure = useMemo(() => {
     if (!validation.ok || !validation.resolved) {
@@ -261,7 +289,9 @@ export function VisualizerClient() {
       setImportPanelError(`Could not import blueprint: ${result.error}`);
       return;
     }
-    setBlueprint(structuredClone(result.blueprint) as MedievalTowerBlueprint);
+    const imported = structuredClone(result.blueprint) as MedievalTowerBlueprint;
+    setBlueprint(imported);
+    setBlueprintSource(createImportedBlueprintSource(imported));
     setSelectedPresetId(IMPORT_DISCONNECTED_PRESET_ID);
     setLayerViewMode("full");
     setImportPanelOpen(false);
@@ -314,22 +344,41 @@ export function VisualizerClient() {
               type="button"
               className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
               onClick={() => {
+                const preset = getMedievalTowerPreset(DEFAULT_MEDIEVAL_PRESET_ID);
+                if (!preset) return;
                 setSelectedPresetId(DEFAULT_MEDIEVAL_PRESET_ID);
                 setLayerViewMode("full");
-                setBlueprint(cloneSampleBlueprint());
+                setBlueprint(
+                  structuredClone(preset.blueprint) as MedievalTowerBlueprint,
+                );
+                setBlueprintSource(
+                  createPresetBlueprintSource(
+                    preset.id,
+                    preset.label,
+                    preset.blueprint,
+                  ),
+                );
               }}
             >
               Reset to default (Northwatch)
             </button>
             <button
               type="button"
-              className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
+              disabled={presetReloadDisabled}
+              className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
               onClick={() => {
                 const preset = getMedievalTowerPreset(selectedPresetId);
                 if (!preset) return;
                 setLayerViewMode("full");
                 setBlueprint(
                   structuredClone(preset.blueprint) as MedievalTowerBlueprint,
+                );
+                setBlueprintSource(
+                  createPresetBlueprintSource(
+                    preset.id,
+                    preset.label,
+                    preset.blueprint,
+                  ),
                 );
               }}
             >
@@ -339,6 +388,17 @@ export function VisualizerClient() {
         </div>
 
         <div className="mt-4 space-y-2 border-b border-zinc-800/80 pb-4">
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+              Blueprint source
+            </p>
+            <p className="mt-0.5 text-sm text-zinc-200">{sourceStatusLabel}</p>
+            {presetReloadDisabled ? (
+              <p className="mt-1 text-xs text-zinc-500">
+                Select a preset to reload a preset baseline.
+              </p>
+            ) : null}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"

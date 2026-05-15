@@ -78,6 +78,15 @@ The **blueprint lab** at **`/visualizer`** includes **Copy blueprint JSON** in t
 - If parsing fails, the **current blueprint is not replaced**; the panel stays open and the pasted text remains for correction.
 - On success, the editor applies the imported **`blueprint`** object, closes the panel, and clears the textarea. Import is **frontend-only** — nothing is written to a backend or **`localStorage`**.
 
+## Blueprint source status (`/visualizer` lab UI)
+
+The **`/visualizer`** left sidebar shows a **Blueprint source** line for developer clarity (e.g. **Preset — Northwatch Spire (default)**, **Modified preset — Gothic Stone Tower**, **Imported blueprint**, **Modified imported blueprint**).
+
+- Source status is **UI-only** — it is **not** included in exported JSON.
+- **Copy blueprint JSON** still writes only **`kind`**, **`schemaVersion`**, and **`blueprint`** via **`serializeBlueprintExchange`** (no `source`, `presetId`, `modified`, or other metadata fields).
+- The lab compares the current editable blueprint to a **baseline** snapshot set when a preset is loaded/reloaded/reset or when JSON is imported successfully; edits after that show **Modified …** until the baseline is replaced.
+- Choosing **Imported / Custom** in the right-rail preset list disconnects **Reload preset** until a real preset is selected again.
+
 ## Future UI behavior for invalid imports
 
 For any UI that calls **`parseBlueprintExchange`**, failures should surface **`error`** (and optionally **`stage`**) and **must not** replace editor state until **`ok: true`**.
