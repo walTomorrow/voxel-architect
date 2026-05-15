@@ -8,6 +8,7 @@ import {
   SAMPLE_MEDIEVAL_TOWER_BLUEPRINT,
   getMedievalTowerPreset,
 } from "@/src/lib/blueprints/sampleBlueprints";
+import { serializeBlueprintExchange } from "@/src/lib/blueprints/blueprintExchange";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
 import { StructureInspectionPanel } from "@/src/components/voxel/StructureInspectionPanel";
@@ -110,6 +111,9 @@ export function VisualizerClient() {
   const [layerViewMode, setLayerViewMode] = useState<LayerViewMode>("full");
   const [selectedLayer, setSelectedLayer] = useState(0);
   const [blueprintPanelOpen, setBlueprintPanelOpen] = useState(true);
+  const [copyBlueprintFeedback, setCopyBlueprintFeedback] = useState<
+    "success" | "error" | null
+  >(null);
 
   const validation = useMemo(() => validateBlueprint(blueprint), [blueprint]);
 
@@ -131,6 +135,10 @@ export function VisualizerClient() {
     if (!layerExtents) return;
     setSelectedLayer((y) => clampLayerY(y, layerExtents));
   }, [structure.blocks, layerExtents]);
+
+  useEffect(() => {
+    if (!validation.ok) setCopyBlueprintFeedback(null);
+  }, [validation.ok]);
 
   const visibleStructure: VoxelStructure = useMemo(() => {
     if (!validation.ok || structure.blocks.length === 0) {
@@ -187,6 +195,24 @@ export function VisualizerClient() {
     setSelectedPresetId(id);
     setLayerViewMode("full");
     setBlueprint(structuredClone(preset.blueprint) as MedievalTowerBlueprint);
+  };
+
+  const handleCopyBlueprintJson = async () => {
+    setCopyBlueprintFeedback(null);
+    if (!validation.ok) return;
+    const json = serializeBlueprintExchange(blueprint);
+    const clip =
+      typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+    if (!clip || typeof clip.writeText !== "function") {
+      setCopyBlueprintFeedback("error");
+      return;
+    }
+    try {
+      await clip.writeText(json);
+      setCopyBlueprintFeedback("success");
+    } catch {
+      setCopyBlueprintFeedback("error");
+    }
   };
 
   return (
@@ -256,6 +282,36 @@ export function VisualizerClient() {
               Reload preset
             </button>
           </div>
+        </div>
+
+        <div className="mt-4 space-y-2 border-b border-zinc-800/80 pb-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={!validation.ok}
+              className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={() => {
+                void handleCopyBlueprintJson();
+              }}
+            >
+              Copy blueprint JSON
+            </button>
+            {!validation.ok ? (
+              <p className="text-xs text-amber-200/90">
+                Fix validation errors before exporting.
+              </p>
+            ) : null}
+          </div>
+          {copyBlueprintFeedback === "success" ? (
+            <p className="text-xs text-emerald-400/90">
+              Blueprint JSON copied to clipboard!
+            </p>
+          ) : null}
+          {copyBlueprintFeedback === "error" ? (
+            <p className="text-xs text-red-400/95">
+              Blueprint JSON failed to copy. Please check browser settings.
+            </p>
+          ) : null}
         </div>
 
         <dl className="mt-5 space-y-3 border-b border-zinc-800/80 pb-4 text-sm">

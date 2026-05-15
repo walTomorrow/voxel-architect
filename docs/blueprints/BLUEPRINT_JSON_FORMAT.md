@@ -62,6 +62,14 @@ When implementing import UI, run checks in this order and **do not** apply the b
 
 Helpers live in **`src/lib/blueprints/blueprintExchange.ts`** (`parseBlueprintExchange`). Invalid input returns a **discriminated failure** with **`stage`** and **`error`**; it does **not** throw for normal validation failures.
 
+## Export from `/visualizer` (copy to clipboard)
+
+The **blueprint lab** at **`/visualizer`** includes **Copy blueprint JSON** in the left blueprint sidebar. It copies the **current editable blueprint** (the same in-memory object the form edits), **not** a frozen preset snapshot unless that is what is currently loaded, and **not** generated **`VoxelBlock[]`** data.
+
+- The clipboard payload is the **official v1 wrapped** JSON from **`serializeBlueprintExchange`** (pretty-printed: **`kind`**, **`schemaVersion`**, **`blueprint`** only).
+- Export is **enabled only when** the current blueprint **`validateBlueprint()`** passes; otherwise the control is disabled and a short note explains that validation must be fixed first.
+- **Import** from clipboard or file is **not** implemented yet; use **`parseBlueprintExchange`** in a future issue.
+
 ## Future UI behavior for invalid imports
 
 - Show **`error`** (and optionally **`stage`**) to the user.
