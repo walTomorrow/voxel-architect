@@ -4,7 +4,10 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["src/lib/generation/__tests__/**/*.test.ts"],
+    include: [
+      "src/lib/generation/__tests__/**/*.test.ts",
+      "src/lib/voxel/__tests__/**/*.test.ts",
+    ],
   },
   resolve: {
     alias: {

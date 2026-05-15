@@ -1,8 +1,8 @@
-# Change log — Vitest generator test foundation
+# Change log — voxel structure analysis helpers
 
 ## Title of this issue
 
-**Add Vitest generator test foundation** (Generator Reliability Testing — Issue 1)
+**Add reusable voxel structure analysis helpers** (Generator Reliability Testing — Issue 2)
 
 ## Branch name
 
@@ -12,57 +12,90 @@
 
 | File | Change |
 |------|--------|
-| `package.json` | Added `vitest` devDependency and `test:generator` script. |
-| `pnpm-lock.yaml` | Lockfile updated for Vitest and transitive deps. |
-| `vitest.config.ts` | **New:** Node environment, `@` path alias, include pattern for generation tests. |
-| `src/lib/generation/__tests__/generatorPipeline.smoke.test.ts` | **New:** One smoke test for validate → generate pipeline. |
+| `src/lib/voxel/structureAnalysis.ts` | **New:** Pure analysis helpers (`voxelPositionKey`, `analyzeVoxelStructure`). |
+| `src/lib/voxel/__tests__/structureAnalysis.test.ts` | **New:** Tiny Vitest specs for helpers (hand-crafted `VoxelBlock[]`). |
+| `vitest.config.ts` | `test.include` now covers generator smoke tests and voxel helper tests only. |
+| `package.json` | `test:generator` runs `vitest run` (uses configured include patterns). |
 
-## Vitest setup
+## Helper module added
 
-- **`vitest@^3.2.4`** (devDependency).
-- **`vitest.config.ts`** at repo root:
-  - `test.environment: "node"` (no browser / Three.js).
-  - `resolve.alias["@"]` → project root (matches `tsconfig` `"@/*"`).
-  - `test.include`: `src/lib/generation/__tests__/**/*.test.ts`.
+**`src/lib/voxel/structureAnalysis.ts`** — depends only on `./types`, `./blocks/registry`; no React / Three.js / viewer / visualizer.
 
-## Test command added
+## Analysis fields (`analyzeVoxelStructure`)
 
-```bash
-pnpm test:generator
-```
+Returned **`VoxelStructureAnalysis`** includes:
 
-Runs: `vitest run src/lib/generation/__tests__` (generator-scoped).
+| Field | Description |
+|-------|--------------|
+| `blockCount` | Length of input list (counts duplicate-coordinate rows twice). |
+| `uniqueBlockCount` | Distinct lattice cells occupied. |
+| `bounds` | Axis-aligned extents from unique coordinates, or **`null`** if empty. |
+| `duplicateCoordinateCount` | Extra blocks beyond the first per `(x,y,z)` (`sum(count - 1)`). |
+| `duplicateCoordinates` | Sorted occupied keys with duplicates, **capped at 20** for diagnostics. |
+| `blockTypeCounts` | Tallies **per block row** in the input (`blockTypeId` → count). |
+| `invalidBlockTypeIds` | Distinct `blockTypeId` values failing **`getBlockDefinition()`**, sorted alphabetically. |
+| `groundTouchingBlockCount` | Unique cells with **`y === minY`** (`minY` from unique coordinates). |
+| `connectedComponentCount26` | 26-neighbor components over **unique** occupied cells. |
+| `largestComponentSize26` | Largest component size. |
+| `groundedReachableBlockCount26` | Unique cells 26-reachable from any **`y === minY`** seed. |
+| `ungroundedBlockCount26` | `uniqueBlockCount - groundedReachableBlockCount26`. |
+| `allBlocksGroundedConnected26` | `uniqueBlockCount > 0` and zero ungrounded cells and exactly one 26-component. |
 
-## Smoke test behavior
+Exported **`voxelPositionKey(x, y, z)`** builds the coordinate key **`${x},${y},${z}`** (matches generator lattice string usage).
 
-**File:** `src/lib/generation/__tests__/generatorPipeline.smoke.test.ts`
+## Coordinate key strategy
 
-1. **`structuredClone(SAMPLE_MEDIEVAL_TOWER_BLUEPRINT)`** — default Northwatch sample blueprint.
-2. **`validateBlueprint(blueprint)`** — asserts `ok === true` and `resolved` is defined.
-3. **`generateStructureFromResolved(resolved)`** — real generator dispatch (no mocks).
-4. Asserts **`blocks.length > 0`**.
+- Keys are **`"${x},${y},${z}"`** for counting and occupancy maps.
+- **Connectivity** unions only **unique** occupied coordinates; duplicate list positions do not multiply graph nodes.
 
-Does not call React, the visualizer, or `generateStructure()` (which re-validates); matches the app path after validation.
+## Connectivity rule
+
+- **26-neighbor adjacency:** all offsets `(dx, dy, dz)` with each coordinate in **`{-1, 0, 1}`**, excluding **`(0, 0, 0)`**.
+- Cells are adjacent iff both are occupied **uniquely** at that neighbor offset.
+
+## Ground-touching rule
+
+- **`groundTouchingBlockCount`** counts unique cells whose **`y` equals structure `minY`** (computed from unique coordinates — structure-relative floor).
+- **Grounded/reachable:** BFS/seeding from **all** **`y === minY`** occupied cells via the **same** 26-neighbor graph.
+- **No change** to generator **`filterGrounded`** semantics in this issue (that logic remains orthogonal).
+
+## Valid block IDs
+
+- **`getBlockDefinition(blockTypeId)`** from **`src/lib/voxel/blocks/registry.ts`** determines validity; IDs are **not** hard-coded in the analyzer.
+
+## Helper tests added
+
+**`src/lib/voxel/__tests__/structureAnalysis.test.ts`** — scenarios:
+
+- Empty input → **`bounds === null`** and zero connectivity summaries.
+- Face-adjacent blocks → single component and fully grounded flag.
+- Diagonal/contact (`(0,0,0)` and `(1,1,0)`) → one 26-connected component.
+- Far-separated voxel → disconnected components and **`ungroundedBlockCount26`**
+- Duplicate coordinates → counts and capped sorted **`duplicateCoordinates`**
+- Invalid block types → sorted **`invalidBlockTypeIds`**
+
+**`pnpm test:generator`** still targets this milestone via **`vitest.config.ts`** **`include`** (generation + voxel `__tests__` only).
 
 ## Intentionally deferred
 
-- Full invariant suite (duplicate coordinates, valid block IDs, `maxBlockCount`, connectivity/grounding).
-- Edge-case blueprint fixtures and shared structure-analysis helpers.
-- Snapshot / visual / Playwright / RTL tests.
-- Coverage reporting and CI wiring.
-- UI, blueprint schema, or generator logic changes.
+- Full generator invariant suite over all presets and edge-case blueprints.
+- **`maxBlockCount`** enforcement vs blueprint constraints (needs blueprint context in callers/tests).
+- Snapshots, visual/screenshot tests, Playwright, RTL.
+- `/visualizer` or viewer diagnostics UI.
+- Changes to **`filterGrounded`**, blueprint schema, or generator output rules.
+- Aesthetic / roof / entrance / window semantic assertions.
 
 ## Test / build / typecheck results
 
 | Check | Result |
 |-------|--------|
-| `pnpm install` | **Done** (Vitest 3.2.4 added) |
-| `pnpm test:generator` | **Passed** (1 test) |
-| `pnpm exec tsc --noEmit` | **Passed** |
+| `pnpm test:generator` | **Passed** (8 tests, 2 files: smoke + structure analysis helpers) |
+| `pnpm exec tsc --noEmit` | **Passed** (exit 0) |
 | `pnpm run build` | **Passed** (Next.js 16.2.6) |
 
 ## Remaining weaknesses / follow-up ideas
 
-- Add invariant tests in the same `__tests__` folder (Issue 2+).
-- Run `pnpm test:generator` in CI on pull requests.
-- Optional: `vitest watch` script for local dev; `@vitest/coverage-v8` when coverage is needed.
+- **`duplicateCoordinates`** cap hides keys beyond the first 20 callers may want a **`maxDuplicateDiagnostics`** option later.
+- **Ground-touching:** `minY` is purely structure-relative — world “world floor” semantics (always `y === 0`) would be a caller policy if stacking ever shifts **`minY` > 0** without intending that layer as “sole ground.”
+- Invariant presets: **`allBlocksGroundedConnected26`**, **`invalidBlockTypeIds`**, **`duplicateCoordinateCount === 0`**, plus **`resolved.constraints.maxBlockCount`** checked in tests (not inside this module).
+- Optional **`exceedsMaxBlockCount(a, max)`** trivial helper alongside blueprint-aware tests later.
