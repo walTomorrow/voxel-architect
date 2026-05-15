@@ -1,160 +1,132 @@
-# Plan: Material / block-type breakdown (Developer Lab Tools)
+# Plan: Collapsible inspection panel (responsive lab UX)
 
 ## 1. Current understanding
 
 ### Branch and issue
 
-- **Branch:** `feature/material-block-breakdown` (new work on top of **`main`** after **`feature/onion-layer-viewer`** merged).
-- **Milestone:** **Developer Lab Tools** (continuation of the internal lab, not a public marketing redesign).
-- **Issue:** Inspectors can see **aggregate** visible/total block counts in **`StructureInspectionPanel`**, but not **how** the current view (or the full model) is composed by **block type / material**. This follow-up adds a **compact per-type breakdown** aligned with **`VoxelBlock.blockTypeId`**.
+- **Branch:** `feature/collapsible-inspection-panel` (new work on top of **`main`** after **`feature/material-block-breakdown`** merged).
+- **Milestone:** **Developer Lab Tools** (responsive UX polish, not a new inspection feature set).
+- **Issue:** On **narrow viewports**, the shared **`StructureInspectionPanel`** competes with the **`VoxelViewer`** canvas for vertical/horizontal space; the panel stacks (`border-t` on mobile, full width) and can feel **heavy** relative to the 3D viewport. We need a **simple collapse/expand** pattern so users can **reclaim canvas space** while still reaching preset, layers, counts, breakdown, and Refit.
 
-### Existing layer / inspection system (baseline)
+### Current `/visualizer` layout
 
-- **`src/lib/voxel/layerView.ts`** — **Full**, **Build-up** (`y ≤ selectedLayer`), **Slice** (`y === selectedLayer`); helpers for extents and filtering; **no mutation** of blocks.
-- **`StructureInspectionPanel`** — controlled right rail: preset, view mode buttons, layer slider + prev/next, **visible / total** aggregate, Refit.
-- **`VisualizerClient`** / **`PreviewInspectionClient`** — compute **`structure`** (full generated blocks) and **`visibleStructure`** (filtered for **`VoxelViewer.structure`**); pass **`boundsStructure={structure}`** so the camera frames the full model.
-- **`VoxelViewer`** — unchanged contract: render subset vs full bounds.
+- **Outer:** `flex-col lg:flex-row` — **left** blueprint sidebar (`lg` breakpoint vs stacked top on small screens).
+- **Viewer column:** `flex flex-1 flex-col md:flex-row` — **center** canvas (`flex-1`, `min-h-[min(50vh,28rem)]` on small), **right** **`StructureInspectionPanel`** (`w-full` then `md:w-[min(100%,18rem)]`, `border-t` → `md:border-l`).
+- **`StructureInspectionPanel`** — preset, Full/Build-up/Slice, layer slider + prev/next, aggregate **visible / total**, **full-structure block breakdown**, Refit.
 
-### Scope surfaces
+### Current `/preview` layout
 
-- **Yes:** the breakdown must work on both **`/visualizer`** and **`/preview`** — same panel, same props pattern, same pure helpers.
-- **Still** part of the **Developer Lab Tools** milestone: dense, factual, **developer-oriented** copy (not consumer polish).
+- **Page:** `h-dvh` column — header, then **`PreviewInspectionClient`** in `flex-1 min-h-0`.
+- **Client:** `flex-col md:flex-row` — canvas **`flex-1`**, **`StructureInspectionPanel`** same as visualizer (no blueprint editor).
 
----
+### Shared component
 
-## 2. Feature concept
-
-Add a **per `blockTypeId` block count** breakdown:
-
-| Column | Meaning |
-|--------|---------|
-| **Label** | Human-readable where possible; else **`blockTypeId`** string. |
-| **Visible** | Count of blocks of that type in the **currently rendered** block list (after layer filter). |
-| **Total** | Count of that type in the **full** generated **`structure.blocks`** for the current blueprint / preset. |
-
-**Example rows (illustrative):**
-
-```text
-limestone_bricks   812 visible / 1,402 total
-slate_tiles        184 visible / 221 total
-glass               62 visible / 96 total
-oak_planks          28 visible / 41 total
-```
-
-**Placement:** New subsection **below** the existing **“Block counts”** aggregate line, **inside** **`StructureInspectionPanel`**.
-
-**Tone:** Compact monospace or small table; **no** charts, **no** swatches in v1 unless trivial later.
+- **`StructureInspectionPanel.tsx`** is the **single** UI surface for lab inspection on both routes; **`layerView.ts`** and **`blockBreakdown.ts`** stay presentation-agnostic and likely **unchanged** for this milestone.
 
 ---
 
-## 3. Data design
+## 2. Problem (responsive)
 
-### Source of truth
-
-- Each **`VoxelBlock`** already carries **`blockTypeId: BlockTypeId`** (`pack/local`, e.g. `classic/cobblestone`) — see **`src/lib/voxel/types.ts`**.
-
-### Pure helper (new module, suggested path)
-
-**`src/lib/voxel/blockBreakdown.ts`** (or adjacent name):
-
-1. **`countBlocksByType(blocks: readonly VoxelBlock[]): ReadonlyMap<BlockTypeId, number>`**  
-   - Single pass: increment per **`blockTypeId`**.  
-   - Empty input → empty map.  
-   - **Do not** mutate the input array or block objects.
-
-2. **`mergeVisibleAndTotalCounts(...)`** (or one function returning rows):  
-   - Input: **`totalByType`** from **`countBlocksByType(fullBlocks)`**, **`visibleByType`** from **`countBlocksByType(visibleBlocks)`**.  
-   - Output: sorted rows **`{ blockTypeId, visible, total }[]`**.  
-   - **Include only types with `total > 0`** (nonzero in full structure), per product preference; **visible** may be `0` in Slice for types absent on that **y**.  
-   - **Sort** by **descending `total`** (stable tie-breaker: **`blockTypeId`** lexicographic).
-
-3. **`displayLabelForBlockTypeId(id: BlockTypeId): string`**  
-   - **`getBlockDefinition(id)`** from **`src/lib/voxel/blocks/registry.ts`** confirms the id is registered; **`BlockTypeDefinition`** has **no** `displayName` field today — derive a readable string from the **local** segment after `/` (e.g. replace `_` with space, optional title case), or show full **`blockTypeId`** if parsing fails.  
-   - Keeps registry **read-only**; no schema change.
-
-### Where computation runs
-
-- **`VisualizerClient`** and **`PreviewInspectionClient`** already own **`structure`** and **`visibleStructure`** (or equivalent **`visibleStructure.blocks`**).  
-- Add **`useMemo`** in each parent:
-
-  ```text
-  totalByType = countBlocksByType(structure.blocks)
-  visibleByType = countBlocksByType(visibleStructure.blocks)
-  breakdownRows = mergeVisibleAndTotalCounts(visibleByType, totalByType)
-  ```
-
-- **Do not** re-run **`generateStructureFromResolved`** for counts.  
-- **Do not** change the generator, blueprint schema, or validator.
+- **Desktop (`md`+ / `lg`+):** Fixed-width right rail is readable and matches the “three column lab” mental model.
+- **Smaller screens:** The panel is **`w-full`** under the canvas (or beside it in a short row), consuming **`min` height** and pushing the canvas into a **short band**; long breakdown lists + Refit increase scroll length inside the rail.
+- **Goal:** Preserve **all** existing controls without crowding the viewer: user can **hide** the rail to focus on orbit/zoom, then **reopen** it without losing state (in-memory only).
 
 ---
 
-## 4. Display design (`StructureInspectionPanel`)
+## 3. Proposed UX
 
-- **Section title:** e.g. **“By block type”** or **“Materials (counts)”** — short, uppercase micro-label consistent with existing panel sections.
-- **Layout:** Under **Block counts** (`visibleCount` / `totalCount`), add **`border-t`** + **`max-h-*` + `overflow-y-auto`** on the list container (e.g. **`max-h-40`–`48`**) so tall towers do not push **Refit** off-screen; panel remains scrollable as a whole.
-- **Row format:** One line per type, **`{label}: {visible} / {total}`** or two-column monospace alignment — keep **≤18rem** panel width in mind.
-- **Empty / invalid:** If **`!hasStructure`**, hide the breakdown or show a single muted line (“No geometry”); **never** throw.
-- **“Show all”:** Not required for v1 — type count for medieval towers stays small; **revisit** only if a future generator emits dozens of types.
+### Direction (preferred)
 
----
+1. **`md` and wider (align with existing `md:flex-row` viewer split):** Panel **always visible** (expanded) — same as today. No collapse affordance required unless we want an optional “hide” for power users; **default: no collapse on desktop** to minimize churn.
+2. **Below `md`:** Panel becomes **collapsible**:
+   - **Default:** Start **collapsed** on first paint **or** start expanded with one-tap hide — **recommend collapsed by default** on small screens so the canvas is primary on load; document final choice in code comment.
+   - **Collapsed:** Canvas uses **`flex-1`** full width of the viewer column; a **persistent, obvious control** reopens the panel (e.g. **`Inspection`** or **`Show inspection`**).
+   - **Expanded:** Panel behaves as today (full width under canvas in `flex-col`, scrollable content).
 
-## 5. Relationship to layer modes
+### Toggle placement (pick one in implementation)
 
-| Mode | Expected behavior |
-|------|-------------------|
-| **Full** | **`visibleStructure.blocks`** equals **`structure.blocks`** → **visible == total** for every type (same as aggregate line). |
-| **Build-up** | As **`selectedLayer`** increases, **visible** per type is **non-decreasing** (cumulative **y** slab). |
-| **Slice** | **Visible** counts reflect **only** blocks with **`y === selectedLayer`**; many types may be **0** visible while **total > 0**. |
-| **All** | Updating breakdown is **pure derivation** from existing arrays → **no camera movement**, **no generator** calls. |
+| Option | Description |
+|--------|-------------|
+| **A — Thin vertical rail** | When collapsed, a **`~2.5–3rem`** wide strip at the **trailing** edge (bottom of column in `flex-col`, or right edge in row) with label/icon; tap expands full panel. No overlay library. |
+| **B — Floating button** | **`absolute`** button **`top-3 right-3`** on the **canvas wrapper** (`relative` already on visualizer/preview). Tap opens panel (as overlay **or** pushes layout). **Overlay** risks covering voxels — prefer **push layout** (expand panel below or beside) over modal. |
 
----
+**Avoid:** Third-party drawer libraries, new routing, redesign of blueprint sidebar.
 
-## 6. Scope boundaries (explicit non-goals)
+### Shared behavior
 
-Do **not** add:
+- **`/visualizer`** and **`/preview`** should use the **same** collapse rules and the **same** component API so QA is one matrix.
 
-- Charts, pie graphs, sparklines  
-- Color swatches (unless later tied trivially to existing textures — out of v1)  
-- Minecraft export, cost/resource estimates, crafting recipes  
-- AI explanations of composition  
-- Semantic metadata, role/region/sourceFeature filters  
-- **localStorage** / persistence, import/export  
-- New structure types  
-- Major UI redesign of the lab layout  
-- Changes to **`VoxelViewer.tsx`** unless an unforeseen bug appears  
+### Breakpoint
+
+- Tie collapse behavior to the **same Tailwind `md` (768px)** breakpoint already used for **`md:flex-row`** between canvas and panel, unless UX testing shows `lg` is better — document if adjusted.
 
 ---
 
-## 7. Testing plan
+## 4. State and persistence
+
+- **`useState<boolean>`** (or enum `open | collapsed`) **inside `StructureInspectionPanel`** OR in each parent — **prefer internal** to avoid duplicating state in **`VisualizerClient`** and **`PreviewInspectionClient`**, unless a parent needs to know open state for layout (e.g. if the toggle is **outside** the panel). If the toggle is **inside** the panel’s wrapper component, **internal state** is enough.
+- **No `localStorage`**, no URL query params, no cookies — collapse resets on full page reload (acceptable for lab tools).
+
+---
+
+## 5. Scope boundaries (non-goals)
+
+- No new inspection features (extra tabs, charts, AI, etc.).
+- No **persistence**.
+- No import/export, new structure types, **`VoxelViewer`** camera logic changes, or **material charts**.
+- No **autoplay** / layer highlighting.
+- No new **UI component libraries** unless the repo already ships one and it is clearly justified (default: **plain React + Tailwind**).
+
+---
+
+## 6. Interaction with existing tools
+
+After implementation, the expanded panel must still expose:
+
+- Preset `<select>`
+- **Full / Build-up / Slice** mode buttons
+- Layer slider + **Prev / Next** when applicable
+- **Visible / total** aggregate counts
+- **Full-structure block breakdown** list
+- **Refit camera**
+
+Collapsing must **not** reset preset, layer mode, **`selectedLayer`**, or blueprint — only **visibility** of the control surface changes.
+
+---
+
+## 7. Camera behavior
+
+- **`boundsStructure`** / **`structure`** split in **`VoxelViewer`** stays as today.
+- **Do not** increment **`cameraResetNonce`** on collapse/expand unless we discover a **must-fix** canvas sizing bug (not planned).
+- **Resize** of the WebGL canvas from layout reflow is acceptable; **no intentional** “refit on panel toggle” unless current **`LabOrbitRig`** already reacts to bounds fingerprint (it should not change from panel toggle since **full** bounds unchanged).
+
+---
+
+## 8. Testing plan
 
 - **`pnpm run build`**
-- **`/visualizer`** and **`/preview`** load; all **six** presets render.
-- **Full mode:** for each type row, **visible === total**; sums of per-type **total** equal **`structure.blocks.length`**.
-- **Build-up:** scrub **`selectedLayer`** — per-type **visible** counts change monotonically (non-decreasing); aggregate **visible** matches **`visibleStructure.blocks.length`**.
-- **Slice:** pick several **y** — visible per type matches a manual spot-check intuition; types with no voxels on that layer show **0** visible.
-- **Preset change** / **blueprint edit:** breakdown updates to match new **`structure`**.
-- **Invalid blueprint** (`/visualizer`): panel does not crash; breakdown hidden or empty state only.
-- **Camera:** layer scrub and breakdown updates still **do not** refit or jump the camera; **Refit** still works.
+- **`/visualizer`:** desktop (`md`+): layout matches current; all controls work.
+- **`/preview`:** same.
+- **Narrow viewport** (e.g. devtools iPhone / <768px): panel can **collapse** and **expand**; canvas gains usable area when collapsed; after reopen, preset/layers/breakdown/Refit still work.
+- **Preset change**, **layer scrub**, **invalid blueprint** on visualizer — no crashes; collapse state can reset on navigation **only if** we explicitly choose that (default: **preserve** state across invalid/valid toggles if simple).
+- **Refit** after expand/collapse still works.
 
 ---
 
-## 8. Files expected to change
+## 9. Files expected to change
 
 | Likelihood | File |
 |------------|------|
-| **High** | **`src/lib/voxel/blockBreakdown.ts`** (new) — counting, merge, sort, display label helper. |
-| **High** | **`src/components/voxel/StructureInspectionPanel.tsx`** — new optional props (e.g. **`breakdownRows`** or **`breakdown: … | null`**); render list under aggregate counts. |
-| **High** | **`src/app/visualizer/VisualizerClient.tsx`** — `useMemo` breakdown from **`structure`** / **`visibleStructure`**; pass into panel. |
-| **High** | **`src/app/preview/PreviewInspectionClient.tsx`** — same as visualizer. |
+| **High** | **`src/components/voxel/StructureInspectionPanel.tsx`** — wrapper layout, collapse toggle, responsive classes, internal state. |
+| **Maybe** | **`src/app/visualizer/VisualizerClient.tsx`** / **`src/app/preview/PreviewInspectionClient.tsx`** — only if an extra wrapper `relative` / flex tweak is cleaner in the parent than inside the panel. |
+| **Maybe** | **`src/app/preview/page.tsx`** — only if header + client need a **`min-h-0`** tweak after new flex nesting. |
 | **After implementation** | **`CHANGE.md`** |
 | **Now** | **`PLAN.md`** (this document). |
 
-**Unlikely:** **`src/lib/voxel/layerView.ts`**, **`VoxelViewer.tsx`**, **`sampleBlueprints.ts`**, generators, schema, validator — **no** changes unless a small bug is discovered.
-
-**Reference only:** **`CHANGE.md`** (prior merged branch notes); **`registry-types.ts`** (no `displayName` today).
+**Unlikely:** **`VoxelViewer.tsx`**, **`layerView.ts`**, **`blockBreakdown.ts`**, generators, schema, validator, presets.
 
 ---
 
-## 9. Approval checkpoint
+## 10. Approval checkpoint
 
 **Waiting for approval before implementation.**

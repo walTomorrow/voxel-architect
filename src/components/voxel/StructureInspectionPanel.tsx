@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { FullStructureBreakdownRow } from "@/src/lib/voxel/blockBreakdown";
 import type { LayerViewMode } from "@/src/lib/voxel/layerView";
 import { clampLayerY } from "@/src/lib/voxel/layerView";
@@ -36,31 +37,70 @@ function modeButtonClass(active: boolean): string {
   ].join(" ");
 }
 
-export function StructureInspectionPanel({
-  title = "Structure inspection",
-  presetOptions,
-  selectedPresetId,
-  onPresetIdChange,
-  hasStructure,
-  layerViewMode,
-  onLayerViewModeChange,
-  layerExtents,
-  selectedLayer,
-  onSelectedLayerChange,
-  visibleCount,
-  totalCount,
-  fullStructureBreakdown,
-  onRefitCamera,
-}: Props) {
+function LayerSection(props: {
+  readonly layerExtents: { yMin: number; yMax: number };
+  readonly selectedLayer: number;
+  readonly onSelectedLayerChange: (y: number) => void;
+}) {
+  const { layerExtents: ext, selectedLayer, onSelectedLayerChange } = props;
+  return (
+    <section className="space-y-3 border-t border-zinc-800/80 pt-4">
+      <div className="font-mono text-xs text-zinc-300">
+        Current layer{" "}
+        <span className="text-emerald-300/95">y = {selectedLayer}</span>
+        <span className="text-zinc-500">
+          {" "}
+          (range {ext.yMin}–{ext.yMax})
+        </span>
+      </div>
+      <input
+        type="range"
+        className="h-2 w-full cursor-pointer accent-emerald-500"
+        min={ext.yMin}
+        max={ext.yMax}
+        step={1}
+        value={clampLayerY(selectedLayer, ext)}
+        onChange={(e) =>
+          onSelectedLayerChange(
+            clampLayerY(Number.parseInt(e.target.value, 10), ext),
+          )
+        }
+      />
+      <div className="flex gap-2">
+        <button
+          type="button"
+          className="flex-1 rounded-md border border-zinc-600 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-100 hover:bg-zinc-700"
+          onClick={() =>
+            onSelectedLayerChange(clampLayerY(selectedLayer - 1, ext))
+          }
+        >
+          Prev layer
+        </button>
+        <button
+          type="button"
+          className="flex-1 rounded-md border border-zinc-600 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-100 hover:bg-zinc-700"
+          onClick={() =>
+            onSelectedLayerChange(clampLayerY(selectedLayer + 1, ext))
+          }
+        >
+          Next layer
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/** Shared inspection UI (desktop aside + mobile expanded sheet). */
+function InspectionPanelBody(p: Props) {
   const showLayerControls =
-    hasStructure &&
-    layerExtents &&
-    (layerViewMode === "build-up" || layerViewMode === "slice");
+    p.hasStructure &&
+    p.layerExtents &&
+    (p.layerViewMode === "build-up" || p.layerViewMode === "slice");
 
   return (
-    <aside className="flex h-full min-h-0 w-full flex-col gap-5 border-t border-zinc-800/90 bg-zinc-950/98 p-4 md:w-[min(100%,18rem)] md:shrink-0 md:border-l md:border-t-0 md:py-5">
+    <>
       <div>
-        <h2 className="text-sm font-semibold text-white">{title}</h2>
+        <h2 className="text-sm font-semibold text-white">{p.title}</h2>
         <p className="mt-1 text-[11px] leading-snug text-zinc-500">
           Preset loads a hand-authored tower. Layer modes filter the canvas only;
           the block breakdown below always reflects the full generated structure.
@@ -73,12 +113,12 @@ export function StructureInspectionPanel({
         </label>
         <select
           className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-zinc-100"
-          value={selectedPresetId}
-          onChange={(e) => onPresetIdChange(e.target.value)}
+          value={p.selectedPresetId}
+          onChange={(e) => p.onPresetIdChange(e.target.value)}
         >
-          {presetOptions.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
+          {p.presetOptions.map((opt) => (
+            <option key={opt.id} value={opt.id}>
+              {opt.label}
             </option>
           ))}
         </select>
@@ -99,10 +139,10 @@ export function StructureInspectionPanel({
             <button
               key={mode}
               type="button"
-              disabled={!hasStructure}
-              aria-pressed={layerViewMode === mode}
-              className={`${modeButtonClass(layerViewMode === mode)} disabled:cursor-not-allowed disabled:opacity-40`}
-              onClick={() => onLayerViewModeChange(mode)}
+              disabled={!p.hasStructure}
+              aria-pressed={p.layerViewMode === mode}
+              className={`${modeButtonClass(p.layerViewMode === mode)} disabled:cursor-not-allowed disabled:opacity-40`}
+              onClick={() => p.onLayerViewModeChange(mode)}
             >
               {label}
             </button>
@@ -115,54 +155,12 @@ export function StructureInspectionPanel({
         </p>
       </section>
 
-      {showLayerControls && layerExtents ? (
-        <section className="space-y-3 border-t border-zinc-800/80 pt-4">
-          <div className="font-mono text-xs text-zinc-300">
-            Current layer{" "}
-            <span className="text-emerald-300/95">y = {selectedLayer}</span>
-            <span className="text-zinc-500">
-              {" "}
-              (range {layerExtents.yMin}–{layerExtents.yMax})
-            </span>
-          </div>
-          <input
-            type="range"
-            className="h-2 w-full cursor-pointer accent-emerald-500"
-            min={layerExtents.yMin}
-            max={layerExtents.yMax}
-            step={1}
-            value={clampLayerY(selectedLayer, layerExtents)}
-            onChange={(e) =>
-              onSelectedLayerChange(
-                clampLayerY(Number.parseInt(e.target.value, 10), layerExtents),
-              )
-            }
-          />
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="flex-1 rounded-md border border-zinc-600 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-100 hover:bg-zinc-700"
-              onClick={() =>
-                onSelectedLayerChange(
-                  clampLayerY(selectedLayer - 1, layerExtents),
-                )
-              }
-            >
-              Prev layer
-            </button>
-            <button
-              type="button"
-              className="flex-1 rounded-md border border-zinc-600 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-100 hover:bg-zinc-700"
-              onClick={() =>
-                onSelectedLayerChange(
-                  clampLayerY(selectedLayer + 1, layerExtents),
-                )
-              }
-            >
-              Next layer
-            </button>
-          </div>
-        </section>
+      {showLayerControls && p.layerExtents ? (
+        <LayerSection
+          layerExtents={p.layerExtents}
+          selectedLayer={p.selectedLayer}
+          onSelectedLayerChange={p.onSelectedLayerChange}
+        />
       ) : null}
 
       <section className="space-y-2 border-t border-zinc-800/80 pt-4">
@@ -170,9 +168,9 @@ export function StructureInspectionPanel({
           Block counts
         </span>
         <p className="font-mono text-sm text-zinc-200">
-          {hasStructure ? (
+          {p.hasStructure ? (
             <>
-              {visibleCount.toLocaleString()} / {totalCount.toLocaleString()}{" "}
+              {p.visibleCount.toLocaleString()} / {p.totalCount.toLocaleString()}{" "}
               <span className="text-zinc-500">visible / total</span>
             </>
           ) : (
@@ -181,7 +179,7 @@ export function StructureInspectionPanel({
         </p>
       </section>
 
-      {fullStructureBreakdown && fullStructureBreakdown.length > 0 ? (
+      {p.fullStructureBreakdown && p.fullStructureBreakdown.length > 0 ? (
         <section className="space-y-2 border-t border-zinc-800/80 pt-4">
           <span className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
             Block breakdown
@@ -190,7 +188,7 @@ export function StructureInspectionPanel({
             Counts by type — full structure (not layer-filtered).
           </p>
           <ul className="max-h-44 space-y-1 overflow-y-auto font-mono text-[11px] leading-snug text-zinc-300">
-            {fullStructureBreakdown.map((row) => (
+            {p.fullStructureBreakdown.map((row) => (
               <li
                 key={row.blockTypeId}
                 className="flex justify-between gap-2 border-b border-zinc-800/40 py-0.5 last:border-b-0"
@@ -210,13 +208,93 @@ export function StructureInspectionPanel({
       <div className="mt-auto border-t border-zinc-800/80 pt-4">
         <button
           type="button"
-          disabled={!hasStructure}
+          disabled={!p.hasStructure}
           className="w-full rounded-md border border-zinc-600 bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
-          onClick={onRefitCamera}
+          onClick={p.onRefitCamera}
         >
           Refit camera
         </button>
       </div>
-    </aside>
+    </>
+  );
+}
+
+export function StructureInspectionPanel(props: Props) {
+  // Below md: start collapsed so the canvas is primary (ephemeral; no persistence).
+  const [mobileInspectionOpen, setMobileInspectionOpen] = useState(false);
+  // md+: default expanded; user can collapse to a slim strip for more canvas width.
+  const [desktopInspectionOpen, setDesktopInspectionOpen] = useState(true);
+
+  return (
+    <>
+      {desktopInspectionOpen ? (
+        <aside className="hidden h-full min-h-0 w-full flex-row overflow-hidden border-zinc-800/90 bg-zinc-950/98 md:flex md:w-[min(100%,18rem)] md:shrink-0 md:border-l md:border-t-0">
+          <button
+            type="button"
+            className="w-10 shrink-0 self-stretch min-h-0 border-r border-zinc-700/60 bg-zinc-900/40 text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-inset"
+            title="Hide inspection"
+            aria-label="Hide inspection"
+            onClick={() => setDesktopInspectionOpen(false)}
+          >
+            <span className="flex h-full w-full flex-col items-center justify-center">
+              <span className="text-xl leading-none text-zinc-400" aria-hidden>
+                ›
+              </span>
+            </span>
+          </button>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-5 overflow-y-auto p-4 md:p-5">
+            <InspectionPanelBody {...props} />
+          </div>
+        </aside>
+      ) : (
+        <div className="hidden h-full w-10 shrink-0 flex-col border-l border-zinc-800/90 bg-zinc-950/98 md:flex">
+          <button
+            type="button"
+            className="flex min-h-0 flex-1 flex-col items-center justify-center px-0 py-4 text-zinc-500 transition-colors hover:bg-zinc-900/80 hover:text-emerald-200/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-inset"
+            title="Show inspection"
+            aria-label="Show inspection"
+            onClick={() => setDesktopInspectionOpen(true)}
+          >
+            <span className="text-xl leading-none text-zinc-400" aria-hidden>
+              ‹
+            </span>
+          </button>
+        </div>
+      )}
+
+      {/* <md: collapsible strip + sheet */}
+      <div className="flex w-full shrink-0 flex-col border-t border-zinc-800/90 bg-zinc-950/98 md:hidden">
+        {!mobileInspectionOpen ? (
+          <button
+            type="button"
+            className="w-full px-4 py-3 text-left text-sm font-medium text-emerald-200/95 hover:bg-zinc-900/80"
+            onClick={() => setMobileInspectionOpen(true)}
+          >
+            Show inspection
+          </button>
+        ) : (
+          <aside className="flex max-h-[min(52vh,28rem)] min-h-0 flex-row overflow-hidden">
+            <button
+              type="button"
+              className="w-10 shrink-0 self-stretch min-h-0 border-r border-zinc-700/60 bg-zinc-900/40 text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-inset"
+              title="Hide inspection"
+              aria-label="Hide inspection"
+              onClick={() => setMobileInspectionOpen(false)}
+            >
+              <span className="flex h-full w-full flex-col items-center justify-center">
+                <span className="text-xl leading-none text-zinc-400" aria-hidden>
+                  ›
+                </span>
+              </span>
+            </button>
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4">
+              <div className="flex flex-col gap-5">
+                <InspectionPanelBody {...props} />
+              </div>
+            </div>
+          </aside>
+        )}
+      </div>
+    </>
   );
 }
