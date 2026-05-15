@@ -1,106 +1,83 @@
-# Change log — Collapsible inspection panel (responsive lab)
+# Change log — Blueprint Portability: define import/export JSON format
 
-## 1. Title of this milestone
+## 1. Title of this issue
 
-**Responsive inspection rail:** below the **`md`** breakpoint, **`StructureInspectionPanel`** starts **collapsed** with a **Show inspection** control; expanded sheet includes **Hide inspection** and all existing lab tools. **`md` and up** keeps the **same fixed right rail** as before (no extra collapse UI on desktop).
+**Define blueprint import/export format** — official **v1 wrapped JSON** contract, **`blueprintExchange`** helpers, and **`docs/blueprints/`** documentation. **No** import/export UI, clipboard, or visualizer wiring in this issue.
 
 ## 2. Branch name
 
-`feature/collapsible-inspection-panel`
+`milestone/blueprint-portability`
 
 ## 3. Files changed
 
 | File | Change |
 |------|--------|
-| `src/components/voxel/StructureInspectionPanel.tsx` | Split into **`InspectionPanelBody`** (shared content), **`LayerSection`** (typed layer controls), and wrapper: **desktop** `aside` (`hidden md:flex`, unchanged classes), **mobile** `md:hidden` collapsible (`useState`, default **collapsed**). |
+| `src/lib/blueprints/blueprintExchange.ts` | **New:** kind + schema constants, **`BlueprintExchangeEnvelopeV1`**, **`serializeBlueprintExchange`**, **`parseBlueprintExchange`** with discriminated **`ParseBlueprintExchangeResult`**. |
+| `docs/blueprints/BLUEPRINT_JSON_FORMAT.md` | **New:** v1 format spec, validation order, non-goals, future UI behavior for invalid imports. |
+| `docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md` | **Moved** from repo root `BLUEPRINT_FEATURE_CATALOG.md` (content unchanged). |
+| `GENERATION_DESIGN_PRINCIPLES.md` | Link text updated to **`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`**. |
+| `PLAN.md` | Catalog path notes aligned with implemented layout. |
 
-## 4. What was implemented
+## 4. Official v1 envelope shape
 
-- **Desktop (`md`+):** Single **`aside`** — same width, border, padding, and vertical layout as the pre-milestone panel.
-- **Mobile (`<md`):** Default **collapsed** — full-width **Show inspection** row; expanded — header row (**Inspection** + **Hide inspection**) + scrollable **`aside`** (`max-h-[min(52vh,28rem)]`) with the same body as desktop.
-- **State:** `mobileInspectionOpen` only; **no** `localStorage`, URL, or cookies.
-- **No** changes to **`VisualizerClient`**, **`PreviewInspectionClient`**, **`VoxelViewer`**, **`layerView`**, or **`blockBreakdown`** — behavior is encapsulated in the panel.
+```json
+{
+  "kind": "voxel-architect-blueprint",
+  "schemaVersion": 1,
+  "blueprint": {}
+}
+```
 
-## 5. Small-screen collapse behavior
+**Required top-level fields only:** `kind`, `schemaVersion`, `blueprint`. **No** optional metadata (no timestamps, no app fields) in v1.
 
-- Collapsed: one tap target; canvas column keeps **`flex-1`** height in parent layout (more room than a full open panel under the canvas).
-- Expanded: all controls (preset, modes, layer slider, counts, breakdown, Refit) unchanged in behavior.
+## 5. Helper functions added
 
-## 6. Desktop behavior
+- **`VOXEL_ARCHITECT_BLUEPRINT_KIND`** — literal **`"voxel-architect-blueprint"`**.
+- **`BLUEPRINT_EXCHANGE_SCHEMA_VERSION`** — **`1`**.
+- **`serializeBlueprintExchange(blueprint)`** — builds the envelope and returns **`JSON.stringify(..., null, 2)`**.
+- **`parseBlueprintExchange(text)`** — layered checks; returns **`{ ok: true, blueprint }`** or **`{ ok: false, stage, error }`**; **does not throw** on normal invalid input (JSON parse is try/catch only).
 
-- Unchanged layout and discoverability: no collapse toggle on **`md+`**; no new parent wrappers required.
+## 6. Validation behavior (`parseBlueprintExchange`)
 
-## 7. How existing inspection tools were preserved
+Stages (in order): **`json`** → **`root`** → **`kind`** → **`schemaVersion`** → **`blueprint`** (presence + non-array object) → **`structureType`** (**`medieval_tower`** only) → **`validateBlueprint`**. Raw inner JSON without the wrapper is **not** accepted.
 
-- **`InspectionPanelBody`** is the single source for form content; rendered inside desktop **`aside`** and inside mobile expanded **`aside`** (CSS hides the non-active branch at each breakpoint so only one branch is interactive per viewport width).
+## 7. Documentation
 
-## 8. How camera behavior was preserved
+- **`docs/blueprints/BLUEPRINT_JSON_FORMAT.md`** — blueprint vs voxels, **`schemaVersion`** meaning, wrapped-only v1, validation order, non-goals.
+- **`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`** — same catalog as before; new home under **`docs/blueprints/`**.
 
-- **`cameraResetNonce`** is not touched on collapse/expand.
-- **`VoxelViewer`** props unchanged by this diff; layout reflow may resize the canvas only.
+## 8. Doc move
 
-## 9. What was intentionally deferred
+- **From:** `BLUEPRINT_FEATURE_CATALOG.md` (repo root)  
+- **To:** `docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`
 
-- Persistence of open/collapsed state, resize breakpoint tuning beyond **`md`**, drawer libraries, animated transitions, deduplicating DOM for screen readers with **`useSyncExternalStore`**.
+## 9. Intentionally deferred
 
-## 10. Manual QA notes
+- Import/export **UI**, clipboard, textarea, **`localStorage`**, backend, database.
+- Raw blueprint-only JSON import, **`schemaVersion` > 1**, optional envelope fields, source labels, AI, Minecraft / voxel export.
+- **Automated unit tests** — repo has **no** Vitest/Jest setup; a full test framework was **not** added for this issue.
 
-| Check | Where |
-|-------|--------|
-| **`md+`:** panel always visible; all controls | **`/visualizer`**, **`/preview`** |
-| **`<md`:** starts collapsed; Show/Hide; controls after reopen; preset/layers/breakdown/Refit | Both |
-| **Invalid blueprint** | **`/visualizer`** — panel still usable to reload preset |
-| **Camera** | No intentional refit on toggle |
+## 10. Manual verification (helpers)
+
+Recommended quick checks in Node REPL or a scratch script (not committed):
+
+- Serialize **`SAMPLE_MEDIEVAL_TOWER_BLUEPRINT`** (or a preset clone) → parse → expect **`ok: true`**.
+- Malformed JSON → **`ok: false`**, **`stage: "json"`**.
+- Wrong **`kind`** → **`stage: "kind"`**.
+- **`schemaVersion": "1"`** (string) → **`stage: "schemaVersion"`**.
+- Missing **`blueprint`** → **`stage: "blueprint"`**.
+- **`structureType": "other"`** → **`stage: "structureType"`**.
+- Valid shape but **`dimensions.width": 2`** (fails validator) → **`stage: "validateBlueprint"`**.
 
 ## 11. Build result
 
 | Check | Result |
 |-------|--------|
-| **`pnpm run build`** | **Passed** (Next.js 16.2.6, Turbopack). |
+| **`pnpm exec tsc --noEmit`** | **Passed** |
+| **`pnpm run build`** | **Passed** (Next.js 16.2.6, Turbopack) |
 
 ## 12. Remaining weaknesses / follow-up ideas
 
-- Two **`InspectionPanelBody`** instances exist in the React tree (one hidden by CSS at a time) — acceptable for the lab; could be replaced with a single branch using **`matchMedia`** + conditional render if hydration or a11y needs tighten.
-- Optional: remember open state **only for session** without `localStorage` (e.g. reset on route change only).
-
----
-
-*This file was overwritten for this milestone.*
-
-## 13. Append — Desktop inspection collapse + visualizer blueprint collapse
-
-Follow-up after initial mobile-only collapse: **`md` and wider** now expose a way to hide the right inspection rail, and **`/visualizer`** can hide the left blueprint editor so both side panels are collapsible on desktop.
-
-### `StructureInspectionPanel.tsx`
-
-- **New state:** `desktopInspectionOpen`, default **`true`** (ephemeral; no persistence).
-- **`md`+ when expanded:** Same effective width (`md:w-[min(100%,18rem)]`), with a top bar (**Hide inspection**) and scrollable body (`overflow-y-auto`) so long breakdown lists do not overflow the viewport.
-- **`md`+ when collapsed:** A **`w-10`** strip on the right with a control (**‹**, `title` / `aria-label`: “Show inspection”) to reopen the full rail.
-- **`<md`:** Unchanged — still uses **`mobileInspectionOpen`** (default collapsed) with **Show inspection** / sheet **Hide inspection**.
-
-### `VisualizerClient.tsx`
-
-- **New state:** `blueprintPanelOpen`, default **`true`**.
-- **When expanded:** Existing blueprint **`aside`** unchanged in role; added **Hide blueprint** next to **Reset to default** and **Reload preset**.
-- **When collapsed:**
-  - **`<lg`:** Full-width **Show blueprint editor** row (`border-b`, same chrome family as mobile inspection) above the viewer + inspection column.
-  - **`lg`+:** **`w-10`** left strip with **›** (`title` / `aria-label`: “Show blueprint editor”) before the main viewer row, matching the right-rail strip pattern.
-
-### Files touched (this append)
-
-| File | Change |
-|------|--------|
-| `src/components/voxel/StructureInspectionPanel.tsx` | Desktop conditional rail vs slim strip; header **Hide inspection**; inner scroll region. |
-| `src/app/visualizer/VisualizerClient.tsx` | `blueprintPanelOpen`; conditional render for collapsed strip / show bar; **Hide blueprint** in header actions. |
-
-### QA to add for this append
-
-| Check | Where |
-|-------|-------|
-| **`md`+:** Hide / show inspection; controls and Refit after reopen | **`/visualizer`**, **`/preview`** |
-| **Visualizer:** Hide blueprint; **`<lg`** show bar; **`lg`+** left strip; editor and validation after reopen | **`/visualizer`** |
-| **`PreviewInspectionClient`:** no blueprint column — inspection desktop collapse only | **`/preview`** |
-
-### Build
-
-- **`pnpm exec tsc --noEmit`** — passed after this append (verify again after local edits).
+- Add **Vitest** (or similar) and codify the manual matrix above as **`blueprintExchange`** unit tests.
+- **`parseBlueprintExchange`** trusts JSON for **`blueprint`** shape after **`structureType`** check; stricter runtime schema (e.g. Zod) could be added if imports become a security or robustness concern.
+- Future **import UI** on **`/visualizer`** should call **`parseBlueprintExchange`** and only then update React state.

@@ -4,7 +4,7 @@
 
 This document defines the guiding design principles for Voxel Architect’s blueprint, generator, viewer, and future AI-agent behavior.
 
-`BLUEPRINT_FEATURE_CATALOG.md` describes **what architectural features the system may understand**.
+`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md` describes **what architectural features the system may understand**.
 
 This document describes **how the system should behave when generating, validating, editing, and presenting architecture**.
 
