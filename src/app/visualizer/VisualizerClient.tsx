@@ -185,6 +185,18 @@ export function VisualizerClient() {
     }
   }, [validation.ok]);
 
+  useEffect(() => {
+    if (copyBlueprintFeedback !== "success") return;
+    const id = window.setTimeout(() => setCopyBlueprintFeedback(null), 5000);
+    return () => window.clearTimeout(id);
+  }, [copyBlueprintFeedback]);
+
+  useEffect(() => {
+    if (!importBanner) return;
+    const id = window.setTimeout(() => setImportBanner(null), 5000);
+    return () => window.clearTimeout(id);
+  }, [importBanner]);
+
   const visibleStructure: VoxelStructure = useMemo(() => {
     if (!validation.ok || structure.blocks.length === 0) {
       return { blocks: [] };
@@ -244,6 +256,9 @@ export function VisualizerClient() {
     setSelectedPresetId(id);
     setLayerViewMode("full");
     setBlueprint(structuredClone(preset.blueprint) as MedievalTowerBlueprint);
+    setBlueprintSource(
+      createPresetBlueprintSource(preset.id, preset.label, preset.blueprint),
+    );
   };
 
   const handleCopyBlueprintJson = async () => {
@@ -410,8 +425,17 @@ export function VisualizerClient() {
             >
               Copy blueprint JSON
             </button>
+            {!importPanelOpen ? (
+              <button
+                type="button"
+                className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
+                onClick={handleImportPanelOpen}
+              >
+                Import blueprint JSON
+              </button>
+            ) : null}
             {!validation.ok ? (
-              <p className="text-xs text-amber-200/90">
+              <p className="w-full text-xs text-amber-200/90">
                 Fix validation errors before exporting.
               </p>
             ) : null}
@@ -427,17 +451,8 @@ export function VisualizerClient() {
             </p>
           ) : null}
 
-          <div className="pt-2">
-            {!importPanelOpen ? (
-              <button
-                type="button"
-                className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
-                onClick={handleImportPanelOpen}
-              >
-                Import blueprint JSON
-              </button>
-            ) : (
-              <div className="space-y-2 rounded-md border border-zinc-700 bg-zinc-900/50 p-3">
+          {importPanelOpen ? (
+            <div className="space-y-2 rounded-md border border-zinc-700 bg-zinc-900/50 p-3">
                 <label className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
                   Pasted JSON (wrapped format only)
                 </label>
@@ -464,12 +479,11 @@ export function VisualizerClient() {
                     Cancel
                   </button>
                 </div>
-                {importPanelError ? (
-                  <p className="text-xs text-red-400/95">{importPanelError}</p>
-                ) : null}
-              </div>
-            )}
-          </div>
+              {importPanelError ? (
+                <p className="text-xs text-red-400/95">{importPanelError}</p>
+              ) : null}
+            </div>
+          ) : null}
           {importBanner ? (
             <p className="text-xs text-emerald-400/90">{importBanner}</p>
           ) : null}

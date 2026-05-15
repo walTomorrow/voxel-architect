@@ -1,85 +1,66 @@
-# Change log — Blueprint source status and docs
+# Change log — Blueprint portability QA fixes
 
-## 1. Title of this issue
+## Title
 
-**Add blueprint source status and docs** — UI-only provenance label on **`/visualizer`**; v1 export envelope unchanged.
+Blueprint portability QA fixes (`milestone/blueprint-portability`)
 
-## 2. Branch name
-
-`milestone/blueprint-portability`
-
-## 3. Files changed
+## Files changed
 
 | File | Change |
 |------|--------|
-| `src/lib/blueprints/blueprintSource.ts` | **New:** `BlueprintSource` type, `blueprintsDeepEqual`, `formatBlueprintSourceStatus`, preset/import source factories. |
-| `src/app/visualizer/VisualizerClient.tsx` | `blueprintSource` state, derived status label, transitions on preset/reset/reload/import, disabled **Reload preset** when disconnected, **Imported / Custom** select label. |
-| `docs/blueprints/BLUEPRINT_JSON_FORMAT.md` | **Blueprint source status** section (UI-only, not exported). |
+| `src/lib/blueprints/blueprintImportStructure.ts` | **New:** required-field shape checks for imported `medieval_tower` blueprints (types aligned with `types.ts` + `/visualizer` controls). |
+| `src/lib/blueprints/blueprintExchange.ts` | Call structural validation before `validateBlueprint()`; keep `try/catch` around validator. |
+| `docs/blueprints/BLUEPRINT_JSON_FORMAT.md` | Document required inner blueprint fields, rejection of misspelled keys, extra-key policy. |
 
-## 4. Source state approach chosen
+Prior QA commits on this branch also included `VisualizerClient.tsx` (5s success dismiss, Copy/Import button row, import error display).
 
-- **Baseline + kind** stored in React state (`BlueprintSource`), not in JSON.
-- **Modified** is **derived** at render time by comparing the current `blueprint` to `baseline` via `JSON.stringify` deep equality (`blueprintSource.ts`). This reuses the same snapshot the lab already clones on load/import and avoids tracking a separate “dirty” flag that could drift.
-- **Tradeoff:** comparison is simple and robust for this lab’s plain JSON-shaped blueprints; it is not a semantic diff and could theoretically disagree if key order differed (unlikely here because edits use immutable spreads and `structuredClone`).
+## Stricter imported blueprint structural validation
 
-## 5. Source labels added
+**Problem:** Typos such as `constraints.maxBlock` instead of `constraints.maxBlockCount` could pass `validateBlueprint()` (undefined comparisons) and reach `setBlueprint()`, causing React controlled/uncontrolled input warnings on `/visualizer`.
 
-Displayed under **Blueprint source** in the left workflow sidebar:
+**Fix:** `validateImportedMedievalTowerStructure()` verifies required top-level sections (`metadata`, `dimensions`, `materials`, `massing`, `levels`, `openings`, `roof`, `features`, `constraints`) and nested fields used by the editor (including `constraints.maxBlockCount`, all material slots, opening numeric fields, etc.) with correct JSON types (`string` / `number` / `boolean`).
 
-| Condition | Label |
-|-----------|--------|
-| Preset, matches baseline | `Preset — <preset label>` |
-| Preset, differs from baseline | `Modified preset — <preset label>` |
-| Import, matches baseline | `Imported blueprint` |
-| Import, differs from baseline | `Modified imported blueprint` |
-| Custom kind (reserved) | `Custom blueprint` / `Modified custom blueprint` |
+**Example failure:** `Missing required blueprint field: constraints.maxBlockCount` → UI: `Could not import blueprint: Missing required blueprint field: constraints.maxBlockCount`.
 
-## 6. Source transition behavior
+**Policy:** Unknown extra keys are **allowed**; they do not replace required keys.
 
-- **Initial load:** preset source for default **Northwatch** with that preset’s blueprint as baseline.
-- **Select real preset (right rail or workflow):** loads preset, sets preset source + baseline.
-- **Reset to default:** loads default preset, preset source + baseline.
-- **Reload preset:** reloads selected preset, preset source + baseline (only when a real preset id is selected).
-- **Import success:** imported source + baseline from imported blueprint; `selectedPresetId` → disconnect sentinel.
-- **Sentinel select (`Imported / Custom`):** updates select only; does **not** change blueprint or source (imported/modified state preserved).
+## Controlled / uncontrolled input warning
 
-## 7. Preset reload behavior
+Prevented by rejecting incomplete shapes **before** `setBlueprint()`.
 
-- **Reload preset** is **disabled** when `selectedPresetId === __va_no_preset__`.
-- Helper text: **Select a preset to reload a preset baseline.**
-- Right-rail option label renamed from **Other** to **Imported / Custom** (internal id unchanged).
+## `validateBlueprint` exception handling
 
-## 8. Export JSON format unchanged
+`parseBlueprintExchange()` still wraps `validateBlueprint()` in **`try/catch`** so malformed nested access cannot crash the page.
 
-- **Copy blueprint JSON** still calls **`serializeBlueprintExchange(blueprint)`** only.
-- Envelope remains `{ kind, schemaVersion, blueprint }` — no `source`, `presetId`, `modified`, or optional metadata added.
+## Success message auto-dismiss (already on branch)
 
-## 9. Documentation
+- Copy and import success messages clear after **5 seconds** with timer cleanup in `useEffect`.
 
-- **`docs/blueprints/BLUEPRINT_JSON_FORMAT.md`** — source status is lab UI-only, baseline/modified behavior, export still minimal v1.
+## Copy / Import button layout (already on branch)
 
-## 10. Intentionally deferred
+- **Copy blueprint JSON** and **Import blueprint JSON** share one `flex-wrap` row when the import panel is closed.
 
-- Source fields in JSON, `localStorage`, edit history, undo/redo, tooltips, file upload/download, raw JSON import, **`/preview`** changes, `custom` creation flow beyond sentinel row.
+## Unchanged
 
-## 11. Build / TypeScript
+- v1 envelope (`kind`, `schemaVersion`, `blueprint` only)
+- Wrapped-only import, source status, layer Full on success, `/preview`, export behavior
+
+## Build / TypeScript
 
 | Check | Result |
 |-------|--------|
-| **`pnpm exec tsc --noEmit`** | **Passed** |
-| **`pnpm run build`** | **Passed** (Next.js 16.2.6, Turbopack) |
+| `pnpm exec tsc --noEmit` | **Passed** |
+| `pnpm run build` | **Passed** |
 
-## 12. Manual QA notes
+## Manual QA notes
 
-1. **`/visualizer`** — **Blueprint source** visible above copy/import controls.
-2. Default → **Preset — Northwatch Spire (default)**; edit field → **Modified preset — …**.
-3. **Reset** → preset label again; **select another preset** → **Preset — …**; modify → **Modified preset — …**.
-4. **Copy** → paste JSON has only `kind`, `schemaVersion`, `blueprint`.
-5. **Import** → **Imported blueprint**; edit → **Modified imported blueprint**; **Reload preset** disabled with helper.
-6. **Select real preset after import** → blueprint replaced; **Preset — …** label.
-7. **`/preview`** unchanged.
+1. Valid export → import → success; banner clears ~5s.
+2. Copy success clears ~5s; Copy + Import side by side.
+3. Paste valid JSON with `constraints.maxBlock` instead of `maxBlockCount` → inline error; blueprint unchanged; no controlled/uncontrolled warning.
+4. Malformed JSON / raw inner blueprint → still rejected inline.
+5. `/preview` unchanged.
 
-## 13. Remaining weaknesses / follow-up ideas
+## Remaining weaknesses
 
-- **`custom` kind** is typed but unused unless we add a dedicated “start from blank” flow.
-- Deep equality via `JSON.stringify` is adequate for the lab; a field-order–safe compare could be added if imports ever produce different key ordering.
+- Structural checks enforce presence and JSON types, not enum value validity (that remains `validateBlueprint()`).
+- Optional `metadata.description` / `metadata.notes` are not required for import (only `metadata.name`).

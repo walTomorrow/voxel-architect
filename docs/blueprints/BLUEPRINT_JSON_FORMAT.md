@@ -73,8 +73,10 @@ The **blueprint lab** at **`/visualizer`** includes **Copy blueprint JSON** in t
 
 **`/visualizer`** also provides an inline **Import blueprint JSON** workflow in the same sidebar:
 
-- Users paste **official wrapped** JSON only; **`parseBlueprintExchange`** performs all envelope checks and **`validateBlueprint()`** before any editor update.
+- Users paste **official wrapped** JSON only; **`parseBlueprintExchange`** performs envelope checks, **required-field shape** checks for the inner blueprint (`validateImportedMedievalTowerStructure`), then **`validateBlueprint()`**, before any editor update.
 - **Raw** inner blueprint JSON (no **`kind`** / **`schemaVersion`** wrapper) is **rejected** by the parser in v1.
+- The inner **`blueprint`** must include **all required sections and fields** for the supported type (currently **`medieval_tower`**) — e.g. `dimensions`, `materials`, `constraints.maxBlockCount`. **Misspelled or missing required keys** (such as `constraints.maxBlock` instead of `constraints.maxBlockCount`) are **rejected** with a clear error and the editor state is **not** updated.
+- **Extra unknown keys** may be present for now; they do **not** satisfy a missing required field.
 - If parsing fails, the **current blueprint is not replaced**; the panel stays open and the pasted text remains for correction.
 - On success, the editor applies the imported **`blueprint`** object, closes the panel, and clears the textarea. Import is **frontend-only** — nothing is written to a backend or **`localStorage`**.
 

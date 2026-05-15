@@ -1,3 +1,4 @@
+import { validateImportedMedievalTowerStructure } from "./blueprintImportStructure";
 import type { MedievalTowerBlueprint, StructureBlueprint } from "./types";
 import { validateBlueprint } from "./validateBlueprint";
 
@@ -113,15 +114,26 @@ export function parseBlueprintExchange(
     );
   }
 
+  const structureError = validateImportedMedievalTowerStructure(rawBp);
+  if (structureError) {
+    return failure("blueprint", structureError);
+  }
+
   const blueprint = rawBp as StructureBlueprint;
-  const validation = validateBlueprint(blueprint);
-  if (!validation.ok) {
-    return failure(
-      "validateBlueprint",
-      validation.errors.length > 0
-        ? validation.errors.join("; ")
-        : "Blueprint validation failed.",
-    );
+  try {
+    const validation = validateBlueprint(blueprint);
+    if (!validation.ok) {
+      return failure(
+        "validateBlueprint",
+        validation.errors.length > 0
+          ? validation.errors.join("; ")
+          : "Blueprint validation failed.",
+      );
+    }
+  } catch (e) {
+    const message =
+      e instanceof Error ? e.message : "Blueprint validation failed.";
+    return failure("validateBlueprint", message);
   }
 
   return { ok: true, blueprint };
