@@ -1,25 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { MEDIEVAL_TOWER_PRESETS } from "@/src/lib/blueprints/sampleBlueprints";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
 import { analyzeVoxelStructure } from "@/src/lib/voxel/structureAnalysis";
 
+import { EDGE_CASE_BLUEPRINT_FIXTURES } from "./fixtures/edgeCaseBlueprints";
 import { assertGeneratedStructureHardInvariants } from "./testUtils";
 
-describe("generator preset invariants (curated medieval towers)", () => {
-  it.each(MEDIEVAL_TOWER_PRESETS)(
-    "preset $id: validates, generates, and passes structural invariants",
-    (preset) => {
-      const blueprint = structuredClone(preset.blueprint);
+describe("generator edge-case blueprint invariants", () => {
+  it.each(EDGE_CASE_BLUEPRINT_FIXTURES)(
+    "fixture $id: validates, generates, and passes structural invariants",
+    (fixture) => {
+      const blueprint = structuredClone(fixture.blueprint);
       const validation = validateBlueprint(blueprint);
 
       expect(
         validation.ok,
-        `[${preset.id}] ${preset.label}: validation failed — errors=${JSON.stringify(validation.errors)}`,
+        `[${fixture.id}] ${fixture.label}: validation failed — errors=${JSON.stringify(validation.errors)} notes=${JSON.stringify(validation.notes)}`,
       ).toBe(true);
       expect(
         validation.resolved,
-        `[${preset.id}] ${preset.label}: validateBlueprint ok but missing resolved`,
+        `[${fixture.id}] ${fixture.label}: validateBlueprint ok but missing resolved`,
       ).toBeDefined();
 
       const resolved = validation.resolved!;
@@ -27,8 +27,8 @@ describe("generator preset invariants (curated medieval towers)", () => {
       const analysis = analyzeVoxelStructure(blocks);
 
       assertGeneratedStructureHardInvariants({
-        id: preset.id,
-        label: preset.label,
+        id: fixture.id,
+        label: fixture.label,
         blocks,
         analysis,
         maxBlockCount: resolved.constraints.maxBlockCount,

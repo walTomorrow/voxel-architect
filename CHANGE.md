@@ -1,8 +1,8 @@
-# Change log — generator preset invariant tests
+# Change log — generator edge-case blueprint fixtures
 
 ## Title of this issue
 
-**Add generator invariant tests for curated presets** (Generator Reliability Testing — Issue 3)
+**Add generator edge-case blueprint fixtures** (Generator Reliability Testing — Issue 4)
 
 ## Branch name
 
@@ -12,73 +12,71 @@
 
 | File | Change |
 |------|--------|
-| `src/lib/generation/__tests__/generatorPresetInvariants.test.ts` | **New:** Loop over `MEDIEVAL_TOWER_PRESETS`; validate → generate → `analyzeVoxelStructure`; assert geometric invariants. |
+| `src/lib/generation/__tests__/fixtures/edgeCaseBlueprints.ts` | **New:** Six hand-authored valid `MedievalTowerBlueprint` edge fixtures + `EDGE_CASE_BLUEPRINT_FIXTURES`. |
+| `src/lib/generation/__tests__/generatorEdgeCaseInvariants.test.ts` | **New:** Same pipeline + hard invariants as preset tests, parameterized over fixtures. |
+| `src/lib/generation/__tests__/testUtils.ts` | **New:** `formatGeneratorInvariantDiagnostics`, `assertGeneratedStructureHardInvariants`. |
+| `src/lib/generation/__tests__/generatorPresetInvariants.test.ts` | Refactored to use `assertGeneratedStructureHardInvariants` (no behavior change). |
 
-**Unchanged (kept per plan):** `src/lib/generation/__tests__/generatorPipeline.smoke.test.ts`
+## Fixtures added (ids and intent)
 
-## Presets covered
+| `id` | Short description |
+|------|-------------------|
+| `height_budget_body_clamp` | `dimensions.height: 8` with tall emphasis + multi-layer stepped roof — validator **clamps body layers** so foundation + body + roof fits. |
+| `wide_entrance_max` | **11×11**, **T=2**, **`entranceWidth: 5`** (= `max(1, W−2T−2)`). |
+| `authoring_overhang_clamp` | **`roof.overhang: 5`** — validator **clamps to 2** with note. |
+| `thick_shell_narrow_void` | **9×9**, **`wallThickness: 3`** (3×3 interior void). |
+| `window_density_wide` | **13×13**, **`windowsCountPerSide: 6`**, **`windowsFloors: "all"`**. |
+| `tight_max_block_count_roof_trim` | Stepped roof **author height 10** with **`maxBlockCount: 18_000`** — validator may **reduce roof layers** until estimate fits. |
 
-All entries from **`MEDIEVAL_TOWER_PRESETS`** in `src/lib/blueprints/sampleBlueprints.ts` (single source; **`structuredClone(preset.blueprint)`** — no duplicated JSON):
+All use **classic-pack material keys** only (`BASE_MATERIALS`). **No** `allowFloatingBlocks` / floating intent. **Not** copies of `MEDIEVAL_TOWER_PRESETS`.
 
-| `id` | `label` |
-|------|---------|
-| `northwatch` | Northwatch Spire (default) |
-| `tall_watchtower` | Tall Watchtower |
-| `fortified_gate` | Fortified Gate Tower |
-| `gothic_stone` | Gothic Stone Tower |
-| `compact_guard` | Compact Guard Tower |
-| `dark_wizard` | Dark Wizard Tower |
+## Invariants enforced
 
-## Invariants enforced (per preset)
+Same as curated presets:
 
 - `blocks.length > 0`
 - `analysis.blockCount === blocks.length`
 - `analysis.uniqueBlockCount > 0`
-- `analysis.invalidBlockTypeIds` empty (registry via `getBlockDefinition` inside analysis)
+- `analysis.invalidBlockTypeIds.length === 0`
 - `analysis.duplicateCoordinateCount === 0`
-- `analysis.connectedComponentCount26 === 1` (**curated tower presets only** — not a universal rule for future multi-mass generators)
+- `analysis.connectedComponentCount26 === 1` (**single-building towers only**)
 - `analysis.ungroundedBlockCount26 === 0`
 - `analysis.allBlocksGroundedConnected26 === true`
-- `blocks.length <= validation.resolved.constraints.maxBlockCount`
+- `blocks.length <= resolved.constraints.maxBlockCount`
 
-No mocks for validation, generation, registry, or analysis.
+## Shared test helper
 
-## Diagnostics / failure messages
+**`testUtils.ts`:**
 
-**`invariantContext(...)`** builds one pipe-separated string appended to **`expect`** messages, including:
+- **`formatGeneratorInvariantDiagnostics`** — pipe-separated string (id, label, counts, bounds, invalid IDs, duplicate coord keys, component + ungrounded counts, `maxBlockCount`).
+- **`assertGeneratedStructureHardInvariants`** — Vitest `expect` bundle for the list above.
 
-- preset **`id`** and **`label`**
-- block count and unique block count
-- `bounds` (JSON)
-- `invalidBlockTypeIds`, `duplicateCoordinates` (from analysis; duplicates list already capped in `structureAnalysis`)
-- `connectedComponentCount26`, `ungroundedBlockCount26`
-- `maxBlockCount` from **`resolved.constraints`**
+Preset and edge-case suites both call the helper after **real** `validateBlueprint` → `generateStructureFromResolved` → `analyzeVoxelStructure` (no mocks).
 
-Validation failures surface **`validation.errors`** in the assertion message.
+## Diagnostics approach
 
-No custom Vitest reporters.
+- Validation failure: **`errors`** and **`notes`** in the first `expect` message (edge-case test includes notes for clamp debugging).
+- Invariant failure: diagnostics string from **`formatGeneratorInvariantDiagnostics`** attached to each assertion (unchanged from Issue 3 style).
+- No custom Vitest reporters.
 
 ## Intentionally deferred
 
-- Extra blueprint fixtures, regression corpora, snapshotting
-- Visual / Playwright / RTL suites
-- UI diagnostics panel
-- Generator, `filterGrounded`, or blueprint schema changes
-- Aesthetic or strict roof/door/window requirements
-- Golden block counts, bounds, or material distribution assertions
-- Full `VoxelBlock[]` snapshots
+- Invalid-blueprint / import-json tests, regression corpora, snapshots, Playwright, RTL
+- UI diagnostics, generator / `filterGrounded` / schema changes
+- Aesthetic or strict roof/door/window semantics
+- Multi-building / town fixtures
+- Fixtures that would require weakening invariants or changing generator behavior
 
 ## Test / build / typecheck results
 
 | Check | Result |
 |-------|--------|
-| `pnpm test:generator` | **Passed** (14 tests: 7 structure-analysis helpers + 1 smoke + **6** preset invariants) |
+| `pnpm test:generator` | **Passed** (20 tests: 7 voxel helpers + 1 smoke + 6 presets + **6** edge fixtures) |
 | `pnpm exec tsc --noEmit` | **Passed** (exit 0) |
 | `pnpm run build` | **Passed** (Next.js 16.2.6) |
 
 ## Remaining weaknesses / follow-up ideas
 
-- **Smoke overlap:** the smoke test exercises **`SAMPLE_MEDIEVAL_TOWER_BLUEPRINT`**, same blueprint object as **`northwatch`** — redundant but kept as a minimal pipeline sanity check.
-- **`connectedComponentCount26 === 1`:** if the product adds towns, compounds, or intentionally disconnected structures, split tests or gate this invariant per generator/preset kind.
-- **CI:** run `pnpm test:generator` on PRs if not already wired.
-- Optional **budget helper** if tests need shared `maxBlockCount` messaging across more suites.
+- **`connectedComponentCount26 === 1`** should be **scoped** to generators that emit a single mass; future multi-component outputs need gating or different suites.
+- Edge list can grow (e.g. **`symmetry: "radial"`** note path, **`windowsPlacement: "front_only"`** with **`enforceSymmetry`**) if worth the CI time.
+- If **`tight_max_block_count_roof_trim`** becomes brittle under estimator tweaks, raise **`maxBlockCount`** or drop that fixture.

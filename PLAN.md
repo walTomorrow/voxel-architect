@@ -1,188 +1,191 @@
-# Plan: Generator Reliability Testing — Issue 3 (preset invariant tests)
+# Plan: Generator Reliability Testing — Issue 4 (edge-case blueprint fixtures)
 
 ## 1. Current understanding
 
 ### Milestone
 
-**Generator Reliability Testing** automates checks on the deterministic path:
+**Generator Reliability Testing** hardens the path:
 
-**authoring blueprint → `validateBlueprint()` → `generateStructureFromResolved()` → `VoxelBlock[]`**
+**`MedievalTowerBlueprint` → `validateBlueprint()` → `generateStructureFromResolved()` → `VoxelBlock[]`**
 
-It targets **geometric / structural reliability** (non-empty output, valid IDs, no duplicate lattice cells, respect for `maxBlockCount`, single grounded 26-connected mass), not aesthetics, screenshots, or semantic rules like “must have a roof.”
+with **Vitest**, **`analyzeVoxelStructure()`**, and **structural** checks (IDs, duplicates, single 26-connected grounded mass, `maxBlockCount`). Aesthetic quality, snapshots, and visuals are **out of scope**.
 
 ### Prior issues
 
 | Issue | Deliverable |
-|-------|--------------|
-| **1** | Vitest, `pnpm test:generator`, smoke test on default blueprint → validate → generate → `blocks.length > 0`. |
-| **2** | `analyzeVoxelStructure()` and helper unit tests (`structureAnalysis.ts`). |
+|-------|-------------|
+| 1 | Smoke pipeline test |
+| 2 | `structureAnalysis.ts` + unit tests |
+| 3 | `MEDIEVAL_TOWER_PRESETS` invariant suite |
 
 ### This issue
 
-Add **preset-level invariant tests** that run the **real** pipeline against **every curated medieval tower preset** from the existing registry, then assert **hard geometric invariants** via `analyzeVoxelStructure()` on the generated blocks.
-
-Tests are **structural only** — no golden counts/bounds/material ratios, no visual or AI assertions.
+Add a **small set of hand-authored, valid edge-case blueprints** that stress **validator normalization** and **generator boundary behavior** (clamps, limits, dense parameters), then run the **same geometric invariants** as the preset tests. No new invalid-blueprint tests—fixtures must **`validateBlueprint().ok === true`**. Not aesthetic tests or visual snapshots.
 
 ---
 
-## 2. Proposed test location
+## 2. Fixture location
 
-**File:** **`src/lib/generation/__tests__/generatorPresetInvariants.test.ts`**
+**Preferred:** **`src/lib/generation/__tests__/fixtures/edgeCaseBlueprints.ts`**
 
-**Rationale:** Lives with the smoke test under `generation/__tests__/`, already picked up by `vitest.config.ts` (`src/lib/generation/__tests__/**/*.test.ts`). Imports blueprints from `sampleBlueprints`, generation from `generateStructure`, analysis from `structureAnalysis` — no new Vitest include changes required unless file placement changes.
-
----
-
-## 3. Presets to test
-
-**Source of truth:** **`MEDIEVAL_TOWER_PRESETS`** in **`src/lib/blueprints/sampleBlueprints.ts`** — `readonly MedievalTowerPreset[]` with `id`, `label`, `blueprint`.
-
-**Inspected list (6 presets, order = registry order):**
-
-| `id` | `label` (for messages) |
-|------|-------------------------|
-| `northwatch` | Northwatch Spire (default) |
-| `tall_watchtower` | Tall Watchtower |
-| `fortified_gate` | Fortified Gate Tower |
-| `gothic_stone` | Gothic Stone Tower |
-| `compact_guard` | Compact Guard Tower |
-| `dark_wizard` | Dark Wizard Tower |
-
-**Mechanics:**
-
-- **`for (const preset of MEDIEVAL_TOWER_PRESETS)`** — no inlined duplicate JSON.
-- **`structuredClone(preset.blueprint)`** before `validateBlueprint` (same pattern as smoke test; avoids accidental mutation).
-
-**Out of scope for this issue:** custom edge-case blueprints, malformed imports, presets not in `MEDIEVAL_TOWER_PRESETS`.
+- Co-locates with generation tests; **`vitest.config.ts`** already includes `src/lib/generation/__tests__/**/*.test.ts` (fixtures folder does not need its own glob).
+- Export **`readonly EdgeCaseBlueprintFixture[]`** (or similar), each item **`{ id, label, blueprint }`** mirroring **`MedievalTowerPreset`** shape so tests and optional helpers stay uniform.
+- **TypeScript objects** typed **`as const satisfies MedievalTowerBlueprint`** (same pattern as internal preset literals in `sampleBlueprints.ts`). **No** blueprint JSON import/envelope files unless we later need huge data—unnecessary here.
 
 ---
 
-## 4. Real pipeline (no mocks)
+## 3. Fixture design principles
 
-For **each** preset:
-
-1. `const blueprint = structuredClone(preset.blueprint)`
-2. `const validation = validateBlueprint(blueprint)`
-3. Assert **`validation.ok === true`** and **`validation.resolved`** is defined (fail with preset **`id`** / **`label`** if not).
-4. `const blocks = generateStructureFromResolved(validation.resolved)` — real **`generateMedievalTower`** dispatch.
-5. `const analysis = analyzeVoxelStructure(blocks)` — real registry lookups via **`getBlockDefinition`** inside analysis.
-
-Do **not** mock validation, generators, registry, or `analyzeVoxelStructure`.
+- **`validateBlueprint()`** must return **`ok: true`** with **`resolved`** (implementer runs locally; adjust numbers if estimate or `entranceHeight` rules fail).
+- **Unusual but allowed** under inspected rules—favor **validator notes** (clamp / parity hints) and **parameter extremes** that presets do not cover.
+- **Minimal / readable:** short metadata `description`/`notes` per fixture explaining the edge.
+- **Materials:** only keys present in **`CLASSIC_BLOCK_PACK`** (reuse palette from presets, e.g. `cobblestone`, `oak_planks`, `glass`, …).
+- **Deterministic** authoring fields only—no randomness.
+- **Do not duplicate** curated **`MEDIEVAL_TOWER_PRESETS`** (e.g. avoid copy-paste of `northwatch` / `compact_guard`); combinations can differ by footprint, T, roof, clamps, or window counts.
+- **Not golden “beautiful” towers**—purpose is boundary coverage.
 
 ---
 
-## 5. Hard invariants to enforce
+## 4. Proposed edge-case fixtures (5–6)
 
-After generation, assert for **each** preset:
+Grounded in **`validateBlueprint.ts`** (inspected):
 
-| Assertion | Notes |
-|-----------|--------|
-| `blocks.length > 0` | Non-empty structure. |
-| `analysis.blockCount === blocks.length` | Consistency of analysis vs input length. |
-| `analysis.uniqueBlockCount > 0` | Occupied lattice (implies `bounds !== null` in practice). |
-| `analysis.invalidBlockTypeIds.length === 0` | All emitted `blockTypeId` values resolve in the registry. |
-| `analysis.duplicateCoordinateCount === 0` | No duplicate `(x,y,z)` in output. |
-| `analysis.connectedComponentCount26 === 1` | Single 26-neighbor component on unique cells. |
-| `analysis.ungroundedBlockCount26 === 0` | Every unique cell 26-reachable from `y === minY` seeds. |
-| `analysis.allBlocksGroundedConnected26 === true` | Redundant with above + single component + non-empty; cheap sanity check matching Issue 2 semantics. |
+| Rule | Implication for fixtures |
+|------|---------------------------|
+| `width`/`length` integers **≥ 5** | Smallest square footprint is **5×5** (already used by `compact_guard` preset—edge suite uses **other** minima or different stresses). |
+| `height` integer **≥ 8** | Tight vertical budget stresses **body-layer clamp** when `foundation + body + roofLayers` would exceed `height`. |
+| `hollowInterior` | Requires **`width` and `length` ≥ `2·wallThickness + 2`**. |
+| `openings.entranceWidth` | **≤ `max(1, W - 2·T - 2)`**; **≥ 1**. |
+| `openings.entranceHeight` | **≥ 2** and **≤ resolved `bodyLayers`** (after height clamp). |
+| `roof.overhang` | Clamped to **`[0, 2]`**; authoring **> 2** yields a note. |
+| `maxBlockCount` | **`estimateTowerBlocks` ≤ max**; validator may **reduce `roofLayers`** in a loop while estimate too high. |
+| Symmetry / windows | **`front_only` + `enforceSymmetry`** yields an informational note only. |
 
-**Budget (inspected resolved shape):**
+**Planned fixtures (ids are suggestive—implementer may rename):**
 
-- **`ResolvedMedievalTower`** includes **`constraints: BlueprintConstraints`** with **`maxBlockCount`** (same shape as authoring blueprint; see **`src/lib/blueprints/types.ts`**).
-- Assert: **`blocks.length <= validation.resolved.constraints.maxBlockCount`** (and/or `analysis.blockCount <= …` — equal when no duplicates).
+1. **`height_budget_body_clamp`**  
+   - **Goal:** Force **body layer reduction** so `foundation + body + roof` fits **`dimensions.height`** (validator `notes` about clamped body).  
+   - **Sketch:** `height: 8`, relatively large **`levels.floorCount`**, **`roof.style: "stepped_pyramid"`** with **`roof.height`** multi-layer, **`verticalEmphasis: "tall"`** so nominal body wants more layers than fit.  
+   - **Care:** After clamp, **`entranceHeight` ≤ final `bodyLayers`** and **≤ `height` budget**—pick modest door height or high enough body remainder.
 
-If validation ever normalizes `maxBlockCount`, the **resolved** value is authoritative for generation.
+2. **`wide_entrance_footprint`**  
+   - **Goal:** **`entranceWidth === max(1, W - 2·T - 2)`** (widest legal door for shell).  
+   - **Sketch:** e.g. **`width/length: 11`**, **`wallThickness: 2`**, **`entranceWidth: 5`**, valid door height.  
+   - **Distinction:** Curated **`gothic_stone`** is 11×11 but **does not** use max-width door.
 
----
+3. **`authoring_overhang_clamp`**  
+   - **Goal:** **`roof.overhang > 2`** in authoring → validator **clamps to 2** + note (generator must accept resolved overhang).  
+   - **Sketch:** modest **7×7** or **9×9** tower, **`overhang: 5`**, otherwise vanilla.
 
-## 6. Failure messages / debugging
+4. **`thick_shell_medium_footprint`**  
+   - **Goal:** High **`wallThickness`** with narrow interior void (still hollow-compliant).  
+   - **Sketch:** **`width: 9`**, **`wallThickness: 3`** (inner 3×3 air). **Preset `northwatch`** uses **T=2**; **`fortified_gate`** is **13×13**—this is a **different** (9×9, T=3) corner.
 
-Keep reporting **lightweight** — no custom Vitest reporters.
+5. **`window_density_wide`**  
+   - **Goal:** High **`windowsCountPerSide`** with **`windowsFloors: "all"`** on a wider footprint—stress façade placement without matching **`dark_wizard`** (9×9, 4/side).  
+   - **Sketch:** **`width: 11` or `13`**, **`windowsCountPerSide: 5` or `6`**, **`windowsPlacement: "symmetric"`**.
 
-**Recommended patterns:**
+6. **`tight_max_block_count`** *(optional if numbers calibrate easily)*  
+   - **Goal:** **`constraints.maxBlockCount`** low enough that validator **`Reduced roof layers`** note fires **once or more**, but **`ok: true`** after reduction.  
+   - **Implementer:** tune **`maxBlockCount`** against **`estimateTowerBlocks`** for the chosen authoring blueprint (or skip if flaky—prefer 5 fixtures without this).
 
-- **`test(\`preset ${preset.id} …\`, …)`** or **`it.each(MEDIEVAL_TOWER_PRESETS)(…)`** with title including **`preset.id`**.
-- On failure, a **small local helper** (e.g. `formatPresetInvariantContext({ preset, blocks, analysis })`) returning a string or object logged via **`expect`’s second message** or **`console.log` before expect** is optional; prefer **one string** appended to critical expects, e.g.  
-  `expect(analysis.duplicateCoordinateCount, \`${preset.id}: …\`).toBe(0)`.
-
-**Include when useful:**
-
-- Preset **`id`** and **`label`**
-- `blocks.length`, `analysis.uniqueBlockCount`
-- `analysis.bounds`
-- `analysis.invalidBlockTypeIds`, `analysis.duplicateCoordinates` (capped list from analyzer)
-- `analysis.connectedComponentCount26`, `analysis.ungroundedBlockCount26`
-- `resolved.constraints.maxBlockCount` if budget fails
-
----
-
-## 7. What not to test yet
-
-Do **not** assert:
-
-- Exact `blocks.length` or material histograms
-- Exact `bounds` or footprint numbers
-- Roof / door / window presence or style
-- Snapshot of `VoxelBlock[]`, screenshots, or pixel diffs
-- Architectural beauty or readability
-- AI quality (N/A for current deterministic generator)
+**Defer / avoid for this issue:** invalid blueprints, **`allowFloatingBlocks: true`**, multi-building towns, presets duplicated as “fixtures.”
 
 ---
 
-## 8. Original smoke test: keep or remove?
+## 5. Test strategy
 
-**Recommendation: keep `generatorPipeline.smoke.test.ts`.**
+new file **`src/lib/generation/__tests__/generatorEdgeCaseInvariants.test.ts`**
 
-| Reason | Detail |
-|--------|--------|
-| **Fast mental model** | Single file shows the minimal happy path without looping presets. |
-| **Low cost** | One extra test; runtime dominated by full preset suite anyway. |
-| **Overlap** | Smoke uses **`SAMPLE_MEDIEVAL_TOWER_BLUEPRINT`**, which is the **same object** as the **`northwatch`** preset’s `blueprint` — **`northwatch` is tested twice**. That redundancy is acceptable unless we want to trim later; **do not delete smoke** unless we explicitly rename smoke to “documentation-only” and drop it — not justified here. |
+For **each** exported edge fixture:
 
-Preset invariants **add** coverage for the other five presets and systematic checks the smoke test does not perform.
+1. **`structuredClone(fixture.blueprint)`**
+2. **`validateBlueprint(blueprint)`** → assert **`ok`** + **`resolved`**
+3. **`generateStructureFromResolved(resolved)`**
+4. **`analyzeVoxelStructure(blocks)`**
+5. Assert **same hard invariants** as **`generatorPresetInvariants.test.ts`:**
+
+   - `blocks.length > 0`
+   - `analysis.blockCount === blocks.length`
+   - `analysis.uniqueBlockCount > 0`
+   - `analysis.invalidBlockTypeIds.length === 0`
+   - `analysis.duplicateCoordinateCount === 0`
+   - `analysis.connectedComponentCount26 === 1`
+   - `analysis.ungroundedBlockCount26 === 0`
+   - `analysis.allBlocksGroundedConnected26 === true`
+   - `blocks.length <= resolved.constraints.maxBlockCount`
+
+**Scope guard:** If a candidate fixture **cannot** satisfy **single 26-component grounded mass** (or any invariant above), **do not** add it in this issue—adjust authoring or drop the fixture.
+
+**Curated presets:** **Do not remove** Issue 3 tests or fixtures; edge suite is **additive**.
 
 ---
 
-## 9. Scope boundaries (non-goals)
+## 6. Shared test helper consideration
 
-Do **not** add:
+**Current duplication:** **`generatorPresetInvariants.test.ts`** embeds ~15 lines of assertions + **`invariantContext`** keyed to **`MedievalTowerPreset`**.
 
-- Edge-case / regression blueprint fixtures beyond `MEDIEVAL_TOWER_PRESETS`
-- Snapshot, visual, Playwright, or RTL tests
-- UI diagnostics panel
-- Changes to generator output, **`filterGrounded`**, or blueprint schema
-- Aesthetic scoring or strict semantic requirements (roof/door/window)
+**Recommendation:** add **`src/lib/generation/__tests__/testUtils.ts`** (or `generatorInvariantAssertions.ts`) with:
+
+- **`assertGeneratedStructureHardInvariants(args)`** where `args` includes **`fixtureId`**, **`fixtureLabel`**, **`blocks`**, **`analysis`**, **`maxBlockCount`** (and optionally **`validationErrors`** string for early failure).
+- **`formatGeneratorInvariantDiagnostics(...)`** — same pipe-separated fields as today (id, label, counts, bounds, invalid IDs, duplicate keys, component counts, maxBlockCount).
+
+**Refactor** **`generatorPresetInvariants.test.ts`** to call the shared helper **only if** the diff stays small (preset test passes **`preset.id` / `preset.label`**). Avoid layers of abstraction beyond one function.
+
+**Alternative:** copy-paste assertions once into edge test if helper churn is undesirable—acceptable only if we accept drift; **prefer one helper** after Issue 3 duplication.
 
 ---
 
-## 10. Verification (after implementation)
+## 7. Diagnostics / failure messages
+
+Match Issue 3 style:
+
+- **Fixture `id`** and **`label`** (or metadata name) in every failure string.
+- On validation failure, include **`validation.errors`** / **`notes`** when useful.
+- Include **block count**, **unique count**, **`bounds`**, **`invalidBlockTypeIds`**, **`duplicateCoordinates`**, **`connectedComponentCount26`**, **`ungroundedBlockCount26`**, **`maxBlockCount`**.
+
+No custom Vitest reporters.
+
+---
+
+## 8. What not to add
+
+- **`validateBlueprint` failure** tests (invalid blueprints) — separate issue.
+- Import/export JSON envelope tests, regression dumps from old bugs (unless they fit edge-case goal—prefer fresh minimal TS fixtures).
+- Snapshots, screenshots, Playwright, RTL, UI diagnostics.
+- Generator / **`filterGrounded`** / blueprint schema **changes**.
+- Aesthetic scoring; strict roof/door/window semantics.
+- Multi-building / **town** fixtures; intentionally **floating** structures (`allowFloatingBlocks: true` or ungrounded designs).
+
+---
+
+## 9. Verification (after implementation)
 
 | Command | Purpose |
 |---------|--------|
-| **`pnpm test:generator`** | Smoke + voxel helpers + new preset invariants |
+| **`pnpm test:generator`** | Smoke + analysis units + presets + edge cases |
 | **`pnpm exec tsc --noEmit`** | Types |
-| **`pnpm run build`** | Next.js build |
+| **`pnpm run build`** | Next build |
 
-No **`vitest.config`** change expected unless tests move outside current `include` globs.
-
----
-
-## 11. CHANGE.md (after implementation)
-
-Overwrite **`CHANGE.md`** with Issue 3 notes:
-
-- **Title:** e.g. “Add generator invariant tests for curated presets”
-- **Branch:** `milestone/generator-reliability-testing`
-- **Files changed:** e.g. `generatorPresetInvariants.test.ts` (+ smoke kept as-is)
-- **Presets covered:** all entries in **`MEDIEVAL_TOWER_PRESETS`** (list ids)
-- **Invariants enforced:** bullet list matching §5
-- **Diagnostics:** how failure context is surfaced (preset id, key analysis fields)
-- **Deferred:** exact counts, visuals, more blueprints, CI-only policies
-- **Results:** `pnpm test:generator`, `tsc`, `build`
-- **Follow-ups:** optional dedupe of smoke vs `northwatch`; future `allowFloatingBlocks: true` presets would need different invariants
+Expect **no** `vitest.config` / **`package.json`** changes unless file layout moves outside current glob.
 
 ---
 
-## 12. Approval checkpoint
+## 10. CHANGE.md (after implementation)
+
+Overwrite **`CHANGE.md`** with Issue 4:
+
+- Title, branch **`milestone/generator-reliability-testing`**
+- Files: `fixtures/edgeCaseBlueprints.ts`, `generatorEdgeCaseInvariants.test.ts`, optional **`testUtils.ts`**, and touched **`generatorPresetInvariants.test.ts`** if refactored
+- Table: **fixture id → short description**
+- **Invariants** (bullet list same as presets)
+- **Diagnostics** approach
+- **Deferred** items (invalid blueprints, visual tests, multi-mass generators, etc.)
+- **Results:** test / tsc / build
+- **Follow-ups:** more fixtures; per–structure-type invariant flags when multi-component generators exist
+
+---
+
+## 11. Approval checkpoint
 
 **Waiting for approval before implementation.**
