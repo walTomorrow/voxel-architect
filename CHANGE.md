@@ -1,106 +1,89 @@
-# Change log — Collapsible inspection panel (responsive lab)
+# Change log — Three.js renderer deprecation audit
 
-## 1. Title of this milestone
+## Title
 
-**Responsive inspection rail:** below the **`md`** breakpoint, **`StructureInspectionPanel`** starts **collapsed** with a **Show inspection** control; expanded sheet includes **Hide inspection** and all existing lab tools. **`md` and up** keeps the **same fixed right rail** as before (no extra collapse UI on desktop).
+Three.js renderer deprecation audit (`milestone/blueprint-portability`)
 
-## 2. Branch name
+## Files changed
 
-`feature/collapsible-inspection-panel`
+**None** for this audit commit. Findings are documentation-only; no safe source-level fix for the `THREE.Clock` warning without upgrading or patching dependencies.
 
-## 3. Files changed
-
-| File | Change |
+| Area | Result |
 |------|--------|
-| `src/components/voxel/StructureInspectionPanel.tsx` | Split into **`InspectionPanelBody`** (shared content), **`LayerSection`** (typed layer controls), and wrapper: **desktop** `aside` (`hidden md:flex`, unchanged classes), **mobile** `md:hidden` collapsible (`useState`, default **collapsed**). |
+| `src/` | No `THREE.Clock` or other audited deprecated APIs in application code. |
+| `src/components/voxel/VoxelViewer.tsx` | Already uses `shadows={{ type: THREE.PCFShadowMap }}` (prior QA fix). |
 
-## 4. What was implemented
+## Clock usage in our source
 
-- **Desktop (`md`+):** Single **`aside`** — same width, border, padding, and vertical layout as the pre-milestone panel.
-- **Mobile (`<md`):** Default **collapsed** — full-width **Show inspection** row; expanded — header row (**Inspection** + **Hide inspection**) + scrollable **`aside`** (`max-h-[min(52vh,28rem)]`) with the same body as desktop.
-- **State:** `mobileInspectionOpen` only; **no** `localStorage`, URL, or cookies.
-- **No** changes to **`VisualizerClient`**, **`PreviewInspectionClient`**, **`VoxelViewer`**, **`layerView`**, or **`blockBreakdown`** — behavior is encapsulated in the panel.
+**Not found.** Searched `src/`, `src/app/`, `src/components/`, `src/lib/` for:
 
-## 5. Small-screen collapse behavior
+- `THREE.Clock`, `new Clock`, `Clock(`, `useFrame`, custom clock wiring, Clock imports from `three`
 
-- Collapsed: one tap target; canvas column keeps **`flex-1`** height in parent layout (more room than a full open panel under the canvas).
-- Expanded: all controls (preset, modes, layer slider, counts, breakdown, Refit) unchanged in behavior.
+`VoxelViewer` uses R3F `Canvas`, lights, geometry, materials, and orbit controls only — no direct clock or animation loop.
 
-## 6. Desktop behavior
+## Where the `THREE.Clock` warning comes from
 
-- Unchanged layout and discoverability: no collapse toggle on **`md+`**; no new parent wrappers required.
+**Dependency-originated:** `@react-three/fiber` initializes its internal store with:
 
-## 7. How existing inspection tools were preserved
+```js
+clock: new THREE.Clock(),
+```
 
-- **`InspectionPanelBody`** is the single source for form content; rendered inside desktop **`aside`** and inside mobile expanded **`aside`** (CSS hides the non-active branch at each breakpoint so only one branch is interactive per viewport width).
+(see `node_modules/@react-three/fiber/dist/events-*.js`, store default state).
 
-## 8. How camera behavior was preserved
+`three@0.184.0` deprecates `Clock` in **r183** and logs on construction:
 
-- **`cameraResetNonce`** is not touched on collapse/expand.
-- **`VoxelViewer`** props unchanged by this diff; layout reflow may resize the canvas only.
+`Clock: This module has been deprecated. Please use THREE.Timer instead.`
 
-## 9. What was intentionally deferred
+(`node_modules/three/src/core/Clock.js`).
 
-- Persistence of open/collapsed state, resize breakpoint tuning beyond **`md`**, drawer libraries, animated transitions, deduplicating DOM for screen readers with **`useSyncExternalStore`**.
+`@react-three/drei@10.7.7` does **not** reference `THREE.Clock` in its package sources (grep).
 
-## 10. Manual QA notes
+R3F does **not** yet use `THREE.Timer` in the installed build (no `Timer` usage in fiber dist for the frameloop clock).
 
-| Check | Where |
-|-------|--------|
-| **`md+`:** panel always visible; all controls | **`/visualizer`**, **`/preview`** |
-| **`<md`:** starts collapsed; Show/Hide; controls after reopen; preset/layers/breakdown/Refit | Both |
-| **Invalid blueprint** | **`/visualizer`** — panel still usable to reload preset |
-| **Camera** | No intentional refit on toggle |
+## Installed versions (lockfile)
 
-## 11. Build result
+| Package | Version |
+|---------|---------|
+| `three` | **0.184.0** |
+| `@react-three/fiber` | **9.6.1** |
+| `@react-three/drei` | **10.7.7** |
+
+## Other deprecated API audit (our source)
+
+| Pattern | In `src/`? |
+|---------|------------|
+| `PCFSoftShadowMap` | **No** (Canvas uses `PCFShadowMap`) |
+| `THREE.Clock` / `Clock` | **No** |
+| `WebGLMultipleRenderTargets` | **No** |
+| Legacy `Geometry` | **No** |
+| `WebGPURenderer` | **No** |
+| `outputEncoding` / `sRGBEncoding` | **No** |
+| `physicallyCorrectLights` | **No** |
+
+No additional source fixes required from this audit.
+
+## What we did **not** do
+
+- No `console.warn` suppression
+- No `node_modules` edits or monkeypatches
+- No major dependency upgrades (R3F / Three) to chase `Timer` adoption upstream
+- No experimental R3F releases
+
+## TypeScript and build
 
 | Check | Result |
 |-------|--------|
-| **`pnpm run build`** | **Passed** (Next.js 16.2.6, Turbopack). |
+| `pnpm exec tsc --noEmit` | **Passed** |
+| `pnpm run build` | **Passed** (Next.js 16.2.6) |
 
-## 12. Remaining weaknesses / follow-up ideas
+## `pnpm dev` observation
 
-- Two **`InspectionPanelBody`** instances exist in the React tree (one hidden by CSS at a time) — acceptable for the lab; could be replaced with a single branch using **`matchMedia`** + conditional render if hydration or a11y needs tighten.
-- Optional: remember open state **only for session** without `localStorage` (e.g. reset on route change only).
+- **`THREE.WebGLShadowMap: PCFSoftShadowMap has been deprecated`** — should remain **gone** on `/visualizer` thanks to explicit `PCFShadowMap` on `Canvas`.
+- **`THREE.Clock: … Please use THREE.Timer instead`** — expected to **remain** once per Canvas mount until `@react-three/fiber` stops constructing `THREE.Clock`. Non-fatal; rendering and blueprint import/export are unaffected.
+- Voxel shadows, `/preview`, and lab workflows unchanged by this audit (no code diff).
 
----
+## Remaining follow-up
 
-*This file was overwritten for this milestone.*
-
-## 13. Append — Desktop inspection collapse + visualizer blueprint collapse
-
-Follow-up after initial mobile-only collapse: **`md` and wider** now expose a way to hide the right inspection rail, and **`/visualizer`** can hide the left blueprint editor so both side panels are collapsible on desktop.
-
-### `StructureInspectionPanel.tsx`
-
-- **New state:** `desktopInspectionOpen`, default **`true`** (ephemeral; no persistence).
-- **`md`+ when expanded:** Same effective width (`md:w-[min(100%,18rem)]`), with a top bar (**Hide inspection**) and scrollable body (`overflow-y-auto`) so long breakdown lists do not overflow the viewport.
-- **`md`+ when collapsed:** A **`w-10`** strip on the right with a control (**‹**, `title` / `aria-label`: “Show inspection”) to reopen the full rail.
-- **`<md`:** Unchanged — still uses **`mobileInspectionOpen`** (default collapsed) with **Show inspection** / sheet **Hide inspection**.
-
-### `VisualizerClient.tsx`
-
-- **New state:** `blueprintPanelOpen`, default **`true`**.
-- **When expanded:** Existing blueprint **`aside`** unchanged in role; added **Hide blueprint** next to **Reset to default** and **Reload preset**.
-- **When collapsed:**
-  - **`<lg`:** Full-width **Show blueprint editor** row (`border-b`, same chrome family as mobile inspection) above the viewer + inspection column.
-  - **`lg`+:** **`w-10`** left strip with **›** (`title` / `aria-label`: “Show blueprint editor”) before the main viewer row, matching the right-rail strip pattern.
-
-### Files touched (this append)
-
-| File | Change |
-|------|--------|
-| `src/components/voxel/StructureInspectionPanel.tsx` | Desktop conditional rail vs slim strip; header **Hide inspection**; inner scroll region. |
-| `src/app/visualizer/VisualizerClient.tsx` | `blueprintPanelOpen`; conditional render for collapsed strip / show bar; **Hide blueprint** in header actions. |
-
-### QA to add for this append
-
-| Check | Where |
-|-------|-------|
-| **`md`+:** Hide / show inspection; controls and Refit after reopen | **`/visualizer`**, **`/preview`** |
-| **Visualizer:** Hide blueprint; **`<lg`** show bar; **`lg`+** left strip; editor and validation after reopen | **`/visualizer`** |
-| **`PreviewInspectionClient`:** no blueprint column — inspection desktop collapse only | **`/preview`** |
-
-### Build
-
-- **`pnpm exec tsc --noEmit`** — passed after this append (verify again after local edits).
+- Watch **@react-three/fiber** releases for migration from `THREE.Clock` to `THREE.Timer` (or equivalent) in the root store.
+- Optional future: bump `three` + R3F together when upstream documents compatible versions — out of scope for this small audit commit.

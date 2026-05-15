@@ -8,6 +8,13 @@ import {
   SAMPLE_MEDIEVAL_TOWER_BLUEPRINT,
   getMedievalTowerPreset,
 } from "@/src/lib/blueprints/sampleBlueprints";
+import { parseBlueprintExchange, serializeBlueprintExchange } from "@/src/lib/blueprints/blueprintExchange";
+import {
+  type BlueprintSource,
+  createImportedBlueprintSource,
+  createPresetBlueprintSource,
+  formatBlueprintSourceStatus,
+} from "@/src/lib/blueprints/blueprintSource";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
 import { StructureInspectionPanel } from "@/src/components/voxel/StructureInspectionPanel";
@@ -94,10 +101,32 @@ const CLASSIC_KEYS = Object.keys(CLASSIC_BLOCK_PACK).sort((a, b) =>
   a.localeCompare(b),
 );
 
-const PRESET_INSPECTION_OPTIONS = MEDIEVAL_TOWER_PRESETS.map((p) => ({
-  id: p.id,
-  label: p.label,
-}));
+/**
+ * Right-rail preset `<select>` value when the editor blueprint is not tied to a
+ * frozen sample preset (e.g. after JSON import). **Reload preset** no-ops until
+ * a real preset id is selected.
+ */
+const IMPORT_DISCONNECTED_PRESET_ID = "__va_no_preset__";
+
+const PRESET_INSPECTION_OPTIONS = [
+  ...MEDIEVAL_TOWER_PRESETS.map((p) => ({
+    id: p.id,
+    label: p.label,
+  })),
+  { id: IMPORT_DISCONNECTED_PRESET_ID, label: "Imported / Custom" },
+];
+
+function initialBlueprintSource(): BlueprintSource {
+  const preset = getMedievalTowerPreset(DEFAULT_MEDIEVAL_PRESET_ID);
+  if (!preset) {
+    throw new Error("Default medieval tower preset is missing.");
+  }
+  return createPresetBlueprintSource(
+    preset.id,
+    preset.label,
+    preset.blueprint,
+  );
+}
 
 export function VisualizerClient() {
   const [selectedPresetId, setSelectedPresetId] = useState<string>(
@@ -110,8 +139,25 @@ export function VisualizerClient() {
   const [layerViewMode, setLayerViewMode] = useState<LayerViewMode>("full");
   const [selectedLayer, setSelectedLayer] = useState(0);
   const [blueprintPanelOpen, setBlueprintPanelOpen] = useState(true);
+  const [copyBlueprintFeedback, setCopyBlueprintFeedback] = useState<
+    "success" | "error" | null
+  >(null);
+  const [importPanelOpen, setImportPanelOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importPanelError, setImportPanelError] = useState<string | null>(null);
+  const [importBanner, setImportBanner] = useState<string | null>(null);
+  const [blueprintSource, setBlueprintSource] =
+    useState<BlueprintSource>(initialBlueprintSource);
 
   const validation = useMemo(() => validateBlueprint(blueprint), [blueprint]);
+
+  const sourceStatusLabel = useMemo(
+    () => formatBlueprintSourceStatus(blueprintSource, blueprint),
+    [blueprintSource, blueprint],
+  );
+
+  const presetReloadDisabled =
+    selectedPresetId === IMPORT_DISCONNECTED_PRESET_ID;
 
   const structure: VoxelStructure = useMemo(() => {
     if (!validation.ok || !validation.resolved) {
@@ -131,6 +177,25 @@ export function VisualizerClient() {
     if (!layerExtents) return;
     setSelectedLayer((y) => clampLayerY(y, layerExtents));
   }, [structure.blocks, layerExtents]);
+
+  useEffect(() => {
+    if (!validation.ok) {
+      setCopyBlueprintFeedback(null);
+      setImportBanner(null);
+    }
+  }, [validation.ok]);
+
+  useEffect(() => {
+    if (copyBlueprintFeedback !== "success") return;
+    const id = window.setTimeout(() => setCopyBlueprintFeedback(null), 5000);
+    return () => window.clearTimeout(id);
+  }, [copyBlueprintFeedback]);
+
+  useEffect(() => {
+    if (!importBanner) return;
+    const id = window.setTimeout(() => setImportBanner(null), 5000);
+    return () => window.clearTimeout(id);
+  }, [importBanner]);
 
   const visibleStructure: VoxelStructure = useMemo(() => {
     if (!validation.ok || structure.blocks.length === 0) {
@@ -182,11 +247,71 @@ export function VisualizerClient() {
   };
 
   const handlePresetIdChange = (id: string) => {
+    if (id === IMPORT_DISCONNECTED_PRESET_ID) {
+      setSelectedPresetId(id);
+      return;
+    }
     const preset = getMedievalTowerPreset(id);
     if (!preset) return;
     setSelectedPresetId(id);
     setLayerViewMode("full");
     setBlueprint(structuredClone(preset.blueprint) as MedievalTowerBlueprint);
+    setBlueprintSource(
+      createPresetBlueprintSource(preset.id, preset.label, preset.blueprint),
+    );
+  };
+
+  const handleCopyBlueprintJson = async () => {
+    setCopyBlueprintFeedback(null);
+    if (!validation.ok) return;
+    const json = serializeBlueprintExchange(blueprint);
+    const clip =
+      typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+    if (!clip || typeof clip.writeText !== "function") {
+      setCopyBlueprintFeedback("error");
+      return;
+    }
+    try {
+      await clip.writeText(json);
+      setCopyBlueprintFeedback("success");
+    } catch {
+      setCopyBlueprintFeedback("error");
+    }
+  };
+
+  const handleImportPanelOpen = () => {
+    setImportPanelOpen(true);
+    setImportPanelError(null);
+    setImportBanner(null);
+  };
+
+  const handleImportPanelCancel = () => {
+    setImportPanelOpen(false);
+    setImportText("");
+    setImportPanelError(null);
+    setImportBanner(null);
+  };
+
+  const handleImportBlueprintSubmit = () => {
+    setImportPanelError(null);
+    const text = importText.trim();
+    if (text.length === 0) {
+      setImportPanelError("Paste blueprint JSON before importing.");
+      return;
+    }
+    const result = parseBlueprintExchange(text);
+    if (!result.ok) {
+      setImportPanelError(`Could not import blueprint: ${result.error}`);
+      return;
+    }
+    const imported = structuredClone(result.blueprint) as MedievalTowerBlueprint;
+    setBlueprint(imported);
+    setBlueprintSource(createImportedBlueprintSource(imported));
+    setSelectedPresetId(IMPORT_DISCONNECTED_PRESET_ID);
+    setLayerViewMode("full");
+    setImportPanelOpen(false);
+    setImportText("");
+    setImportBanner("Blueprint JSON imported successfully.");
   };
 
   return (
@@ -234,16 +359,28 @@ export function VisualizerClient() {
               type="button"
               className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
               onClick={() => {
+                const preset = getMedievalTowerPreset(DEFAULT_MEDIEVAL_PRESET_ID);
+                if (!preset) return;
                 setSelectedPresetId(DEFAULT_MEDIEVAL_PRESET_ID);
                 setLayerViewMode("full");
-                setBlueprint(cloneSampleBlueprint());
+                setBlueprint(
+                  structuredClone(preset.blueprint) as MedievalTowerBlueprint,
+                );
+                setBlueprintSource(
+                  createPresetBlueprintSource(
+                    preset.id,
+                    preset.label,
+                    preset.blueprint,
+                  ),
+                );
               }}
             >
               Reset to default (Northwatch)
             </button>
             <button
               type="button"
-              className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
+              disabled={presetReloadDisabled}
+              className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
               onClick={() => {
                 const preset = getMedievalTowerPreset(selectedPresetId);
                 if (!preset) return;
@@ -251,11 +388,105 @@ export function VisualizerClient() {
                 setBlueprint(
                   structuredClone(preset.blueprint) as MedievalTowerBlueprint,
                 );
+                setBlueprintSource(
+                  createPresetBlueprintSource(
+                    preset.id,
+                    preset.label,
+                    preset.blueprint,
+                  ),
+                );
               }}
             >
               Reload preset
             </button>
           </div>
+        </div>
+
+        <div className="mt-4 space-y-2 border-b border-zinc-800/80 pb-4">
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+              Blueprint source
+            </p>
+            <p className="mt-0.5 text-sm text-zinc-200">{sourceStatusLabel}</p>
+            {presetReloadDisabled ? (
+              <p className="mt-1 text-xs text-zinc-500">
+                Select a preset to reload a preset baseline.
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={!validation.ok}
+              className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={() => {
+                void handleCopyBlueprintJson();
+              }}
+            >
+              Copy blueprint JSON
+            </button>
+            {!importPanelOpen ? (
+              <button
+                type="button"
+                className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
+                onClick={handleImportPanelOpen}
+              >
+                Import blueprint JSON
+              </button>
+            ) : null}
+            {!validation.ok ? (
+              <p className="w-full text-xs text-amber-200/90">
+                Fix validation errors before exporting.
+              </p>
+            ) : null}
+          </div>
+          {copyBlueprintFeedback === "success" ? (
+            <p className="text-xs text-emerald-400/90">
+              Blueprint JSON copied to clipboard!
+            </p>
+          ) : null}
+          {copyBlueprintFeedback === "error" ? (
+            <p className="text-xs text-red-400/95">
+              Blueprint JSON failed to copy. Please check browser settings.
+            </p>
+          ) : null}
+
+          {importPanelOpen ? (
+            <div className="space-y-2 rounded-md border border-zinc-700 bg-zinc-900/50 p-3">
+                <label className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                  Pasted JSON (wrapped format only)
+                </label>
+                <textarea
+                  className="min-h-[10rem] w-full resize-y rounded-md border border-zinc-600 bg-zinc-950 px-2 py-2 font-mono text-[11px] leading-relaxed text-zinc-100 placeholder:text-zinc-600"
+                  spellCheck={false}
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  placeholder='{ "kind": "voxel-architect-blueprint", ... }'
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-md border border-emerald-700/80 bg-emerald-900/40 px-3 py-1.5 text-xs font-medium text-emerald-100 hover:bg-emerald-900/60"
+                    onClick={handleImportBlueprintSubmit}
+                  >
+                    Import blueprint
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
+                    onClick={handleImportPanelCancel}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              {importPanelError ? (
+                <p className="text-xs text-red-400/95">{importPanelError}</p>
+              ) : null}
+            </div>
+          ) : null}
+          {importBanner ? (
+            <p className="text-xs text-emerald-400/90">{importBanner}</p>
+          ) : null}
         </div>
 
         <dl className="mt-5 space-y-3 border-b border-zinc-800/80 pb-4 text-sm">
