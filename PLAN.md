@@ -1,204 +1,149 @@
-# Plan: Blueprint Portability — import/export JSON format (documentation + exchange module)
+# Plan: Generator Reliability Testing — Issue 5 (document reliability rules)
 
 ## 1. Current understanding
 
-### Milestone and branch
+### Milestone
 
-- **Branch:** `milestone/blueprint-portability`
-- **Issue (this step):** Define blueprint **import/export** format — **documentation and typed helpers first**, not the full UI.
-- **Goal:** A **rigorous, well-documented**, **frontend-only** blueprint **JSON exchange** format so later work can add import/export controls in **`/visualizer`** without rediscovering contracts in ad hoc UI code.
+**Generator Reliability Testing** adds **developer-facing automation** around the deterministic medieval tower pipeline: blueprint validation, voxel generation, and **pure structural analysis** of outputs (`analyzeVoxelStructure`). Issues **1–4** delivered Vitest, analysis helpers, preset invariant tests, edge-case fixtures, and shared assertion helpers (**no user-visible product feature**).
 
-### What a blueprint is (this project)
+### Meaning of “reliability” today
 
-- A **blueprint** is the **editable authoring state** consumed by **`/visualizer`**: design intent including **`structureType`**, **dimensions**, **materials** (classic pack keys), **massing**, **levels**, **openings**, **roof**, **features**, **constraints**, and **metadata** — modeled concretely today as **`MedievalTowerBlueprint`** in **`src/lib/blueprints/types.ts`** (alias **`StructureBlueprint`**).
-- **`validateBlueprint()`** (**`src/lib/blueprints/validateBlueprint.ts`**) turns a raw blueprint into **`BlueprintValidationResult`** (errors, notes, optional **`resolved`** **`ResolvedMedievalTower`**). **`generateStructureFromResolved()`** consumes **resolved** output, not the raw JSON file format.
-- **Presets** (**`src/lib/blueprints/sampleBlueprints.ts`**) are stable **`MedievalTowerBlueprint`** snapshots (clone before UI mutation); they are **not** the exchange envelope.
+**Reliability** means **geometric / structural sanity** for **deterministic, single-building** tower generation:
 
-### What is intentionally *not* exported (v1 contract)
+- Output exists and respects lattice bookkeeping (unique coordinates, registry-backed block IDs).
+- Output forms **one** 26-connected, ground-reachable mass under the current analysis rules.
+- Output stays within **`resolved.constraints.maxBlockCount`**.
 
-- **No** **`VoxelBlock[]`** or generated voxel arrays.
-- **No** Minecraft **`.schem` / `.litematic`** (or any voxel world export).
-- **No** **`ResolvedMedievalTower`** in the default v1 envelope unless we explicitly justify it later (resolved form is derived; keeping the file to **authoring blueprint** avoids duplicating generator internals in GitHub issues and AI outputs).
+This **does not** mean beauty, architectural correctness in an aesthetic sense, or parity with screenshots.
 
-### Why frontend-only for now
+### Audience / infra stance
 
-- No **backend**, **database**, or **`localStorage`** per product decisions — exchange is **files / clipboard / issue text** in the browser, validated entirely client-side.
-- A stable **wrapped JSON** contract supports: **debugging** (attach one JSON to an issue), **tests** (golden envelopes), **GitHub workflows** (human + bot readable), and future **AI blueprint generation** (model emits JSON → same parser as import).
-
-### How this supports future workflows
-
-- **Issues / tests:** Pretty-printed, diff-friendly JSON with a **`kind`** discriminator reduces “is this even our format?” confusion.
-- **AI:** Models can target **`blueprint`** object fields documented in **`docs/blueprints/BLUEPRINT_JSON_FORMAT.md`** and **`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`**; import pipeline rejects invalid proposals before touching editor state.
+Documentation targets **future contributors and maintainers**. Tests guard regressions in core geometry—not marketing claims about quality.
 
 ---
 
-## 2. Documentation organization
+## 2. Proposed documentation location
 
-### Target layout
+### Primary doc
 
-- Create **`docs/blueprints/`** as the home for **blueprint-specific** documentation (schema intent, exchange format, feature catalog).
+**Path:** **`docs/generation/GENERATOR_RELIABILITY.md`**
 
-### `BLUEPRINT_FEATURE_CATALOG.md`
+**Actions:**
 
-- **Location:** **`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`** (moved from repo root as part of this milestone).
-- **References:** **`GENERATION_DESIGN_PRINCIPLES.md`** cites **`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`**.
+- Create directory **`docs/generation/`** (currently only **`docs/blueprints/`** exists — inspected).
+- Add **`GENERATOR_RELIABILITY.md`** as the canonical reliability overview.
 
-### `BLUEPRINT_JSON_FORMAT.md` (new)
+### Optional cross-links (minimal edits elsewhere)
 
-- **Location:** **`docs/blueprints/BLUEPRINT_JSON_FORMAT.md`**.
-- **Contents (planned):** Official v1 envelope; required vs optional fields; **`schemaVersion`** semantics; examples (minimal + one real preset snapshot); import validation order; explicit non-goals; relationship to **`MedievalTowerBlueprint`** / **`validateBlueprint()`**.
+| Location | Change |
+|----------|--------|
+| **`README.md`** | Add **one short subsection or bullet** (e.g. under Getting Started): generator reliability tests → link to **`docs/generation/GENERATOR_RELIABILITY.md`**, **`pnpm test:generator`**. **Do not** expand README into a full rewrite. |
+| **`GENERATION_DESIGN_PRINCIPLES.md`** | After the opening **Purpose** block (~lines 3–11), add **one sentence + markdown link** to **`GENERATOR_RELIABILITY.md`** clarifying that **automated structural checks** are documented there separately from readability philosophy. |
 
-### `GENERATION_DESIGN_PRINCIPLES.md`
-
-- **Stay at repo root** unless a strong reason appears later. It governs **generation**, **viewer**, and **AI behavior** across the product — broader than **exchange format** alone. Only **cross-links** into **`docs/blueprints/`** should be updated when the catalog moves.
-
-### Other references
-
-- **`src/lib/blueprints/validateBlueprint.ts`** — comment referencing **`GENERATION_DESIGN_PRINCIPLES`** only; **no** catalog path today.
-- **`README.md`**, **`VISION.md`**, **`PROJECT_CONTEXT.md`** — no current links to the catalog filename; **optional** future README link to **`docs/blueprints/`** is out of scope for this issue unless desired in a follow-up.
+**Do not** heavily edit **`BLUEPRINT_JSON_FORMAT.md`** or **`BLUEPRINT_FEATURE_CATALOG.md`** unless adding a single “See also” line fits naturally—prefer keeping blueprint docs scoped to exchange/feature catalogs.
 
 ---
 
-## 3. Proposed export format (official v1 wrapped JSON)
+## 3. Documentation contents (`GENERATOR_RELIABILITY.md`)
 
-### Envelope shape
+Suggested outline (concise, accurate to repo):
 
-```json
-{
-  "kind": "voxel-architect-blueprint",
-  "schemaVersion": 1,
-  "blueprint": { }
-}
-```
+1. **Purpose** — Why these tests exist: catch structural regressions early; document what “good geometry” means **mechanically** for current towers.
 
-- **`kind`** (string, **required**): Literal **`"voxel-architect-blueprint"`** — discriminates our files from random JSON, Minecraft tools, or other apps.
-- **`schemaVersion`** (number, **required**): Integer **exchange format version** (see §4). For v1 implementation, only **`1`** is accepted on import.
-- **`blueprint`** (object, **required**): The **authoring** blueprint object — today must satisfy **`MedievalTowerBlueprint`** / **`StructureBlueprint`** after structural checks, then **`validateBlueprint()`**.
+2. **Pipeline** (verbatim-ish):
 
-### Serialization rules
+   ```text
+   MedievalTowerBlueprint
+     → validateBlueprint()
+     → generateStructureFromResolved()   // ResolvedMedievalTower in practice
+     → VoxelBlock[]
+     → analyzeVoxelStructure(blocks)
+   ```
 
-- **Pretty-printed** JSON (stable indentation, e.g. **2 spaces**) for human/AI/Git diff readability.
-- **UTF-8** text; no BOM required; document if we ever add a BOM policy.
+3. **What tests currently cover** (point to files):
 
-### Optional metadata (recommended stance)
+   | Suite | File(s) |
+   |-------|---------|
+   | Smoke | `src/lib/generation/__tests__/generatorPipeline.smoke.test.ts` |
+   | Structure helpers | `src/lib/voxel/structureAnalysis.ts`, `src/lib/voxel/__tests__/structureAnalysis.test.ts` |
+   | Curated presets | `generatorPresetInvariants.test.ts`, fixtures from **`MEDIEVAL_TOWER_PRESETS`** (`sampleBlueprints.ts`) |
+   | Edge cases | `generatorEdgeCaseInvariants.test.ts`, `fixtures/edgeCaseBlueprints.ts` |
+   | Shared assertions | `src/lib/generation/__tests__/testUtils.ts` (`assertGeneratedStructureHardInvariants`) |
 
-- **Default v1:** **No** optional fields **required** for valid export/import.
-- **Allow optional** top-level keys only if **useful and low-risk**:
-  - **`exportedAt`** (string, ISO-8601): helps issue forensics; omit vs include is exporter choice; importer **ignores** unknown optional keys or documents “strip and warn” policy in **`BLUEPRINT_JSON_FORMAT.md`**.
-  - **`exportedBy`** / app name: **Defer** unless we fix a constant string (e.g. **`"voxel-architect"`**) in code — avoid coupling to **`package.json`** version noise in the format spec.
-- **Do not** embed **generated blocks**, **seeds**, or **resolved** grid in v1 unless a future issue explicitly extends the envelope with a version bump.
+   Mention **`vitest.config.ts`** **`include`**: `src/lib/generation/__tests__/**/*.test.ts`, `src/lib/voxel/__tests__/**/*.test.ts`; **`pnpm test:generator`** runs **`vitest run`** (**inspected `package.json`**).
 
----
+4. **Hard invariants** (mirror **`assertGeneratedStructureHardInvariants`**):
 
-## 4. `schemaVersion` decision
+   - `blocks.length > 0`
+   - `analysis.blockCount === blocks.length`
+   - `analysis.uniqueBlockCount > 0`
+   - `analysis.invalidBlockTypeIds.length === 0`
+   - `analysis.duplicateCoordinateCount === 0`
+   - `analysis.connectedComponentCount26 === 1` — **scoped** to current single-building tower presets/fixtures; **not** a universal rule for future towns / multi-mass outputs.
+   - `analysis.ungroundedBlockCount26 === 0`
+   - `analysis.allBlocksGroundedConnected26 === true`
+   - `blocks.length <= resolved.constraints.maxBlockCount`
 
-- **`schemaVersion`** is the **blueprint exchange envelope version** (shape and meaning of **`kind` + top-level keys + how `blueprint` is interpreted**), **not** the Next.js app version, **not** the procedural generator version.
-- **Increment** when we introduce **breaking** envelope changes (e.g. new required field, renamed **`kind`**, or a new **`blueprint`** discriminant strategy) or when we intentionally version a **new blueprint family** behind the same wrapper with incompatible semantics (prefer documenting in **`BLUEPRINT_JSON_FORMAT.md`**).
-- **Unsupported version:** Import must **fail fast** with a **clear error** (e.g. “Unsupported schemaVersion: 2 (supported: 1)”) — **no** partial apply to **`VisualizerClient`** state in later UI work.
-- **v1 scope:** Only **`schemaVersion === 1`** is in scope for this milestone’s implementation; no migration framework beyond “accept 1, reject others.”
+5. **Connectivity (26-neighbor)** — Offsets `(dx, dy, dz) ∈ {-1,0,1}³ \ {(0,0,0)}`; adjacency if neighbor cell occupied (analysis operates on **unique** lattice positions).
 
----
+6. **Grounding** — Seeds: **`y === minY`** over **unique** occupied coordinates (structure-relative “floor”). Good fit for current towers (**foundation typically at bottom layer**). Note caveat: **world-space or vertically stacked structures** may need different policies later.
 
-## 5. Raw vs wrapped JSON
+7. **Fixture coverage**
 
-- **Official v1 support:** **Wrapped JSON only** (`kind` + `schemaVersion` + `blueprint`).
-- **Raw blueprint JSON** (object matching **`MedievalTowerBlueprint`** without envelope): **defer** as a possible convenience import (“paste inner object”) in a later issue — not part of the v1 official contract.
-- **Why wrapped is safer:** unambiguous file type for humans/tools; room for **`schemaVersion`** and future optional provenance without conflating **authoring fields** with **transport metadata**; reduces accidental paste of **`ResolvedMedievalTower`** or unrelated JSON being treated as a blueprint.
+   - **Curated:** all presets in **`MEDIEVAL_TOWER_PRESETS`**.
+   - **Edge-case IDs** (from **`EDGE_CASE_BLUEPRINT_FIXTURES`**): `height_budget_body_clamp`, `wide_entrance_max`, `authoring_overhang_clamp`, `thick_shell_narrow_void`, `window_density_wide`, `tight_max_block_count_roof_trim`.
 
----
+8. **Out of scope / not tested** — Bullet list matching milestone intent: aesthetics; golden counts/bounds/material mixes; snapshots/visual/AI quality; strict semantic “must have roof/door/windows”; towns, compounds; **`allowFloatingBlocks`** / intentional floaters.
 
-## 6. Validation strategy (layered, for later import UI)
+9. **How to run** — **`pnpm test:generator`**, **`pnpm exec tsc --noEmit`**, **`pnpm run build`** (common local sanity).
 
-Planned **order** (each step returns a clear error; **do not** apply to editor until all pass):
-
-1. **JSON parse** — syntactically valid JSON.
-2. **Root object** — must be a plain object (not array/primitive).
-3. **`kind`** — must equal **`"voxel-architect-blueprint"`** (exact string).
-4. **`schemaVersion`** — must be **`1`** for this milestone’s importer (number, not string — document coercion policy: reject string **`"1"`** for strictness unless we explicitly allow coercion later).
-5. **`blueprint`** — must exist and be a **non-null object** (not array).
-6. **`blueprint.structureType`** — must be **`"medieval_tower"`** for v1 (only supported type today per **`validateBlueprint`** gate).
-7. **`validateBlueprint(blueprint as StructureBlueprint)`** — **`ok === true`**; on failure, surface **`errors`** (and optionally **`notes`**) without mutating React state.
-
-**Invalid imports:** Never assign into **`VisualizerClient`** **`blueprint`** state until the pipeline succeeds (future UI issue).
+10. **Future directions** — CI wiring for **`pnpm test:generator`** (separate issue unless trivial); invalid blueprint tests; regression corpus from bugs; optional **`/visualizer`** diagnostics; blueprint-aware invariant policies for multi-component or floating designs.
 
 ---
 
-## 7. Code organization
+## 4. Tone and audience
 
-### New module: `src/lib/blueprints/blueprintExchange.ts`
-
-**Define:**
-
-| Export / artifact | Purpose |
-|-------------------|---------|
-| **Kind constant** | e.g. **`VOXEL_ARCHITECT_BLUEPRINT_KIND = "voxel-architect-blueprint"`** |
-| **Schema version constant** | e.g. **`BLUEPRINT_EXCHANGE_SCHEMA_VERSION = 1`** |
-| **Types** | **`BlueprintExchangeEnvelopeV1`**, **`BlueprintExportPayload`** (or equivalent narrow types for `kind` / `schemaVersion` / `blueprint`) |
-| **`serializeBlueprintExport(blueprint: MedievalTowerBlueprint): string`** | Build envelope, **`JSON.stringify(..., null, 2)`** |
-| **`parseBlueprintExchange(text: string): …`** | Parse + structural validation of wrapper; return **discriminated result** **`{ ok: true, envelope } | { ok: false, error: string, stage?: string }`** (exact shape to implement) |
-| **`validateExchangeForImport(...)`** or merged parse | Optionally separate “parse envelope” vs “run **`validateBlueprint`**” so tests can target each layer |
-
-**Rule:** **`VisualizerClient`** (and future UI) should **call these helpers**, not hand-roll **`JSON.stringify`** of the blueprint or inline **`kind`** strings.
-
-**Re-exports:** Only add **`index.ts`**-style barrel updates if the repo already uses that pattern for blueprints (today: direct imports from **`types`**, **`validateBlueprint`**, etc.) — **prefer** direct import from **`blueprintExchange.ts`** unless a follow-up standardizes barrels.
+- **Maintainers / contributors**: practical, scannable, no aesthetic overclaims.
+- **Explicit disclaimer**: passing tests ≠ proof of visual quality (aligns with **`GENERATION_DESIGN_PRINCIPLES.md`** §2.2 “valid geometry necessary but not sufficient” — may reference that phrase briefly).
 
 ---
 
-## 8. Source labeling implications (future, not this issue)
+## 5. Scope boundaries (this issue)
 
-The envelope is **not** required to carry **UI source labels** in v1. Later, optional metadata could include:
+**Do not:**
 
-- **`source`**: **`"preset"`** | **`"import"`** | **`"custom"`** | etc.
-- **`presetId`** / **`presetLabel`** when derived from a preset.
-
-**This issue:** Document in **`BLUEPRINT_JSON_FORMAT.md`** that v1 **does not** include **`source`** fields; UI continues to infer “preset vs modified” from existing client state until a dedicated labeling issue adds optional envelope fields with a **`schemaVersion`** or extension policy.
-
----
-
-## 9. Scope boundaries (explicit non-goals for this milestone)
-
-**Do not add:**
-
-- Import/export **UI** (no buttons, no textarea panel, no clipboard hook).
-- **Backend**, **database**, **`localStorage`**.
-- Generated **voxel** export, **Minecraft** export.
-- **AI** integration.
-- **Schema migration** system beyond **“accept `schemaVersion` 1 only”** checks.
-- New **`structureType`** values or generator features.
-- Large **`VisualizerClient`** / **`StructureInspectionPanel`** / **`VoxelViewer`** layout changes.
+- Add or change tests, fixtures, generator, validator, UI, CI workflows, screenshots.
+- Rewrite **`README.md`** beyond a **small** reliability pointer.
+- Expand unrelated docs.
 
 ---
 
-## 10. Testing plan
+## 6. Verification (after implementation)
 
-- **`pnpm run build`**
-- **`pnpm exec tsc --noEmit`** (or equivalent CI TypeScript gate)
-- **Unit-style checks** (where the project places tests today, or lightweight **`*.test.ts`** if introduced):  
-  - Serialize **`SAMPLE_MEDIEVAL_TOWER_BLUEPRINT`** (or a preset clone) → parse → **`validateBlueprint`** round-trip expectations.  
-  - Invalid cases: malformed JSON, wrong **`kind`**, wrong **`schemaVersion`**, missing **`blueprint`**, **`structureType`** mismatch, blueprint failing **`validateBlueprint`** — each returns a **clear** failure path, **no throw** unless documented.
-- **No** change to default **`/visualizer`** behavior until a **later** issue wires UI to helpers.
+Even though changes are documentation-only, run:
 
----
-
-## 11. Files expected to change
-
-| Likelihood | File |
-|------------|------|
-| **High** | **`src/lib/blueprints/blueprintExchange.ts`** (new) |
-| **High** | **`docs/blueprints/BLUEPRINT_JSON_FORMAT.md`** (new) |
-| **High** | **`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`** (moved from repo root) |
-| **High** | **`GENERATION_DESIGN_PRINCIPLES.md`** (link text/path to catalog after move) |
-| **Now** | **`PLAN.md`** (this document) |
-| **After implementation** | **`CHANGE.md`** — summarize envelope, module, doc moves |
-
-| Maybe | Notes |
-|-------|--------|
-| **`src/lib/blueprints/types.ts`** | Only if a **small** shared type alias helps **`blueprintExchange.ts`** avoid duplication — avoid large refactors. |
-
-| Unlikely in this issue | **`VisualizerClient.tsx`**, **`VoxelViewer.tsx`**, generator files, **`validateBlueprint`** logic (reuse as-is), **`sampleBlueprints.ts`** content, **`StructureInspectionPanel.tsx`** |
+| Command | Purpose |
+|---------|--------|
+| **`pnpm test:generator`** | Confirm suite still green |
+| **`pnpm exec tsc --noEmit`** | Types unchanged |
+| **`pnpm run build`** | Ensure no accidental breakage |
 
 ---
 
-## 12. Approval checkpoint
+## 7. CHANGE.md (after implementation)
+
+Overwrite **`CHANGE.md`** with Issue 5 summary:
+
+- Title: document generator reliability rules
+- Branch: `milestone/generator-reliability-testing`
+- Files: **`docs/generation/GENERATOR_RELIABILITY.md`** (+ optional **`README.md`**, **`GENERATION_DESIGN_PRINCIPLES.md`** touch)
+- What the doc explains + cross-links added
+- Deferred: CI, new tests, UI diagnostics
+- Results table: test / tsc / build
+- Follow-ups: keep doc in sync when invariants or suites change
+
+---
+
+## 8. Approval checkpoint
 
 **Waiting for approval before implementation.**

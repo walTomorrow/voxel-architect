@@ -4,11 +4,13 @@
 
 This document defines the guiding design principles for Voxel Architect’s blueprint, generator, viewer, and future AI-agent behavior.
 
-`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md` describes **what architectural features the system may understand**.
+[`blueprints/BLUEPRINT_FEATURE_CATALOG.md`](blueprints/BLUEPRINT_FEATURE_CATALOG.md) describes **what architectural features the system may understand**.
 
 This document describes **how the system should behave when generating, validating, editing, and presenting architecture**.
 
 The goal is to prevent the project from becoming a collection of random toggles or one-off visual fixes. Every new feature should improve architectural readability, deterministic generation, inspectability, or future AI controllability.
+
+[`generation/GENERATOR_RELIABILITY.md`](generation/GENERATOR_RELIABILITY.md) documents **automated structural checks** on the current deterministic generator output (Vitest). That complements this document: readability and composition principles here are **not** the same as “passes geometric invariant tests.”
 
 ---
 

@@ -103,4 +103,4 @@ For any UI that calls **`parseBlueprintExchange`**, failures should surface **`e
 ## Related docs
 
 - **Feature coverage (architectural systems the blueprint may express):** [`BLUEPRINT_FEATURE_CATALOG.md`](./BLUEPRINT_FEATURE_CATALOG.md)
-- **Generation and AI principles (broader than this file):** [`../../GENERATION_DESIGN_PRINCIPLES.md`](../../GENERATION_DESIGN_PRINCIPLES.md)
+- **Generation and AI principles (broader than this file):** [`../GENERATION_DESIGN_PRINCIPLES.md`](../GENERATION_DESIGN_PRINCIPLES.md)

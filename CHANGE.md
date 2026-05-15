@@ -1,89 +1,64 @@
-# Change log — Three.js renderer deprecation audit
+# Change log — document generator reliability rules
 
-## Title
+## Title of this issue
 
-Three.js renderer deprecation audit (`milestone/blueprint-portability`)
+**Document generator reliability rules** (Generator Reliability Testing — Issue 5)
+
+## Branch name
+
+`milestone/generator-reliability-testing`
+
+**Docs layout:** `GENERATION_DESIGN_PRINCIPLES.md` and `VISION.md` moved from repo root to **`docs/`** (`docs/GENERATION_DESIGN_PRINCIPLES.md`, `docs/VISION.md`). Updated relative links in `docs/generation/GENERATOR_RELIABILITY.md`, `docs/blueprints/BLUEPRINT_JSON_FORMAT.md`, `docs/GENERATION_DESIGN_PRINCIPLES.md`, and the parity hint in `src/lib/blueprints/validateBlueprint.ts`.
 
 ## Files changed
 
-**None** for this audit commit. Findings are documentation-only; no safe source-level fix for the `THREE.Clock` warning without upgrading or patching dependencies.
-
-| Area | Result |
+| File | Change |
 |------|--------|
-| `src/` | No `THREE.Clock` or other audited deprecated APIs in application code. |
-| `src/components/voxel/VoxelViewer.tsx` | Already uses `shadows={{ type: THREE.PCFShadowMap }}` (prior QA fix). |
+| `docs/generation/GENERATOR_RELIABILITY.md` | **New:** Reliability overview for maintainers (pipeline, suites, invariants, grounding/connectivity, out-of-scope, commands, future work). |
+| `README.md` | **Small:** “Generator reliability tests” subsection with link to the doc + `pnpm test:generator`. |
+| `docs/GENERATION_DESIGN_PRINCIPLES.md` | **Small:** Purpose cross-link to `GENERATOR_RELIABILITY.md` vs readability principles (lives under `docs/`). |
+| `docs/VISION.md` | Moved from repo root into `docs/`. |
+| `docs/blueprints/BLUEPRINT_JSON_FORMAT.md` | Link target updated for design-principles path. |
 
-## Clock usage in our source
+## Documentation added
 
-**Not found.** Searched `src/`, `src/app/`, `src/components/`, `src/lib/` for:
+**[`docs/generation/GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md)** explains:
 
-- `THREE.Clock`, `new Clock`, `Clock(`, `useFrame`, custom clock wiring, Clock imports from `three`
+- Why structural reliability tests exist (developer infra, not user feature).
+- Pipeline: `MedievalTowerBlueprint` → `validateBlueprint()` → `generateStructureFromResolved()` → `VoxelBlock[]` → `analyzeVoxelStructure(blocks)`.
+- Covered suites: smoke, structure-analysis unit tests, curated preset invariants, edge-case invariants, shared `testUtils` assertions.
+- Hard geometric invariants (including **`connectedComponentCount26 === 1`** scoped to current single-building presets/fixtures).
+- **26-neighbor** connectivity (face / edge / corner).
+- **Structure-relative grounding** (`y === minY` on unique cells) and caveats for future world-space / towns / floating designs.
+- Fixture coverage: `MEDIEVAL_TOWER_PRESETS` + edge-case fixture IDs.
+- Explicit **non-goals** (aesthetics, golden counts, screenshots, AI, strict semantics, multi-building/floating unless separately tested).
+- Commands: `pnpm test:generator`, `pnpm exec tsc --noEmit`, `pnpm run build`.
+- Future directions (CI, invalid blueprint tests, regressions, optional `/visualizer` diagnostics, blueprint-aware policies).
 
-`VoxelViewer` uses R3F `Canvas`, lights, geometry, materials, and orbit controls only — no direct clock or animation loop.
+Tone: concise; **passing ≠ beautiful**.
 
-## Where the `THREE.Clock` warning comes from
+## README / design-principles links
 
-**Dependency-originated:** `@react-three/fiber` initializes its internal store with:
+- **README:** [`docs/generation/GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md) + `pnpm test:generator`.
+- **`docs/GENERATION_DESIGN_PRINCIPLES.md`:** Link after Purpose clarifies Vitest structural checks vs composition/readability guidelines.
 
-```js
-clock: new THREE.Clock(),
-```
+`BLUEPRINT_JSON_FORMAT.md` was updated only for the cross-link path to design principles.
 
-(see `node_modules/@react-three/fiber/dist/events-*.js`, store default state).
+## Intentionally deferred
 
-`three@0.184.0` deprecates `Clock` in **r183** and logs on construction:
+- New tests, fixtures, generator/validator/UI changes.
+- CI workflow, screenshots, visual diagnostics panel.
+- Large README rewrite.
 
-`Clock: This module has been deprecated. Please use THREE.Timer instead.`
-
-(`node_modules/three/src/core/Clock.js`).
-
-`@react-three/drei@10.7.7` does **not** reference `THREE.Clock` in its package sources (grep).
-
-R3F does **not** yet use `THREE.Timer` in the installed build (no `Timer` usage in fiber dist for the frameloop clock).
-
-## Installed versions (lockfile)
-
-| Package | Version |
-|---------|---------|
-| `three` | **0.184.0** |
-| `@react-three/fiber` | **9.6.1** |
-| `@react-three/drei` | **10.7.7** |
-
-## Other deprecated API audit (our source)
-
-| Pattern | In `src/`? |
-|---------|------------|
-| `PCFSoftShadowMap` | **No** (Canvas uses `PCFShadowMap`) |
-| `THREE.Clock` / `Clock` | **No** |
-| `WebGLMultipleRenderTargets` | **No** |
-| Legacy `Geometry` | **No** |
-| `WebGPURenderer` | **No** |
-| `outputEncoding` / `sRGBEncoding` | **No** |
-| `physicallyCorrectLights` | **No** |
-
-No additional source fixes required from this audit.
-
-## What we did **not** do
-
-- No `console.warn` suppression
-- No `node_modules` edits or monkeypatches
-- No major dependency upgrades (R3F / Three) to chase `Timer` adoption upstream
-- No experimental R3F releases
-
-## TypeScript and build
+## Test / build / typecheck results
 
 | Check | Result |
 |-------|--------|
-| `pnpm exec tsc --noEmit` | **Passed** |
+| `pnpm test:generator` | **Passed** (20 tests) |
+| `pnpm exec tsc --noEmit` | **Passed** (exit 0) |
 | `pnpm run build` | **Passed** (Next.js 16.2.6) |
 
-## `pnpm dev` observation
+## Remaining follow-up ideas
 
-- **`THREE.WebGLShadowMap: PCFSoftShadowMap has been deprecated`** — should remain **gone** on `/visualizer` thanks to explicit `PCFShadowMap` on `Canvas`.
-- **`THREE.Clock: … Please use THREE.Timer instead`** — expected to **remain** once per Canvas mount until `@react-three/fiber` stops constructing `THREE.Clock`. Non-fatal; rendering and blueprint import/export are unaffected.
-- Voxel shadows, `/preview`, and lab workflows unchanged by this audit (no code diff).
-
-## Remaining follow-up
-
-- Watch **@react-three/fiber** releases for migration from `THREE.Clock` to `THREE.Timer` (or equivalent) in the root store.
-- Optional future: bump `three` + R3F together when upstream documents compatible versions — out of scope for this small audit commit.
+- Wire **`pnpm test:generator`** into CI when ready.
+- Keep **`GENERATOR_RELIABILITY.md`** in sync when invariant lists or generator scope changes.
