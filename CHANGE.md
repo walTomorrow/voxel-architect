@@ -1,66 +1,89 @@
-# Change log — Blueprint portability QA fixes
+# Change log — Three.js renderer deprecation audit
 
 ## Title
 
-Blueprint portability QA fixes (`milestone/blueprint-portability`)
+Three.js renderer deprecation audit (`milestone/blueprint-portability`)
 
 ## Files changed
 
-| File | Change |
+**None** for this audit commit. Findings are documentation-only; no safe source-level fix for the `THREE.Clock` warning without upgrading or patching dependencies.
+
+| Area | Result |
 |------|--------|
-| `src/lib/blueprints/blueprintImportStructure.ts` | **New:** required-field shape checks for imported `medieval_tower` blueprints (types aligned with `types.ts` + `/visualizer` controls). |
-| `src/lib/blueprints/blueprintExchange.ts` | Call structural validation before `validateBlueprint()`; keep `try/catch` around validator. |
-| `docs/blueprints/BLUEPRINT_JSON_FORMAT.md` | Document required inner blueprint fields, rejection of misspelled keys, extra-key policy. |
+| `src/` | No `THREE.Clock` or other audited deprecated APIs in application code. |
+| `src/components/voxel/VoxelViewer.tsx` | Already uses `shadows={{ type: THREE.PCFShadowMap }}` (prior QA fix). |
 
-Prior QA commits on this branch also included `VisualizerClient.tsx` (5s success dismiss, Copy/Import button row, import error display).
+## Clock usage in our source
 
-## Stricter imported blueprint structural validation
+**Not found.** Searched `src/`, `src/app/`, `src/components/`, `src/lib/` for:
 
-**Problem:** Typos such as `constraints.maxBlock` instead of `constraints.maxBlockCount` could pass `validateBlueprint()` (undefined comparisons) and reach `setBlueprint()`, causing React controlled/uncontrolled input warnings on `/visualizer`.
+- `THREE.Clock`, `new Clock`, `Clock(`, `useFrame`, custom clock wiring, Clock imports from `three`
 
-**Fix:** `validateImportedMedievalTowerStructure()` verifies required top-level sections (`metadata`, `dimensions`, `materials`, `massing`, `levels`, `openings`, `roof`, `features`, `constraints`) and nested fields used by the editor (including `constraints.maxBlockCount`, all material slots, opening numeric fields, etc.) with correct JSON types (`string` / `number` / `boolean`).
+`VoxelViewer` uses R3F `Canvas`, lights, geometry, materials, and orbit controls only — no direct clock or animation loop.
 
-**Example failure:** `Missing required blueprint field: constraints.maxBlockCount` → UI: `Could not import blueprint: Missing required blueprint field: constraints.maxBlockCount`.
+## Where the `THREE.Clock` warning comes from
 
-**Policy:** Unknown extra keys are **allowed**; they do not replace required keys.
+**Dependency-originated:** `@react-three/fiber` initializes its internal store with:
 
-## Controlled / uncontrolled input warning
+```js
+clock: new THREE.Clock(),
+```
 
-Prevented by rejecting incomplete shapes **before** `setBlueprint()`.
+(see `node_modules/@react-three/fiber/dist/events-*.js`, store default state).
 
-## `validateBlueprint` exception handling
+`three@0.184.0` deprecates `Clock` in **r183** and logs on construction:
 
-`parseBlueprintExchange()` still wraps `validateBlueprint()` in **`try/catch`** so malformed nested access cannot crash the page.
+`Clock: This module has been deprecated. Please use THREE.Timer instead.`
 
-## Success message auto-dismiss (already on branch)
+(`node_modules/three/src/core/Clock.js`).
 
-- Copy and import success messages clear after **5 seconds** with timer cleanup in `useEffect`.
+`@react-three/drei@10.7.7` does **not** reference `THREE.Clock` in its package sources (grep).
 
-## Copy / Import button layout (already on branch)
+R3F does **not** yet use `THREE.Timer` in the installed build (no `Timer` usage in fiber dist for the frameloop clock).
 
-- **Copy blueprint JSON** and **Import blueprint JSON** share one `flex-wrap` row when the import panel is closed.
+## Installed versions (lockfile)
 
-## Unchanged
+| Package | Version |
+|---------|---------|
+| `three` | **0.184.0** |
+| `@react-three/fiber` | **9.6.1** |
+| `@react-three/drei` | **10.7.7** |
 
-- v1 envelope (`kind`, `schemaVersion`, `blueprint` only)
-- Wrapped-only import, source status, layer Full on success, `/preview`, export behavior
+## Other deprecated API audit (our source)
 
-## Build / TypeScript
+| Pattern | In `src/`? |
+|---------|------------|
+| `PCFSoftShadowMap` | **No** (Canvas uses `PCFShadowMap`) |
+| `THREE.Clock` / `Clock` | **No** |
+| `WebGLMultipleRenderTargets` | **No** |
+| Legacy `Geometry` | **No** |
+| `WebGPURenderer` | **No** |
+| `outputEncoding` / `sRGBEncoding` | **No** |
+| `physicallyCorrectLights` | **No** |
+
+No additional source fixes required from this audit.
+
+## What we did **not** do
+
+- No `console.warn` suppression
+- No `node_modules` edits or monkeypatches
+- No major dependency upgrades (R3F / Three) to chase `Timer` adoption upstream
+- No experimental R3F releases
+
+## TypeScript and build
 
 | Check | Result |
 |-------|--------|
 | `pnpm exec tsc --noEmit` | **Passed** |
-| `pnpm run build` | **Passed** |
+| `pnpm run build` | **Passed** (Next.js 16.2.6) |
 
-## Manual QA notes
+## `pnpm dev` observation
 
-1. Valid export → import → success; banner clears ~5s.
-2. Copy success clears ~5s; Copy + Import side by side.
-3. Paste valid JSON with `constraints.maxBlock` instead of `maxBlockCount` → inline error; blueprint unchanged; no controlled/uncontrolled warning.
-4. Malformed JSON / raw inner blueprint → still rejected inline.
-5. `/preview` unchanged.
+- **`THREE.WebGLShadowMap: PCFSoftShadowMap has been deprecated`** — should remain **gone** on `/visualizer` thanks to explicit `PCFShadowMap` on `Canvas`.
+- **`THREE.Clock: … Please use THREE.Timer instead`** — expected to **remain** once per Canvas mount until `@react-three/fiber` stops constructing `THREE.Clock`. Non-fatal; rendering and blueprint import/export are unaffected.
+- Voxel shadows, `/preview`, and lab workflows unchanged by this audit (no code diff).
 
-## Remaining weaknesses
+## Remaining follow-up
 
-- Structural checks enforce presence and JSON types, not enum value validity (that remains `validateBlueprint()`).
-- Optional `metadata.description` / `metadata.notes` are not required for import (only `metadata.name`).
+- Watch **@react-three/fiber** releases for migration from `THREE.Clock` to `THREE.Timer` (or equivalent) in the root store.
+- Optional future: bump `three` + R3F together when upstream documents compatible versions — out of scope for this small audit commit.

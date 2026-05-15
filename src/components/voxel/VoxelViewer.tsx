@@ -416,7 +416,7 @@ export function VoxelViewer({
   return (
     <div className={className}>
       <Canvas
-        shadows
+        shadows={{ type: THREE.PCFShadowMap }}
         className="touch-none"
         camera={{ position: [11, 9, 11], fov: 42, near: 0.1, far: 200 }}
         gl={{ antialias: true, alpha: false }}
