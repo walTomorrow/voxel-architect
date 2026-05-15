@@ -8,7 +8,7 @@ import {
   SAMPLE_MEDIEVAL_TOWER_BLUEPRINT,
   getMedievalTowerPreset,
 } from "@/src/lib/blueprints/sampleBlueprints";
-import { serializeBlueprintExchange } from "@/src/lib/blueprints/blueprintExchange";
+import { parseBlueprintExchange, serializeBlueprintExchange } from "@/src/lib/blueprints/blueprintExchange";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
 import { StructureInspectionPanel } from "@/src/components/voxel/StructureInspectionPanel";
@@ -95,10 +95,20 @@ const CLASSIC_KEYS = Object.keys(CLASSIC_BLOCK_PACK).sort((a, b) =>
   a.localeCompare(b),
 );
 
-const PRESET_INSPECTION_OPTIONS = MEDIEVAL_TOWER_PRESETS.map((p) => ({
-  id: p.id,
-  label: p.label,
-}));
+/**
+ * Right-rail preset `<select>` value when the editor blueprint is not tied to a
+ * frozen sample preset (e.g. after JSON import). **Reload preset** no-ops until
+ * a real preset id is selected.
+ */
+const IMPORT_DISCONNECTED_PRESET_ID = "__va_no_preset__";
+
+const PRESET_INSPECTION_OPTIONS = [
+  ...MEDIEVAL_TOWER_PRESETS.map((p) => ({
+    id: p.id,
+    label: p.label,
+  })),
+  { id: IMPORT_DISCONNECTED_PRESET_ID, label: "Other" },
+];
 
 export function VisualizerClient() {
   const [selectedPresetId, setSelectedPresetId] = useState<string>(
@@ -114,6 +124,10 @@ export function VisualizerClient() {
   const [copyBlueprintFeedback, setCopyBlueprintFeedback] = useState<
     "success" | "error" | null
   >(null);
+  const [importPanelOpen, setImportPanelOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importPanelError, setImportPanelError] = useState<string | null>(null);
+  const [importBanner, setImportBanner] = useState<string | null>(null);
 
   const validation = useMemo(() => validateBlueprint(blueprint), [blueprint]);
 
@@ -137,7 +151,10 @@ export function VisualizerClient() {
   }, [structure.blocks, layerExtents]);
 
   useEffect(() => {
-    if (!validation.ok) setCopyBlueprintFeedback(null);
+    if (!validation.ok) {
+      setCopyBlueprintFeedback(null);
+      setImportBanner(null);
+    }
   }, [validation.ok]);
 
   const visibleStructure: VoxelStructure = useMemo(() => {
@@ -190,6 +207,10 @@ export function VisualizerClient() {
   };
 
   const handlePresetIdChange = (id: string) => {
+    if (id === IMPORT_DISCONNECTED_PRESET_ID) {
+      setSelectedPresetId(id);
+      return;
+    }
     const preset = getMedievalTowerPreset(id);
     if (!preset) return;
     setSelectedPresetId(id);
@@ -213,6 +234,39 @@ export function VisualizerClient() {
     } catch {
       setCopyBlueprintFeedback("error");
     }
+  };
+
+  const handleImportPanelOpen = () => {
+    setImportPanelOpen(true);
+    setImportPanelError(null);
+    setImportBanner(null);
+  };
+
+  const handleImportPanelCancel = () => {
+    setImportPanelOpen(false);
+    setImportText("");
+    setImportPanelError(null);
+    setImportBanner(null);
+  };
+
+  const handleImportBlueprintSubmit = () => {
+    setImportPanelError(null);
+    const text = importText.trim();
+    if (text.length === 0) {
+      setImportPanelError("Paste blueprint JSON before importing.");
+      return;
+    }
+    const result = parseBlueprintExchange(text);
+    if (!result.ok) {
+      setImportPanelError(`Could not import blueprint: ${result.error}`);
+      return;
+    }
+    setBlueprint(structuredClone(result.blueprint) as MedievalTowerBlueprint);
+    setSelectedPresetId(IMPORT_DISCONNECTED_PRESET_ID);
+    setLayerViewMode("full");
+    setImportPanelOpen(false);
+    setImportText("");
+    setImportBanner("Blueprint JSON imported successfully.");
   };
 
   return (
@@ -311,6 +365,53 @@ export function VisualizerClient() {
             <p className="text-xs text-red-400/95">
               Blueprint JSON failed to copy. Please check browser settings.
             </p>
+          ) : null}
+
+          <div className="pt-2">
+            {!importPanelOpen ? (
+              <button
+                type="button"
+                className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
+                onClick={handleImportPanelOpen}
+              >
+                Import blueprint JSON
+              </button>
+            ) : (
+              <div className="space-y-2 rounded-md border border-zinc-700 bg-zinc-900/50 p-3">
+                <label className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                  Pasted JSON (wrapped format only)
+                </label>
+                <textarea
+                  className="min-h-[10rem] w-full resize-y rounded-md border border-zinc-600 bg-zinc-950 px-2 py-2 font-mono text-[11px] leading-relaxed text-zinc-100 placeholder:text-zinc-600"
+                  spellCheck={false}
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  placeholder='{ "kind": "voxel-architect-blueprint", ... }'
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-md border border-emerald-700/80 bg-emerald-900/40 px-3 py-1.5 text-xs font-medium text-emerald-100 hover:bg-emerald-900/60"
+                    onClick={handleImportBlueprintSubmit}
+                  >
+                    Import blueprint
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700"
+                    onClick={handleImportPanelCancel}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {importPanelError ? (
+                  <p className="text-xs text-red-400/95">{importPanelError}</p>
+                ) : null}
+              </div>
+            )}
+          </div>
+          {importBanner ? (
+            <p className="text-xs text-emerald-400/90">{importBanner}</p>
           ) : null}
         </div>
 

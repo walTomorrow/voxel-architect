@@ -68,12 +68,19 @@ The **blueprint lab** at **`/visualizer`** includes **Copy blueprint JSON** in t
 
 - The clipboard payload is the **official v1 wrapped** JSON from **`serializeBlueprintExchange`** (pretty-printed: **`kind`**, **`schemaVersion`**, **`blueprint`** only).
 - Export is **enabled only when** the current blueprint **`validateBlueprint()`** passes; otherwise the control is disabled and a short note explains that validation must be fixed first.
-- **Import** from clipboard or file is **not** implemented yet; use **`parseBlueprintExchange`** in a future issue.
+
+## Import from `/visualizer` (paste JSON)
+
+**`/visualizer`** also provides an inline **Import blueprint JSON** workflow in the same sidebar:
+
+- Users paste **official wrapped** JSON only; **`parseBlueprintExchange`** performs all envelope checks and **`validateBlueprint()`** before any editor update.
+- **Raw** inner blueprint JSON (no **`kind`** / **`schemaVersion`** wrapper) is **rejected** by the parser in v1.
+- If parsing fails, the **current blueprint is not replaced**; the panel stays open and the pasted text remains for correction.
+- On success, the editor applies the imported **`blueprint`** object, closes the panel, and clears the textarea. Import is **frontend-only** — nothing is written to a backend or **`localStorage`**.
 
 ## Future UI behavior for invalid imports
 
-- Show **`error`** (and optionally **`stage`**) to the user.
-- **Leave** the current editor blueprint unchanged.
+For any UI that calls **`parseBlueprintExchange`**, failures should surface **`error`** (and optionally **`stage`**) and **must not** replace editor state until **`ok: true`**.
 
 ## Non-goals (v1 / this format)
 

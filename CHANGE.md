@@ -1,8 +1,8 @@
-# Change log — Blueprint export: copy wrapped JSON to clipboard
+# Change log — Blueprint import panel and validation
 
 ## 1. Title of this issue
 
-**Add blueprint export and copy-to-clipboard** — **`/visualizer`** only; uses **`serializeBlueprintExchange`**; no import UI, download, or **`localStorage`**.
+**Add blueprint import panel and validation** — inline paste UI on **`/visualizer`** only; **`parseBlueprintExchange`** for all parsing/validation; no file picker, no raw JSON, no backend.
 
 ## 2. Branch name
 
@@ -12,66 +12,90 @@
 
 | File | Change |
 |------|--------|
-| `src/app/visualizer/VisualizerClient.tsx` | **Copy blueprint JSON** control, clipboard handler, validation-gated enablement, inline success/failure messages, feedback cleared when validation fails. |
-| `docs/blueprints/BLUEPRINT_JSON_FORMAT.md` | New section **Export from `/visualizer` (copy to clipboard)** describing workflow, wrapped payload, validation gate, and future import. |
+| `src/app/visualizer/VisualizerClient.tsx` | Import panel (toggle, textarea, **Import blueprint** / **Cancel**), **`parseBlueprintExchange`** wiring, success banner, preset disconnect sentinel, **`handlePresetIdChange`** branch for sentinel. |
+| `docs/blueprints/BLUEPRINT_JSON_FORMAT.md` | **Import from `/visualizer`** section; export section no longer claims import is future-only; tightened “invalid imports” note. |
 
-## 4. Where the export control was added
+## 4. Where the import control was added
 
-- **Left blueprint sidebar** in **`VisualizerClient`**, directly under the **Reset to default** / **Reload preset** row and above the metadata **`dl`**.
-- **Not** added to **`/preview`**, **`StructureInspectionPanel`**, or **`VoxelViewer`**.
+- Left blueprint sidebar in **`VisualizerClient`**, directly under the **Copy blueprint JSON** block (same workflow region).
+- **Not** on **`/preview`**, **`StructureInspectionPanel`**, or **`VoxelViewer`**.
 
-## 5. How `serializeBlueprintExchange` is used
+## 5. Import panel UX
 
-- Import from **`@/src/lib/blueprints/blueprintExchange`**.
-- On click (when allowed): **`serializeBlueprintExchange(blueprint)`** where **`blueprint`** is the current React **`useState`** value — **editable lab state**, not a separate preset reference.
-- Result is passed to **`navigator.clipboard.writeText`** (no hand-rolled envelope in the component).
+- **Import blueprint JSON** toggles an **inline** panel (not modal/drawer).
+- Panel contains: label, **textarea**, **Import blueprint**, **Cancel**.
+- **Cancel** closes the panel and clears textarea, panel errors, and success banner.
+- Opening the panel clears prior banner/panel errors for a clean attempt.
+- **No** separate Validate button; **Import blueprint** runs validation.
 
-## 6. Validation behavior
+## 6. How `parseBlueprintExchange` is used
 
-- **`validation.ok`** from existing **`useMemo(() => validateBlueprint(blueprint), [blueprint])`** gates export.
-- **Enabled:** **`Copy blueprint JSON`** when **`validation.ok`**.
-- **Disabled:** when invalid, with adjacent note: **Fix validation errors before exporting.**
-- **`useEffect`** clears copy feedback when **`validation.ok`** becomes false so stale success text does not linger over an invalid blueprint.
+- **`parseBlueprintExchange(importText.trim())`** only — no **`JSON.parse`**, **`kind`**, **`schemaVersion`**, or **`validateBlueprint`** inlined in the component.
+- **`result.ok === false`** → **`Could not import blueprint: ${result.error}`** in the panel.
+- **`result.ok === true`** → **`setBlueprint(structuredClone(result.blueprint))`**.
 
-## 7. Clipboard success / failure behavior
+## 7. Empty textarea
 
-- Uses **`navigator.clipboard.writeText(json)`** inside **`try`/`catch`**.
-- Missing **`navigator.clipboard`** or **`writeText`** → treat as failure (same message as rejected write).
-- **Success:** **Blueprint JSON copied to clipboard!**
-- **Failure:** **Blueprint JSON failed to copy. Please check browser settings.**
-- No **`alert`**, no toast library; messages render as small text under the button.
-- Each click **clears** prior feedback then sets the new outcome.
+- Trimmed empty string → **`Paste blueprint JSON before importing.`** (panel stays open).
 
-## 8. Passive export
+## 8. Success / failure messages
 
-- Copy does **not** mutate **`blueprint`**, **`selectedPresetId`**, layer mode, **`selectedLayer`**, **`cameraResetNonce`**, or any viewer props — only **`copyBlueprintFeedback`** local UI state updates.
+- **Success (after apply):** **`Blueprint JSON imported successfully.`** as a small banner under the workflow block; panel closed; textarea cleared.
+- **Failure:** inline **`Could not import blueprint: …`**; panel and pasted text **preserved**; **blueprint state unchanged**.
 
-## 9. Documentation
+## 9. Behavior on valid import
 
-- **`docs/blueprints/BLUEPRINT_JSON_FORMAT.md`** — export workflow, intent vs voxels, validation-only enablement, import deferred.
+- Updates **`blueprint`** from parsed result.
+- Sets **`layerViewMode`** to **`"full"`** (avoids stale build-up/slice).
+- **`selectedLayer`** continues to be clamped by the existing **`useEffect`** when **`layerExtents`** updates from the new structure.
+- **Does not** increment **`cameraResetNonce`** (same as preset change / reload — no automatic refit).
 
-## 10. Intentionally deferred
+## 10. Behavior on invalid import
 
-- Import UI / textarea / raw JSON import, download **`.json`**, source labels, backend, **`localStorage`**, voxel/Minecraft export, AI, new schema fields, **`/preview`** export.
+- **No** **`setBlueprint`**; user can fix JSON and retry.
 
-## 11. Build / TypeScript
+## 11. Preset state behavior chosen
+
+- Added **`IMPORT_DISCONNECTED_PRESET_ID`** (`__va_no_preset__`) and an **Other** row appended to **`PRESET_INSPECTION_OPTIONS`** (visualizer only).
+- After a successful import, **`selectedPresetId`** is set to this sentinel so **Reload preset** calls **`getMedievalTowerPreset(...)`** → **`undefined`** and **no-ops** (avoids silently reloading a stale named preset over the imported blueprint).
+- Choosing **Other** in the preset `<select>` only updates **`selectedPresetId`**; it does **not** change **`blueprint`** (user can then pick a real preset to load a frozen snapshot).
+- **`handlePresetIdChange`** handles the sentinel before **`getMedievalTowerPreset`**.
+- Full **source labeling** (e.g. “Imported blueprint”) is **deferred**; **Other** is a minimal disconnect marker only.
+
+## 12. Layer / view reset
+
+- **`setLayerViewMode("full")`** on successful import.
+- No **`cameraResetNonce`** bump on import.
+
+## 13. Documentation
+
+- **`docs/blueprints/BLUEPRINT_JSON_FORMAT.md`** — import flow, wrapped-only, invalid = no replace, no persistence.
+
+## 14. Intentionally deferred
+
+- Source status labels, modified-preset tracking, file upload/download, raw JSON import, separate Validate control, backend, **`localStorage`**, schema migrations, AI, tests framework, **`/preview`** import.
+
+## 15. Build / TypeScript
 
 | Check | Result |
 |-------|--------|
 | **`pnpm exec tsc --noEmit`** | **Passed** |
 | **`pnpm run build`** | **Passed** (Next.js 16.2.6, Turbopack) |
 
-## 12. Manual QA notes
+## 16. Manual QA notes
 
-Suggested checks:
+Suggested:
 
-1. Open **`/visualizer`** — **Copy blueprint JSON** appears in the left blueprint column under preset actions.
-2. Valid blueprint — button **enabled**; click → **Blueprint JSON copied to clipboard!**; paste shows **`kind`**, **`schemaVersion`**, **`blueprint`**, pretty-printed; no **`blocks`** / voxel arrays at top level.
-3. Invalidate blueprint (e.g. break a validator rule) — button **disabled**; **Fix validation errors before exporting.** visible; prior success message cleared.
-4. After copy, change dimensions only — no spurious camera refit from copy; layer controls unchanged unless edited separately.
-5. **`/preview`** — unchanged (no export control).
+1. **`/visualizer`** — **Import blueprint JSON** appears near copy control; opens inline panel with textarea and buttons.
+2. **Cancel** — panel closes; textarea and errors cleared.
+3. Empty **Import blueprint** → **Paste blueprint JSON before importing.**
+4. Paste valid wrapped JSON from **Copy blueprint JSON** → import → success banner; panel closed; editor matches import; geometry regenerates via existing path; layer mode **Full**.
+5. Malformed / wrong **`kind`** / wrong **`schemaVersion`** / raw inner-only JSON → error line; blueprint unchanged; textarea kept.
+6. **`/preview`** unchanged.
+7. After import, **Reload preset** does nothing until a real preset is chosen from the list.
+8. **Refit camera** still works independently.
 
-## 13. Remaining weaknesses / follow-up ideas
+## 17. Remaining weaknesses / follow-up ideas
 
-- **Clipboard API** requires **secure context** (HTTPS or localhost); failure message covers denial.
-- **Import** — wire **`parseBlueprintExchange`** in a future **`/visualizer`** issue; optional “clear feedback on blur” if UX requests it.
+- **Preset `<select>`** shows **Other** while disconnected — true “imported” vs “edited off-preset” labeling is a follow-up.
+- Large pasted JSON has no size guard (acceptable for lab for now).
