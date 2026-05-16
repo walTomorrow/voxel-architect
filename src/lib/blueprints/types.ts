@@ -3,7 +3,7 @@ import type { BlockTypeId } from "@/src/lib/voxel/blocks/registry-types";
 /** Authoring-time material slot: classic pack local id (e.g. `cobblestone`). */
 export type ClassicMaterialKey = string;
 
-export type StructureType = "medieval_tower";
+export type StructureType = "medieval_tower" | "blacksmith_workshop";
 
 export interface BlueprintMetadata {
   readonly name: string;
@@ -105,7 +105,64 @@ export interface MedievalTowerBlueprint {
   readonly constraints: BlueprintConstraints;
 }
 
-export type StructureBlueprint = MedievalTowerBlueprint;
+export interface BlacksmithWorkshopDimensions {
+  readonly width: number;
+  readonly depth: number;
+  /** Foundation + body + roof vertical budget. */
+  readonly height: number;
+}
+
+export type BlacksmithRoofStyle = "pitched_gable" | "shed";
+export type ChimneySide = "left" | "right";
+export type BlacksmithWindowPlacement = "none" | "front_only" | "front_and_sides";
+
+export interface BlacksmithWorkshopMassing {
+  readonly wallThickness: number;
+  readonly hollowInterior: boolean;
+}
+
+export interface BlacksmithWorkshopRoof {
+  readonly style: BlacksmithRoofStyle;
+  readonly height: number;
+  readonly overhang: number;
+}
+
+export interface BlacksmithWorkshopOpenings {
+  readonly entranceSide: EntranceSide;
+  readonly entranceWidth: number;
+  readonly entranceHeight: number;
+  readonly windowsStyle: WindowStyle;
+  readonly windowsPlacement: BlacksmithWindowPlacement;
+  /** Target window openings on the front façade (and sides when placement allows). */
+  readonly windowsCount: number;
+}
+
+export interface BlacksmithWorkshopFeatures {
+  readonly chimney: { readonly enabled: boolean; readonly side: ChimneySide };
+  readonly forge: { readonly enabled: boolean };
+  readonly workbench: { readonly enabled: boolean };
+  readonly storage: { readonly enabled: boolean };
+}
+
+export interface BlacksmithWorkshopConstraints {
+  readonly maxBlockCount: number;
+  readonly allowFloatingBlocks: boolean;
+  readonly requireGroundedStructure: boolean;
+}
+
+export interface BlacksmithWorkshopBlueprint {
+  readonly structureType: "blacksmith_workshop";
+  readonly metadata: BlueprintMetadata;
+  readonly dimensions: BlacksmithWorkshopDimensions;
+  readonly materials: BlueprintMaterials;
+  readonly massing: BlacksmithWorkshopMassing;
+  readonly roof: BlacksmithWorkshopRoof;
+  readonly openings: BlacksmithWorkshopOpenings;
+  readonly features: BlacksmithWorkshopFeatures;
+  readonly constraints: BlacksmithWorkshopConstraints;
+}
+
+export type StructureBlueprint = MedievalTowerBlueprint | BlacksmithWorkshopBlueprint;
 
 /** Fully validated / normalized input for procedural generators (registry ids). */
 export interface ResolvedMedievalTower {
@@ -134,3 +191,32 @@ export interface ResolvedMedievalTower {
     readonly overhang: number;
   };
 }
+
+export interface ResolvedBlacksmithWorkshop {
+  readonly structureType: "blacksmith_workshop";
+  readonly metadata: BlueprintMetadata;
+  readonly materials: {
+    readonly wall: BlockTypeId;
+    readonly floor: BlockTypeId;
+    readonly roof: BlockTypeId;
+    readonly window: BlockTypeId;
+    readonly door: BlockTypeId;
+    readonly accent: BlockTypeId;
+  };
+  readonly massing: BlacksmithWorkshopMassing;
+  readonly roof: BlacksmithWorkshopRoof;
+  readonly openings: BlacksmithWorkshopOpenings;
+  readonly features: BlacksmithWorkshopFeatures;
+  readonly constraints: BlacksmithWorkshopConstraints;
+  readonly grid: {
+    readonly width: number;
+    readonly depth: number;
+    readonly bodyLayers: number;
+    readonly roofLayers: number;
+    readonly overhang: number;
+  };
+}
+
+export type ResolvedStructure =
+  | ResolvedMedievalTower
+  | ResolvedBlacksmithWorkshop;

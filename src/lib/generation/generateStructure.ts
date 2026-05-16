@@ -1,8 +1,9 @@
 import type {
-  ResolvedMedievalTower,
+  ResolvedStructure,
   StructureBlueprint,
 } from "@/src/lib/blueprints/types";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
+import { generateBlacksmithWorkshop } from "@/src/lib/generation/generators/generateBlacksmithWorkshop";
 import { generateMedievalTower } from "@/src/lib/generation/generators/generateMedievalTower";
 import type { VoxelBlock } from "@/src/lib/voxel/types";
 
@@ -21,15 +22,17 @@ export function generateStructure(blueprint: StructureBlueprint): VoxelBlock[] {
   return generateStructureFromResolved(result.resolved);
 }
 
-/** Generate without re-validating (caller must pass validated `ResolvedMedievalTower`). */
+/** Generate without re-validating (caller must pass validated `ResolvedStructure`). */
 export function generateStructureFromResolved(
-  resolved: ResolvedMedievalTower,
+  resolved: ResolvedStructure,
 ): VoxelBlock[] {
   switch (resolved.structureType) {
     case "medieval_tower":
       return generateMedievalTower(resolved);
+    case "blacksmith_workshop":
+      return generateBlacksmithWorkshop(resolved);
     default: {
-      const _exhaust: never = resolved.structureType;
+      const _exhaust: never = resolved;
       return _exhaust;
     }
   }

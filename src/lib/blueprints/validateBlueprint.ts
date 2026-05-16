@@ -5,14 +5,16 @@ import type {
   MedievalTowerBlueprint,
   StructureBlueprint,
   ResolvedMedievalTower,
+  ResolvedStructure,
   BlueprintMassing,
 } from "./types";
+import { validateBlacksmithWorkshopBlueprint } from "./validateBlacksmithWorkshop";
 
 export interface BlueprintValidationResult {
   readonly ok: boolean;
   readonly errors: readonly string[];
   readonly notes: readonly string[];
-  readonly resolved?: ResolvedMedievalTower;
+  readonly resolved?: ResolvedStructure;
 }
 
 function isClassicKey(k: string): k is keyof typeof CLASSIC_BLOCK_PACK {
@@ -64,18 +66,13 @@ function estimateTowerBlocks(r: ResolvedMedievalTower): number {
   return foundation + shellApprox + interiorFloors + roofApprox + crenel + facadeExtra;
 }
 
-export function validateBlueprint(
-  blueprint: StructureBlueprint,
+function validateMedievalTowerBlueprint(
+  blueprint: MedievalTowerBlueprint,
 ): BlueprintValidationResult {
   const errors: string[] = [];
   const notes: string[] = [];
 
-  if (blueprint.structureType !== "medieval_tower") {
-    errors.push(`Unsupported structureType: ${blueprint.structureType}`);
-    return { ok: false, errors, notes };
-  }
-
-  const bp = blueprint as MedievalTowerBlueprint;
+  const bp = blueprint;
   const { dimensions: dim, massing, levels, openings, roof, constraints } = bp;
 
   let W = dim.width;
@@ -234,4 +231,23 @@ export function validateBlueprint(
   };
 
   return { ok: true, errors: [], notes, resolved };
+}
+
+export function validateBlueprint(
+  blueprint: StructureBlueprint,
+): BlueprintValidationResult {
+  switch (blueprint.structureType) {
+    case "medieval_tower":
+      return validateMedievalTowerBlueprint(blueprint);
+    case "blacksmith_workshop":
+      return validateBlacksmithWorkshopBlueprint(blueprint);
+    default: {
+      const unknown = blueprint as { structureType?: string };
+      return {
+        ok: false,
+        errors: [`Unsupported structureType: ${unknown.structureType ?? "?"}`],
+        notes: [],
+      };
+    }
+  }
 }

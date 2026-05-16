@@ -1,64 +1,92 @@
-# CHANGE.md — Building style catalog (metadata only)
+# CHANGE.md — Blacksmith workshop family (library / generator / tests)
 
 ## Files changed
 
-- `src/lib/generation/styles/buildingStyles.ts` — **new** style catalog: types, six `BUILDING_STYLES` entries, helpers.
-- `src/lib/blueprints/sampleBlueprints.ts` — `MedievalTowerPreset.styleId` on wrapper; six preset → style mappings (blueprint bodies unchanged).
-- `src/lib/generation/__tests__/buildingStyles.test.ts` — **new** catalog tests (8 cases).
-- `docs/generation/GENERATION_DESIGN_PRINCIPLES.md` — §1.6 note: catalog is metadata-only, not consumed by generators.
+- `src/lib/blueprints/types.ts` — `BlacksmithWorkshopBlueprint`, `ResolvedBlacksmithWorkshop`, `StructureBlueprint` / `ResolvedStructure` unions; `StructureType` includes `blacksmith_workshop`.
+- `src/lib/blueprints/validateBlueprint.ts` — dispatches by `structureType`; tower logic unchanged in `validateMedievalTowerBlueprint`.
+- `src/lib/blueprints/validateBlacksmithWorkshop.ts` — **new** blacksmith validation, clamps, material resolution, `maxBlockCount` estimate.
+- `src/lib/generation/generators/generateBlacksmithWorkshop.ts` — **new** deterministic generator.
+- `src/lib/generation/generateStructure.ts` — `generateStructureFromResolved` dispatches `blacksmith_workshop`.
+- `src/lib/blueprints/sampleBlacksmithBlueprints.ts` — **new** `BLACKSMITH_PRESETS` (2 curated).
+- `src/lib/generation/families/buildingFamilies.ts` — **new** lightweight family catalog.
+- `src/lib/generation/styles/buildingStyles.ts` — `BuildingFamilyId` re-exported from family catalog.
+- `src/lib/generation/__tests__/generatorBlacksmithPresetInvariants.test.ts` — **new**
+- `src/lib/generation/__tests__/generatorBlacksmithEdgeCaseInvariants.test.ts` — **new**
+- `src/lib/generation/__tests__/fixtures/blacksmithEdgeCaseBlueprints.ts` — **new**
+- `src/lib/generation/__tests__/generatorBlacksmithPanes.test.ts` — **new**
+- `src/lib/generation/__tests__/buildingFamilies.test.ts` — **new**
+- `docs/generation/GENERATOR_RELIABILITY.md` — blacksmith test matrix + pipeline wording.
+- `docs/generation/GENERATION_DESIGN_PRINCIPLES.md` — §1.5 notes second shipped family.
+- `src/lib/blueprints/blueprintExchange.ts` — import parse narrows to `MedievalTowerBlueprint` after `structureType` check (no v2 exchange).
 
-## Style catalog module
+## Blacksmith blueprint / resolved types
 
-- **Location:** `src/lib/generation/styles/buildingStyles.ts`
-- **Types:** `BuildingFamilyId`, `BuildingStyleId`, `BuildingStyleDefinition`, plus mood/ornamentation/color helpers and `EncouragedPartialShape`.
-- **Record:** `BUILDING_STYLES` keyed by approved `styleId`.
-- **Fields per style:** `displayName`, `description`, `applicableFamilies`, `tags`, `defaultPalette`, `massingHints`, `openingsHints`, `roofHints`, `featuresHints`, `mood`, `ornamentation`, `colorMood`, `encouragedPartialShapes` (pane only; non-binding).
-- **No** voxel coordinates, texture paths, resolver, or generator wiring.
+- **Dimensions:** `width` (7–15), `depth` (5–11), `height` (4–8); **non-square** allowed.
+- **Materials:** same six classic slots as tower.
+- **Massing:** `wallThickness` (1–2), `hollowInterior`.
+- **Roof:** `pitched_gable` | `shed`, `height`, `overhang`.
+- **Openings:** entrance side/width/height; `windowsPlacement` (`none` | `front_only` | `front_and_sides`); `windowsCount`.
+- **Features:** `chimney` (enabled + `left` | `right`), `forge`, `workbench`, `storage` booleans.
+- **Constraints:** `maxBlockCount`, `allowFloatingBlocks`, `requireGroundedStructure`.
+- **No** `floorPlan` / rooms / circulation.
 
-## Six style IDs
+## Validation
 
-1. `rustic_stone_watchtower`
-2. `tall_military_watchtower`
-3. `fortified_gatehouse`
-4. `gothic_stone`
-5. `compact_guard_post`
-6. `dark_wizard`
+- `validateBlueprint()` routes `blacksmith_workshop` → `validateBlacksmithWorkshopBlueprint`.
+- Tower path unchanged.
+- Unknown `structureType` fails with clear error.
 
-## Preset → style mapping
+## Generator dispatch
 
-| Preset id | `styleId` |
-|-----------|-----------|
-| `northwatch` | `rustic_stone_watchtower` |
-| `tall_watchtower` | `tall_military_watchtower` |
-| `fortified_gate` | `fortified_gatehouse` |
-| `gothic_stone` | `gothic_stone` |
-| `compact_guard` | `compact_guard_post` |
-| `dark_wizard` | `dark_wizard` |
+- `generateStructureFromResolved`: `medieval_tower` → `generateMedievalTower`; `blacksmith_workshop` → `generateBlacksmithWorkshop`.
 
-## Helper functions
+## `generateBlacksmithWorkshop` behavior
 
-- `getBuildingStyle(styleId)` — defined style or `undefined` (unknown ids do not throw).
-- `stylesForFamily(familyId)` — all styles for `medieval_tower` (six entries).
-- `getAllBuildingStyles()` — readonly list of all catalog entries.
-- `BUILDING_STYLE_IDS` — const tuple of approved ids.
+- Foundation + hollow shell walls (y = 1…`bodyLayers`).
+- Front (or configured) entrance aperture + door row.
+- Sparse windows; **pane** when `isShapeAllowedForBlockType(window, "pane")` (reuses `paneAxisForWindowCell` from tower module).
+- **Pitched gable** or **shed** shrinking roof layers above body.
+- **Chimney:** accent column on left/right exterior wall through roof (+1 above).
+- **Forge:** accent “hearth” at rear interior + accent extension (uses blueprint **`accent`**, not new furnace block).
+- **Workbench / storage:** `door` material placeholder cubes in interior (connected to floor).
+- Merge-by-priority; `filterGrounded` when required.
+- **No** slabs/posts; **no** window-adjacent slab trim.
 
-## Tests added
+## Presets
 
-`buildingStyles.test.ts`: exact six ids, uniqueness, lookup per id, unknown id → `undefined`, `stylesForFamily`, `applicableFamilies`, palette keys in `CLASSIC_BLOCK_PACK`, every `MEDIEVAL_TOWER_PRESETS[].styleId` resolves. Existing generator invariant suites unchanged (62 tests total).
+| id | Label |
+|----|--------|
+| `rustic_village_forge` | Rustic Village Forge (11×7, pitched gable) |
+| `dark_ironworks` | Dark Ironworks (9×8, shed roof, obsidian/schist) |
+
+No `styleId` on blacksmith presets (blacksmith styles deferred).
+
+## Building family catalog
+
+- `BUILDING_FAMILIES`: `medieval_tower`, `blacksmith_workshop` (both `shipped`).
+- Helpers: `getBuildingFamily`, `getAllBuildingFamilies`.
+
+## Tests
+
+- **73** generator-related tests pass (13 files).
+- Blacksmith: preset invariants, 3 edge fixtures (min footprint, non-square, tight budget), pane + oak_planks fallback smoke.
+- Tower suites unchanged in behavior.
 
 ## Confirmations
 
-- **Blueprint schema / import-export:** unchanged (`MedievalTowerBlueprint` has no `styleId`).
-- **Preset blueprint bodies:** unchanged (only wrapper `styleId` added).
-- **Generator behavior/output:** unchanged (`generateMedievalTower`, `generateStructure` untouched).
-- **Style resolver:** not added; catalog not consumed at generation time.
-- **UI:** `/preview`, `/visualizer` not modified.
-- **Textures / assets / block definitions:** none added or generated.
+- **Medieval tower:** generator, presets, validation path **not** changed in behavior.
+- **UI:** `/preview`, `/visualizer` **not** modified.
+- **Import/export v2:** **not** added (`blueprintExchange` still tower-only v1).
+- **Style resolver:** **not** added.
+- **Blacksmith styles:** **not** added.
+- **Textures / block definitions:** **none** added.
+- **Floor plan / interior schema:** **not** implemented.
+- **AI / photo input:** **not** implemented.
 
 ## Verification
 
 | Command | Result |
 |---------|--------|
-| `pnpm test:generator` | Pass — **9** files, **62** tests |
-| `pnpm exec tsc --noEmit` | Pass (also runs inside `pnpm run build`) |
+| `pnpm test:generator` | Pass — **13** files, **73** tests |
+| `pnpm exec tsc --noEmit` | Pass |
 | `pnpm run build` | Pass — Next.js **16.2.6** |

@@ -12,7 +12,9 @@ import type {
 } from "@/src/lib/blueprints/types";
 import type { VoxelBlockShapeKind } from "@/src/lib/voxel/types";
 
-export type BuildingFamilyId = "medieval_tower";
+import type { BuildingFamilyId } from "@/src/lib/generation/families/buildingFamilies";
+
+export type { BuildingFamilyId };
 
 /** Stable style vocabulary (may differ from curated preset ids). */
 export const BUILDING_STYLE_IDS = [

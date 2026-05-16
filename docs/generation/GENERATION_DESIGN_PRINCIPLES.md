@@ -59,7 +59,7 @@ A future blueprint extension might describe floors, rooms, zones, purposes (forg
 
 ### 1.5 Current medieval tower scope
 
-The active pipeline is **`MedievalTowerBlueprint` → `validateBlueprint()` → `generateStructureFromResolved()` → `generateMedievalTower()` → `VoxelBlock[]`**. It emphasizes **exterior mass**, shell, openings, roof/crown, and decorative detail. Hollow interiors and sparse interior floors exist in **limited** form; there is **no full interior layout or room graph** yet. Partial shapes today: **cube / slab / pane / post**; tower windows may emit **pane** when material-compatible.
+The active pipeline is **`StructureBlueprint` → `validateBlueprint()` → `generateStructureFromResolved()` → family generator → `VoxelBlock[]`**. Shipped families: **`medieval_tower`** (vertical shell, crown, crenellations) and **`blacksmith_workshop`** (low rectangular workshop, pitched/shed roof, chimney, forge/workbench/storage placeholders—library/tests only, no lab UI yet). Hollow interiors remain **limited**; there is **no full interior layout or room graph** yet. Partial shapes today: **cube / slab / pane / post**; window materials may emit **pane** when metadata allows.
 
 ### 1.6 Building style catalog (metadata only)
 

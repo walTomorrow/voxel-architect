@@ -1,377 +1,424 @@
-# Plan — Building Style System for Generator Expansion
+# Plan — Building Family Taxonomy and First New Family
 
 ## 1. Purpose
 
-Generator Expansion has established the **partial block foundation** (`shapeKind` / `state` on `VoxelBlock`), **renderer support** for cube / slab / pane / post, a **curated `CLASSIC_MATERIAL_META`** layer, **placement validation** (`validateVoxelBlockPlacement` / `validateVoxelStructurePlacements`), **generator-emitted pane windows** when window materials allow pane, and **reliability tests** that treat placement semantics as correctness—not viewer fallbacks.
+Generator Expansion has delivered **partial blocks**, **material metadata**, **placement validation**, **pane windows** on the medieval tower path, a **building style catalog** (metadata only, preset-tagged), and updated **blueprint / generator / AI boundary** docs. The product still has **one real building family** in code: **`medieval_tower`**.
 
-The **next** component is a **building style system**: a reusable layer that describes **aesthetic and material/detail intent** without adding another **building family** or rewriting the medieval tower generator.
+The **next** step is not “more tower style presets.” It is **building family taxonomy**: defining which **structural generator grammars** the product officially supports, how they differ from **styles** and **presets**, how **AI and photo input** map into supported families, and which **first non-tower family** to implement with the same determinism and test discipline as the tower.
 
-**Why style now**
+**Why family taxonomy before implementation**
 
-- Curated presets already read as distinct moods (gothic stone, dark wizard, fortified gate) but express that only through **scattered blueprint fields** and **preset ids**—there is no shared vocabulary for AI, docs, or future families.
-- **Material metadata** answers “can this block be a pane/slab/post?”; **style** should answer “which palette and detail profile fit this mood?”—orthogonal concerns.
-- Partial-block adoption taught a constraint: **style must not bypass generator rules** (e.g. slab trim below pane windows was reverted because it looked wrong). A style layer should guide **blueprint defaults** and **future generator policy**, not raw per-voxel overrides.
+- Adding generators without a family model produces ad-hoc `structureType` strings, incompatible validators, and untestable one-offs.
+- **Styles** customize appearance within a grammar; **families** define shell grammar, zones, and which features exist (tower merlons vs workshop chimney).
+- AI may invent **styles** later; it must not invent **families** at runtime—families are product-supported, versioned, and covered by reliability tests.
 
-**Goal of this milestone slice (after plan approval)**
-
-- Define how Voxel Architect **represents** and **uses** style across families.
-- **Not** in scope for the first implementation: new building families, new textures, schema churn, interiors, or broad generator redesign.
+This plan scopes taxonomy and the **first new family** only. No implementation in this document.
 
 ---
 
-## 2. Current style behavior
+## 2. Current family support
 
-Today, “style” is **implicit**—encoded by **curated preset snapshots** and **blueprint parameters**, not by a dedicated `style` field (`src/lib/blueprints/types.ts` has no style property).
-
-### Preset catalog (`MEDIEVAL_TOWER_PRESETS`)
-
-| Preset id | Label (implicit style read) | Distinctive material palette | Massing / silhouette | Openings / crown |
-|-----------|----------------------------|------------------------------|----------------------|------------------|
-| `northwatch` | Default balanced medieval watch | cobblestone walls, limestone accent, slate_tiles roof, glass | medium vertical, T=2, bilateral | arched entrance, symmetric upper windows, stepped pyramid + crenellations + corner pillars |
-| `tall_watchtower` | Slender military watch | mudstone accent, thin shell T=1, tall emphasis | very tall body, simple entrance | same window banding pattern, stepped crown |
-| `fortified_gate` | Fortress / gatehouse mass | mossy_cobblestone walls, wide 13×13, T=3 | medium, thick shell | flat roof (tests flat cap path), windows on all floors |
-| `gothic_stone` | Pale gothic stone | limestone_bricks wall+floor, arched windows | tall, 11×11 | arched entrance + arched window style |
-| `compact_guard` | Minimal border post | gravel floor, slate roof, andesite accent | low emphasis, 5×5, T=1, no corner pillars | front_only windows, width-1 door |
-| `dark_wizard` | Dark fantasy tower | obsidian wall, schist floor/accent, dense windows | tall, arched windows all floors, 4/side | moody palette, stepped crown |
-
-Preset **ids** and **`metadata.name` / `description`** carry human style language; the **blueprint body** carries the machine-readable choices.
-
-### What is blueprint-driven vs hardcoded
-
-| Concern | Blueprint-driven today | Generator-hardcoded today |
-|--------|-------------------------|---------------------------|
-| Materials (6 slots) | `materials.*` classic keys → resolved `BlockTypeId` | No style resolver; uses `r.materials` directly |
-| Footprint / height budget | `dimensions` + validator clamps → `grid` | `centerOrigin`, shell/void rules |
-| Vertical read | `massing.verticalEmphasis`, `wallThickness`, `hollowInterior` | Body layer loop, corner pillar branch |
-| Symmetry | `massing.symmetry`, `constraints.enforceSymmetry` | Window column placement algorithm |
-| Entrance | `openings.entranceSide/Style/Width/Height` | Portal jambs, door row, optional arch voxels |
-| Windows | `windowsStyle`, `windowsPlacement`, `windowsFloors`, `windowsCountPerSide` | `buildWindowGlassSet`, pane vs cube via `isShapeAllowedForBlockType(m.window, "pane")` |
-| Roof / crown | `roof.style`, `height`, `overhang`; `features.crenellations`, `cornerPillars` | Roof layers, parapet, merlons, capstones |
-| Façade trim | *(no trim-specific blueprint flags)* | `PRI.FACADE_TRIM` cubes at `yy±1` around glass (**full cube**; slabs reverted) |
-| Partial shapes | Indirect via material choice | Pane emission only; no generator slabs/posts from trim |
-
-### Implicit style categories already present
-
-- **Gothic / ecclesiastical stone**: `gothic_stone` (limestone mass, arched openings).
-- **Fortified / military**: `fortified_gate`, `tall_watchtower`, `compact_guard` (mass, thickness, or austerity).
-- **Fantasy / dark**: `dark_wizard` (obsidian, dense glazing).
-- **Rustic / village stone**: `northwatch`, `fortified_gate` (cobble + limestone family).
-- **Wizard / forge mood** (future blacksmith family): not a separate generator yet, but palette patterns (dark stone + accent schist) preview how **style** might later attach to other families.
-
-### Aspirational docs vs code
-
-- [`BLUEPRINT_FEATURE_CATALOG.md`](docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md) Tier 5 and §8 show **future** `style`, `mood`, and AI vocabulary—these are **not** in the shipped schema.
-- [`BLUEPRINT_JSON_FORMAT.md`](docs/blueprints/BLUEPRINT_JSON_FORMAT.md) notes style-like choices are carried by **materials and parameters** today.
-
----
-
-## 3. Family vs style distinction
-
-| Concept | Definition | Examples |
-|--------|------------|----------|
-| **Building family** | Structural **generator strategy** + blueprint shape: footprint grammar, which subsystems exist (tower shell vs cottage hall vs forge workshop). Dispatched by `structureType` → `generateStructureFromResolved`. | `medieval_tower` (only family shipped); future: `cottage`, `blacksmith`, `chapel`, `tavern` |
-| **Building style** | **Aesthetic and detail rules within a family**: material mood, opening vocabulary, ornament density, symmetry habits, encouraged partial shapes **where generator policy allows**. | Gothic stone tower, dark wizard, fortified military, wooden frontier cottage, rustic village forge |
-| **Material palette** | Concrete classic keys (or resolved ids) for slots: wall, floor, roof, window, door, accent. | `{ wall: "limestone_bricks", accent: "limestone", window: "glass", … }` |
-| **Feature / detail profile** | Boolean and enum knobs the generator understands today: crenellations, corner pillars, roof style, window style/placement, entrance style. | `features.crenellations: true`, `openings.windowsStyle: "arched"` |
-
-**Concrete pairings (family fixed, style varies)**
-
-- Family **tower**, style **gothic stone** → pale masonry, arched openings, stepped slate crown (`gothic_stone` preset).
-- Family **tower**, style **dark wizard** → dark shell, dense arched glazing, schist accents (`dark_wizard`).
-- Family **blacksmith** (future), style **rustic village forge** → not implemented; would share forge family grammar but warm stone/wood palette and forge-zone semantics later.
-- Family **cottage** (future), style **wooden frontier** → different generator; low massing, plank-forward palette.
-
-**Why style ≠ family**
-
-- Same family generator can render many styles by changing **palette + feature profile** without forking placement code.
-- Adding a “gothic cottage” is a **style** (+ maybe palette defaults), not a new cottage **family**, once a cottage generator exists.
-- Confusing them leads to `structureType: "gothic_tower"` explosion; prefer `structureType: "medieval_tower"` + `styleId: "gothic_stone"`.
-
----
-
-## 4. Candidate style model
-
-Lightweight **catalog record** (TypeScript module, not blueprint schema yet):
-
-```ts
-type BuildingFamilyId = "medieval_tower"; // extend when families ship
-
-interface BuildingStyleDefinition {
-  readonly styleId: string;           // stable snake_case, e.g. "gothic_stone"
-  readonly displayName: string;
-  readonly description?: string;
-  readonly applicableFamilies: readonly BuildingFamilyId[];
-  readonly tags?: readonly string[];  // "gothic", "fortress", "fantasy", "stone_heavy"
-
-  /** Default authoring hints — applied only when resolving style → blueprint (future) */
-  readonly defaultPalette?: Partial<BlueprintMaterials>; // classic keys only
-  readonly massingHints?: Partial<Pick<BlueprintMassing, "verticalEmphasis" | "symmetry">>;
-  readonly openingsHints?: Partial<Pick<BlueprintOpenings, "windowsStyle" | "entranceStyle" | "windowsPlacement" | "windowsFloors">>;
-  readonly roofHints?: Partial<Pick<BlueprintRoof, "style">>;
-  readonly featuresHints?: Partial<BlueprintFeatures>;
-
-  /** Non-authoritative mood metadata for AI/docs */
-  readonly mood?: readonly ("bright" | "dark" | "austere" | "ornate")[];
-  readonly ornamentation?: "minimal" | "moderate" | "heavy";
-  readonly colorMood?: "warm" | "cold" | "neutral";
-
-  /**
-   * Shapes a style *prefers* when generators support them — must still pass
-   * isShapeAllowedForBlockType at emission time.
-   */
-  readonly encouragedPartialShapes?: readonly ("pane" | "slab" | "post")[];
-}
-```
-
-**Design rules for the model**
-
-- **`styleId`** is stable across presets, AI prompts, and export metadata (future).
-- **`applicableFamilies`** prevents applying cottage palettes to tower generators.
-- **Hints** are defaults/overrides, not a second blueprint—merged only through an explicit resolver (later).
-- **Tags** support search and prompt grounding without encoding geometry.
-- Do **not** store connection flags, voxel coordinates, or texture paths in style records.
-
-**Preset linkage (no schema change)**
-
-```ts
-interface MedievalTowerPreset {
-  readonly id: string;
-  readonly label: string;
-  readonly blueprint: MedievalTowerBlueprint;
-  readonly styleId?: string; // references catalog — optional first slice
-}
-```
-
----
-
-## 5. Relationship to material metadata
-
-[`CLASSIC_MATERIAL_META`](src/lib/voxel/blocks/packs/classicMaterialMeta.ts) + [`materialMetaHelpers`](src/lib/voxel/blocks/materialMetaHelpers.ts) define **per-block** capabilities:
-
-- `materialGroup`, `textureRole`, `tags`
-- `allowedShapeKinds` (cube / slab / pane / post)
-- Unannotated keys: **cube-only** for partial shapes
-
-**How style should use metadata**
-
-| Layer | Responsibility |
-|-------|----------------|
-| **Style** | Chooses palette keys and mood; may *prefer* pane windows when `window` resolves to glass. |
-| **Material metadata** | Authoritative on whether `shapeKind: "pane"` (etc.) is valid for a `blockTypeId`. |
-| **Generator** | Emits partials only when metadata + local policy agree (today: panes yes; trim slabs no). |
-| **Validation** | `validateVoxelStructurePlacements` must pass on all generator output. |
-
-**Style must not bypass metadata** — e.g. a “gothic stained glass” style cannot force `pane` on `oak_planks` without changing the window material or accepting cube fallback (existing `generatorWindowPanes` behavior).
-
-**Sufficiency for first style work**
-
-- **Sufficient** for catalog + preset tagging + AI vocabulary: current metadata covers glass (pane), common roof/accent stones (slab-capable), logs (post), planks (slab/post).
-- **Future expansion** (not this slice): more annotated keys, `materialVariation` bands, style-level “discouraged shapes” tied to generator policy tables (e.g. never slab adjacent to pane trim).
-
-**Lesson from trim slabs**
-
-- Metadata allowed slab on accent stones; generator used slabs; visual QA failed. **Style/catalog should document generator policy exclusions** separately from `allowedShapeKinds` until generator rules catch up.
-
----
-
-## 6. Relationship to blueprints
-
-**Current schema** (`MedievalTowerBlueprint`): `structureType`, `metadata`, `dimensions`, `materials`, `massing`, `levels`, `openings`, `roof`, `features`, `constraints` — **no `style` field**.
-
-**Import/export** ([`BLUEPRINT_JSON_FORMAT.md`](docs/blueprints/BLUEPRINT_JSON_FORMAT.md)): envelope is `kind` + `schemaVersion` + `blueprint` only; lab source/preset tracking is UI-local.
-
-### Staged recommendation (aligned with milestone preference)
-
-| Stage | What | Schema impact |
-|-------|------|----------------|
-| **1 — Now (first implementation)** | **Style catalog module** + taxonomy docs in code; **optional `styleId` on preset wrapper**; map existing six presets to catalog entries. | **None** on `MedievalTowerBlueprint` |
-| **2 — Later** | **Style resolver**: `resolveStyleToBlueprintHints(styleId, family)` merges hints into a clone for lab/AI seeding. | Still none if resolver runs at UI/AI boundary |
-| **3 — Optional** | `metadata.styleId?: string` or top-level `styleId?: string` on blueprint | **Additive optional** field; bump `schemaVersion` when introduced |
-| **4 — Far** | Required style for multi-family AI | Only if product needs it |
-
-**Can style live in existing fields today?**
-
-Yes, partially:
-
-- `materials` ≈ palette
-- `massing.verticalEmphasis`, `openings.*`, `roof.*`, `features.*` ≈ detail profile
-- `metadata.name/description` ≈ human style label
-
-What is **missing** without a catalog: stable **`styleId`**, cross-preset vocabulary, AI grounding, and “apply gothic defaults” without hand-copying six slot groups.
-
-**Do not add a required blueprint field yet** — avoids locking import/export and validator before multiple families exist.
-
----
-
-## 7. Relationship to generators
-
-**Today:** [`generateMedievalTower`](src/lib/generation/generators/generateMedievalTower.ts) reads only `ResolvedMedievalTower` — no style input.
-
-**Consumption patterns (staged)**
-
-1. **None (catalog only)** — style is documentation + preset tags; generator unchanged. **Lowest risk.**
-2. **Seed resolver (pre-generator)** — `applyStyleHints(styleId, blueprint) → blueprint` for lab defaults; user edits remain authoritative. Deterministic merge rules (hints fill **missing** slots only, or explicit `resetFromStyle` action).
-3. **Generator-internal style policy (later)** — family-specific tables: e.g. `medieval_tower` + `styleId` → window density caps, trim shape policy, parapet density. Must stay **deterministic** and tested.
-4. **Family adapters (future)** — `generateCottage(resolved, stylePolicy)` where `stylePolicy` is derived from catalog, not raw voxels.
-
-**What must remain deterministic**
-
-- Same validated blueprint (+ same generator version) → same `VoxelBlock[]`.
-- Merge priority by `(x,y,z)` unchanged unless a style policy is part of **validated** blueprint fields.
-- Partial emission gated by `isShapeAllowedForBlockType` + generator policy.
-
-**Current generator facts style must respect**
-
-- Pane windows: `paneAxisForWindowCell` + `isShapeAllowedForBlockType(m.window, "pane")`.
-- Façade trim: **full cube** at `yy±1` (no slabs).
-- No posts from accent trim path.
-
----
-
-## 8. Relationship to AI
-
-Per [`GENERATION_DESIGN_PRINCIPLES.md`](docs/generation/GENERATION_DESIGN_PRINCIPLES.md) §1.3–§1.4 and blueprint catalog **Responsibility split**:
-
-**AI may propose**
-
-- `structureType` (family)
-- `styleId` or natural language mapped to catalog entry
-- Material palette (classic keys per slot)
-- Feature/opening preferences (arched vs simple, crenellations, window density)
-- Mood / ornamentation tags (Tier 5 catalog — narrative, not geometry)
-
-**AI must not**
-
-- Emit authoritative `VoxelBlock[]` streams
-- Bypass `validateBlueprint()` / `validateVoxelStructurePlacements`
-- Invent block keys outside `CLASSIC_BLOCK_PACK`
-
-**Suggested AI flow (future)**
+### Pipeline (shipped)
 
 ```text
-prompt → (family, styleId?, overrides) → style catalog defaults
-       → merge into blueprint draft → validateBlueprint → generateStructure
+MedievalTowerBlueprint
+  → validateBlueprint()           // rejects non–medieval_tower structureType
+  → ResolvedMedievalTower
+  → generateStructureFromResolved()
+  → generateMedievalTower()
+  → VoxelBlock[]
+  → analyzeVoxelStructure + validateVoxelStructurePlacements (tests)
 ```
 
-**Style catalog as prompt grounding**
+| Layer | Location | Family-specific today? |
+|-------|----------|-------------------------|
+| Authoring schema | `src/lib/blueprints/types.ts` — `StructureType = "medieval_tower"` only | **Yes** — single blueprint interface |
+| Validation | `validateBlueprint.ts` — clamps grid, materials, openings, roof, budget | **Yes** — tower heuristics (`estimateTowerBlocks`, square footprint) |
+| Dispatch | `generateStructure.ts` — `switch (resolved.structureType)` | **Yes** — one case |
+| Generator | `generateMedievalTower.ts` — shell, void, windows (pane), roof, crenellations | **Yes** — tower grammar |
+| Presets | `MEDIEVAL_TOWER_PRESETS` + `styleId` on wrapper | **Yes** — six tower snapshots |
+| Style catalog | `buildingStyles.ts` — `BuildingFamilyId = "medieval_tower"` | **Partially generalizable** — `applicableFamilies`, hints |
+| Import/export | `blueprintExchange.ts` — envelope `blueprint: MedievalTowerBlueprint` | **Yes** — tower-only v1 |
+| UI | `/visualizer`, `/preview` — tower blueprint forms and preset lists | **Yes** — assumes tower |
 
-- Gives the model a **closed set** of `styleId` values with `applicableFamilies` and example palettes (from existing presets).
-- Reduces contradictory requests (“minecraft modern cottage” on `medieval_tower`) via validation notes.
+### What may generalize
 
-**Floor plans / interiors**
+- **`mergePlacements`** pattern (priority + per-cell merge) — reusable per family.
+- **Material resolution** — classic key → `BlockTypeId`; shared across families.
+- **`validateVoxelStructurePlacements`** — family-agnostic output check.
+- **`assertGeneratedStructureHardInvariants`** — mostly reusable if the family emits a **single grounded connected mass** (may need exceptions later for compounds).
+- **Style catalog shape** — extend `BuildingFamilyId` and `applicableFamilies`; add family-specific style entries later.
+- **Test harness** — `validateBlueprint` → `generateStructureFromResolved` → invariants (parameterized by family).
 
-- Documented as future blueprint semantics only; style system should **not** imply room layout until schema exists.
+### What stays family-specific
 
----
-
-## 9. Recommended first implementation slice
-
-**Recommended path: B — Style catalog module without schema changes** (with light **preset `styleId` tagging**, which is preset-wrapper metadata, not blueprint schema).
-
-**Why not A alone**
-
-- Taxonomy-only in markdown drifts from code; catalog in `src/lib/` stays testable and powers preset tags + future resolver.
-
-**Why not D/E first**
-
-- Optional/required blueprint `styleId` affects import/export and validator versioning before multi-family proof.
-- Full **resolver** that overwrites user blueprints is easy to get wrong without UX for “reset from style”.
-
-**Why B fits constraints**
-
-- No blueprint schema / import-export change.
-- No generator behavior change in the first slice (preserves trim-cube + pane behavior and all invariant tests).
-- Maps 1:1 onto existing six presets as reference implementations.
-- Enables follow-up **E** (resolver) without committing schema.
-
-**First slice deliverables (implementation prompt after review)**
-
-1. `src/lib/generation/styles/` (or `src/lib/blueprints/buildingStyles.ts`):
-   - `BUILDING_STYLES` record keyed by `styleId`
-   - `getBuildingStyle(styleId)`, `stylesForFamily(familyId)`
-   - Six entries mirroring current presets (hints copied from actual blueprint snapshots)
-2. Add optional `styleId` to `MedievalTowerPreset` + set on each `MEDIEVAL_TOWER_PRESETS` entry.
-3. Vitest: unique ids, families include `medieval_tower`, palette keys ∈ `CLASSIC_BLOCK_PACK`, no generator output change (existing suites unchanged).
-4. **Do not** wire catalog into `generateMedievalTower` yet.
-
-**Optional micro-doc** (only if team wants): short “Style catalog” subsection in `GENERATION_DESIGN_PRINCIPLES.md` — **defer** unless requested; this plan is the source of truth until implementation.
+- Blueprint field sets (tower has `levels.floorCount`, crenellations; workshop needs chimney/forge zones).
+- Validator rules and resolved grid shape.
+- Generator phases (tower: symmetric window columns on four faces; cottage: gable roof; blacksmith: forge bay).
 
 ---
 
-## 10. Tests and validation strategy
+## 3. Family vs style vs preset
 
-**If first slice is catalog + preset tags (recommended)**
+| Concept | Definition | Example |
+|--------|------------|---------|
+| **Family** | Product-supported **generator grammar** + blueprint schema slice. Dispatched by `structureType`. Defines allowed features (roof types, zones, connectivity expectations). | `medieval_tower` |
+| **Style** | Reusable **aesthetic / material / detail profile** within a family. May be AI-extensible later. Lives in style catalog; optional on preset wrapper; **not** in blueprint schema today. | `gothic_stone` (`applicableFamilies: ["medieval_tower"]`) |
+| **Preset** | **Curated concrete blueprint** (+ lab metadata: `id`, `label`, `styleId`). Frozen snapshot for regression and demos. | Preset `gothic_stone` → tower blueprint with 11×11 footprint + `styleId: "gothic_stone"` |
 
-| Test | Purpose |
-|------|---------|
-| `styleId` uniqueness | No duplicate keys in `BUILDING_STYLES` |
-| `applicableFamilies` | Each style lists `medieval_tower` for current catalog |
-| Palette keys resolvable | Every `defaultPalette` key passes `isClassicKey` / registry |
-| Hint enums valid | `verticalEmphasis`, `windowsStyle`, etc. match blueprint unions |
-| Preset ↔ style | Each `MEDIEVAL_TOWER_PRESETS[].styleId` references catalog |
-| **Regression** | Existing `generatorPresetInvariants`, `generatorEdgeCaseInvariants`, `generatorWindowPanes` unchanged (no generator edits) |
+**Relationships**
 
-**Not needed in catalog-only slice**
-
-- Snapshot voxel counts per style
-- Visual regression infrastructure
-
-**When resolver (stage 2) ships**
-
-- Unit tests: `applyStyleHints` merge rules, idempotent on full blueprint, `validateBlueprint` ok
-- Optional: cloned blueprint gets expected materials after `styleId` only
-
-**When generator consumes style (stage 3+)**
-
-- Extend `assertGeneratedStructurePlacementSemantics` per style policy fixtures
-- Never rely on VoxelViewer skip/warn
+- One family → many styles → many presets (presets may share a style with different dimensions).
+- **Preset id ≠ style id** (e.g. `northwatch` → `rustic_stone_watchtower`).
+- AI may propose a **new style** (palette + hints) for a **supported family**; product may accept as custom profile or map to nearest catalog style.
+- AI must **not** register a new `structureType` at runtime; unsupported requests map to **closest supported family** + backlog signal.
 
 ---
 
-## 11. Non-goals
+## 4. Supported-family policy
 
-- No new textures; no texture generation
-- No new block definitions in `CLASSIC_BLOCK_PACK`
-- No new building families or generators beyond `medieval_tower`
-- No blueprint schema change in the first slice
-- No blueprint import/export format change
-- No curated preset **blueprint body** changes unless fixing a catalog typo (prefer snapshot fidelity)
-- No interiors / floor plans / room schema
-- No AI agent implementation or prompt pipeline
-- No Minecraft export / compatibility mode
-- No connection-aware blocks (fences, walls, bars, connection-aware panes)
-- No new partial shape kinds; no doors, stairs, plants, lanterns, signs
-- No broad medieval tower generator redesign
-- No reintroduction of window-adjacent **slab** trim without explicit visual policy
-- No post adoption in tower generator from style defaults
-- No `/preview` or `/visualizer` changes unless TypeScript requires imports for preset `styleId` display (defer UI)
-- No visual regression / screenshot CI
-- No edits to `docs/blocks/BLOCK_SYSTEM_BACKLOG.md` in the first slice
+A **supported building family** must satisfy:
+
+1. **Deterministic generator** — same validated blueprint → same `VoxelBlock[]`.
+2. **Blueprint schema** — explicit TypeScript type (or documented family section); `structureType` discriminator.
+3. **Validation** — `validateBlueprint` (or `validateBlueprintForFamily`) returns errors/notes and a **resolved** input type.
+4. **Reliability tests** — at least smoke + curated preset invariants + targeted edge fixtures; `validateVoxelStructurePlacements` on outputs.
+5. **Curated preset(s)** — ≥1 hand-authored reference blueprint in repo.
+6. **Style applicability** — document which `styleId`s apply (`applicableFamilies`); new families start with **family-specific** styles or “default only.”
+7. **Feature manifest** — document which catalog features exist (openings, roof, interior void, zones, partial shapes).
+
+**AI / photo policy**
+
+- Classify user intent → **`supportedFamilyId`** from a closed product list.
+- Optional: **`requestedFamily`** (user/AI label, e.g. `"cathedral"`) stored as metadata/backlog when not supported.
+- Apply **style** and blueprint field edits within the chosen family.
+- Never call an unshipped generator; never emit voxels without validation.
+
+**Candidate / backlog families**
+
+- Record `requestedFamily` + prompt snippet for prioritization (Notre Dame → cathedral-like; barn photo → `barn` candidate).
 
 ---
 
-## 12. Risks and open questions
+## 5. Candidate family taxonomy
+
+Practical taxonomy for medieval/fantasy + incremental real-world coverage. Status: **planned**, not shipped.
+
+### By category
+
+| Category | Families (candidate ids) | Notes |
+|----------|-------------------------|--------|
+| **Defensive / vertical** | `medieval_tower`, `gatehouse`, `keep` (later) | Tower shipped; gatehouse overlaps fortified preset |
+| **Residential** | `cottage`, `house`, `rowhouse` (later) | Low rise, gable roof, chimney |
+| **Craft / industrial** | `blacksmith_workshop`, `mill` (later) | Zones: forge, storage; distinct silhouette |
+| **Religious** | `chapel`, `shrine`, `hall_church` (later), `cathedral` (much later) | Vertical emphasis, nave metaphor |
+| **Commercial** | `tavern`, `inn`, `shopfront`, `market_stall` | Signage, wide front, overhang |
+| **Agricultural** | `barn`, `stable` | Large footprint, simple massing |
+| **Civic / monumental** | `warehouse`, `town_hall` (later) | Span and height without full cathedral grammar |
+
+### Implementation waves (suggested)
+
+- **Wave 0 (now):** `medieval_tower`
+- **Wave 1:** one non-tower family (this plan → **blacksmith_workshop**)
+- **Wave 2:** `cottage` or `tavern` (habitation + commercial read)
+- **Wave 3:** `chapel` (vertical sacred mass) or `gatehouse` (defensive, tower-adjacent)
+- **Later:** barn, cathedral-like, rowhouse, civic
+
+Keep ids **stable snake_case** aligned with `structureType` where possible.
+
+---
+
+## 6. Candidate first non-tower families
+
+| Criterion | Cottage / house | Blacksmith / workshop | Chapel / shrine | Tavern / inn |
+|-----------|-----------------|----------------------|-----------------|--------------|
+| **Visual distinctiveness vs tower** | High — low, wide, gable | High — chimney, forge mass, work yard | Medium-high — nave/steeple metaphor; risk of “tall box” | Medium — wide front, stories; risk of generic pub box |
+| **Implementation complexity** | Medium — gable roof, chimney; fewer zones than forge | Medium-high — **semantic zones** (forge, storage) | High — proportions, possible apse/steeple | Medium — multi-bay, signage; interior pressure |
+| **Demo usefulness** | High (relatable) | **Very high** (craft fantasy, CS project story) | High (iconic) | High (social hub) |
+| **Reuses partial blocks / metadata** | Pane windows, cubes; logs/planks | Pane + cubes; **no furnace texture** — forge via accent/obsidian placeholder | Pane, stone palettes | Pane, planks, accent trim |
+| **Interior / floor-plan pressure** | Medium (rooms) | **High but bounded** (forge + storage **zones** without full floorPlan schema) | Medium (nave void) | High (common room, bar) |
+| **Object / furniture needs** | Bed/table later | **Anvil/workbench/crates** as cube placeholders | Altar, pews later | Barrels, counter |
+| **Testability** | Good — single mass, gable | Good if **one connected component**; watch detached chimney | Risk of disconnected spire | Medium |
+| **“Simple box” risk** | Medium without gable/chimney | Low if chimney + forge bay + asymmetric mass | Medium | Medium-high |
+
+---
+
+## 7. Recommendation for first new family
+
+**Recommend: `blacksmith_workshop` (blacksmith / village forge workshop)**
+
+Aligns with stated preference; code inspection supports it over cottage/chapel/tavern for **first** expansion.
+
+### Why blacksmith over cottage/chapel/tavern
+
+- **More visually distinct from tower** than a small house: horizontal emphasis, **chimney stack**, **forge glow block**, optional **front work apron**, asymmetric utility mass—not another vertical shell with crenellations.
+- **Bridges to interiors** via **named zones** (forge, storage, work floor) without implementing full `floorPlan` schema—matches catalog/docs forward direction (forge room intent).
+- **Strong demo narrative** for Generator Expansion: “AI asks for a forge; blueprint encodes zones; generator realizes geometry.”
+- **Reuses existing assets**: cobblestone, limestone, oak_planks, oak_log, glass, obsidian/schist accents; **no new textures** required for v1 (backlog lists forge/furnace face as future).
+- **Cottage** is simpler but does not exercise **zone semantics**; easy to defer to wave 2.
+- **Chapel** risks tall-box similarity to tower and higher proportion research cost.
+- **Tavern** pulls toward interior/bar layout and multi-room pressure earlier than needed.
+
+### Semantic features (blacksmith)
+
+| Feature | v1 implement | Defer |
+|---------|--------------|-------|
+| Rectangular footprint, 1–2 stories | Yes | — |
+| Pitched / shed roof (not stepped pyramid) | Yes | Complex multi-gable |
+| Front entrance + windows (pane if glass) | Yes | — |
+| Hollow interior or partial floor slab | Yes (simple void + optional floor layer) | Room graph |
+| **Chimney** (vertical accent column through roof) | Yes (cube stack) | Connection-aware |
+| **Forge zone** (interior or rear bay; hot block placeholder) | Yes (accent/obsidian cube cluster) | Furnace block def |
+| **Workbench zone** (plank/log cubes) | Yes (placeholder voxels) | Anvil mesh/block |
+| **Storage zone** (crate-like cubes) | Optional minimal | Crate object types |
+| Front **work area** / awning | Defer | Overhang grammar |
+| Style catalog entries | Defer to family+generator slice 2 | — |
+
+### Anti–simple-box measures
+
+- Asymmetric chimney side; forge bay inset or rear bump-out; contrasting materials (stone walls, plank door/trim); lower **height:width** ratio than tower; roof ridge + eaves step-in one layer.
+
+---
+
+## 8. Proposed first-family blueprint shape
+
+**Recommendation:** add a **separate `BlacksmithWorkshopBlueprint` type** and widen unions—**do not mutate `MedievalTowerBlueprint`**.
+
+```ts
+// Conceptual — not implemented
+
+type StructureType = "medieval_tower" | "blacksmith_workshop";
+
+type StructureBlueprint = MedievalTowerBlueprint | BlacksmithWorkshopBlueprint;
+
+type ResolvedStructure =
+  | ResolvedMedievalTower
+  | ResolvedBlacksmithWorkshop;
+```
+
+**Avoid** a single generic “bag of fields” blueprint for all families in v1—it obscures validation and UI. A thin **family registry** (metadata + validator + generator refs) is enough abstraction.
+
+### `BlacksmithWorkshopBlueprint` (proposed fields)
+
+| Section | Fields | Mirror tower? | Family-specific |
+|---------|--------|---------------|-----------------|
+| Identity | `structureType: "blacksmith_workshop"` | Discriminator | Yes |
+| | `metadata` (name, description, notes) | Same pattern | — |
+| Dimensions | `width`, `length`, `height` | Similar | Lower default height; rectangular (non-square allowed?) |
+| Materials | 6 slots: wall, floor, roof, window, door, accent | **Same slots** | Defaults: stone + planks + glass |
+| Massing | footprint, wallThickness, hollowInterior | Partial | Drop tower-only: `verticalEmphasis`, `symmetry` enum may simplify to `bilateral` default |
+| | `singleStory` or `bodyLayers` | — | Replace `levels.floorCount` tower semantics |
+| Roof | `style: "pitched_gable" \| "shed"`; height, overhang | Different enum | No stepped_pyramid / crenellations |
+| Openings | entranceSide, width, height, style | Similar | Typically single front door |
+| | windowsStyle, placement, count | Similar subset | Fewer faces (front + sides) |
+| Features | `chimney: { side, width }` | — | **Yes** |
+| | `forge: { zone: "interior_rear" \| "side_bay"; footprint hint }` | — | **Yes** |
+| | `workbench: boolean` | — | **Yes** |
+| | `storage: boolean` | — | **Yes** |
+| Constraints | maxBlockCount, allowFloating, requireGrounded | Same | — |
+
+**Explicitly omit from v1 blueprint**
+
+- `floorPlan`, `rooms[]`, furniture catalog
+- Crenellations, corner pillars, merlons, tower window column algorithm params
+
+**Import/export**
+
+- v1 envelope today is tower-only. Options for first family slice:
+  - **(Preferred for slice C)** Ship generator + types in repo tests only; defer exchange envelope to **schemaVersion 2** with discriminated union, **or**
+  - Add optional v2 envelope in same milestone if import is required—higher scope.
+
+---
+
+## 9. Generator strategy for first family
+
+**New module:** `generateBlacksmithWorkshop(resolved: ResolvedBlacksmithWorkshop): VoxelBlock[]`
+
+Reuse patterns from `generateMedievalTower`:
+
+- `centerOrigin`, `mergePlacements`, `filterGrounded`, material ids from resolved
+- Pane windows: same `isShapeAllowedForBlockType(m.window, "pane")` + façade axis rule (adapt axis helper for rectangular faces)
+- **No slab trim** near panes (tower lesson)
+
+### Phases (deterministic order)
+
+1. **Foundation** — full footprint at y=0 (`m.floor` or wall).
+2. **Shell** — hollow interior; walls T thick; door aperture on entrance face.
+3. **Interior floor** (optional) — single layer in void at y=1 if enabled.
+4. **Forge zone** — reserve rectangular cells; place accent/obsidian “heat” cubes + surround stone.
+5. **Workbench zone** — plank/log cubes along wall or center table row.
+6. **Storage zone** (optional) — corner plank “crate” stacks (2–4 cubes).
+7. **Windows** — sparse on front/sides; pane when allowed.
+8. **Roof** — pitched gable: layer shrinking rows or slope voxels; chimney penetration (hole + stack above).
+9. **Chimney** — vertical column on designated side through roof + 1–2 above ridge.
+
+### Interior objects: v1 recommendation
+
+- **Implement placeholder blocks** (known classic keys) inside zones—not abstract “furniture ids.”
+- **Do not** implement floor-plan graph or walkability yet.
+- Zones are **generator-authored** from blueprint flags (e.g. `forge.enabled: true`), not AI voxel placement.
+
+### Connectivity
+
+- Target **single 26-connected component** including chimney (attach chimney base to wall/roof).
+- If forge bump-out risks disconnect, merge bump into shell or connect with 1-voxel bridge (deterministic rule).
+
+---
+
+## 10. Relationship to styles
+
+| Question | Recommendation |
+|----------|----------------|
+| Blacksmith-specific style IDs later? | **Yes** — e.g. `rustic_village_forge`, `mountain_ironworks` with `applicableFamilies: ["blacksmith_workshop"]`. |
+| Current six styles on tower only? | **Keep** — all existing entries remain `medieval_tower` only. |
+| Extend `BuildingFamilyId`? | **Yes** when blacksmith ships: `"medieval_tower" \| "blacksmith_workshop"`. |
+| Family before blacksmith styles? | **Yes** — implement **family + generator + 1–2 presets** first; add 2–3 blacksmith styles in a follow-up slice (catalog only or with preset tags). |
+| Style resolver? | **Still defer** — presets carry full blueprint; optional `styleId` on `BlacksmithWorkshopPreset` wrapper mirrors tower. |
+
+AI-invented styles: allowed as **custom palette/hints** only within a supported family; not new families.
+
+---
+
+## 11. Relationship to AI and photo input
+
+**Future flow**
+
+```text
+prompt / photo
+  → classify supportedFamilyId (closed set)
+  → optional requestedFamily (unsupported label → backlog)
+  → optional styleId or invented style profile (within family)
+  → blueprint draft (family-specific fields + zones)
+  → validateBlueprint → generateStructure → VoxelBlock[]
+```
+
+**Examples**
+
+| Input | Supported mapping | Backlog signal |
+|-------|-------------------|----------------|
+| “Gothic stone tower” | `medieval_tower` + `gothic_stone` style | — |
+| “Village blacksmith with forge” (after ship) | `blacksmith_workshop` + future forge style | — |
+| Notre Dame photo (no cathedral) | Closest: `chapel` or `medieval_tower` tall | `requestedFamily: "cathedral"` |
+| Barn photo | Closest: `cottage` / `warehouse` when exist; else `blacksmith_workshop` or tower | `requestedFamily: "barn"` |
+| “Skyscraper” | Closest: `medieval_tower` tall / refuse with note | `requestedFamily: "skyscraper"` |
+
+AI must not output raw voxels; must not set `structureType` to an unshipped value without fallback.
+
+---
+
+## 12. Validation and tests
+
+### New family test matrix
+
+| Suite | Content |
+|-------|---------|
+| `validateBlueprint` | Blacksmith-specific clamps (min footprint, chimney side valid, roof style enum) |
+| Smoke | One default preset validates + non-empty blocks |
+| Preset invariants | `it.each(BLACKSMITH_PRESETS)` — reuse `assertGeneratedStructureHardInvariants` + placement semantics |
+| Edge fixtures | Tight `maxBlockCount`, max entrance, thin walls (mirror `edgeCaseBlueprints.ts` pattern) |
+| Block IDs | All resolved ids in registry |
+| Duplicates | `duplicateCoordinateCount === 0` |
+| Connectivity | Default: **single 26-component** + grounded (same as tower unless design docs exception) |
+| Budget | `blocks.length <= maxBlockCount` |
+| Panes | If window is glass, pane rules tests analogous to `generatorWindowPanes.test.ts` |
+| Styles | Extend `buildingStyles.test.ts` only when blacksmith styles added |
+| Import/export | If schemaVersion bumped: round-trip tests for new discriminator |
+
+### Hard invariants for blacksmith
+
+- **Likely sufficient unchanged** if: one building mass, chimney connected, no floating forge cubes.
+- **Revisit if:** exterior forge bump, detached signboard, or future yard objects — may need component policy per family documented in `GENERATOR_RELIABILITY.md`.
+
+### Shared test utils
+
+- Parameterize `maxBlockCount` from resolved constraints.
+- Optional `familyId` in diagnostic strings for clarity.
+
+---
+
+## 13. UI and preview considerations
+
+| Surface | Today | First-family recommendation |
+|---------|-------|------------------------------|
+| `/visualizer` | Tower blueprint form, `MEDIEVAL_TOWER_PRESETS`, `structureType` display | **Tower unchanged** in slice C; family selector is slice D |
+| `/preview` | Tower preset inspection | **No change** in slice C |
+| `blueprintExchange` | Tower-only v1 | Defer or v2 with union |
+
+**Recommendation for first implementation (slice C):** **Generator + blueprint types + tests + in-repo presets only—no UI.** Avoids large `VisualizerClient` branch and exchange breakage.
+
+**Slice D (follow-up):** minimal lab support—family dropdown, load `BLACKSMITH_PRESETS[0]`, validate/generate path through existing pipeline with discriminated blueprint type.
+
+---
+
+## 14. Recommended first implementation slice
+
+**Recommended path: C — Minimal blacksmith blueprint + generator + tests, no UI**
+
+| Path | Description | Verdict |
+|------|-------------|---------|
+| A | Taxonomy docs only | Too thin after style catalog |
+| B | Union types + family catalog, no generator | Acceptable prep-only; delays demo value |
+| **C** | **Blacksmith schema + validator + generator + 1–2 presets + tests** | **Preferred** — one quality family |
+| D | C + minimal preview/visualizer | Good fast follow-up, not first commit |
+| E | Multiple families at once | Rejected — shallow generators |
+
+### Slice C deliverables (after plan approval)
+
+1. `BlacksmithWorkshopBlueprint` + `ResolvedBlacksmithWorkshop` in `types.ts`
+2. `StructureBlueprint` / `ResolvedStructure` unions; dispatch in `generateStructure.ts`
+3. `validateBlacksmithWorkshop` (split or extend `validateBlueprint`)
+4. `generateBlacksmithWorkshop.ts` — phases in §9
+5. `BLACKSMITH_PRESETS` (1–2 curated snapshots)
+6. Tests: smoke, preset invariants, 2–3 edge fixtures, pane/trim policy parity with tower
+7. Extend `BuildingFamilyId` in **family catalog** file (new `buildingFamilies.ts` optional) — ids + manifest, not full taxonomy doc dump
+8. **No** UI, **no** import/export v2 unless explicitly approved
+9. **No** blacksmith styles in catalog yet (or 1 default style entry metadata-only)
+
+**Second slice:** D (UI) + exchange v2 + 2–3 blacksmith `styleId`s in catalog.
+
+---
+
+## 15. Non-goals
+
+- No multi-family batch (cottage + tavern + chapel in one PR)
+- No AI runtime, photo pipeline, or prompt classification implementation
+- No `floorPlan` / room / circulation schema
+- No new textures or block definitions (forge/furnace face remains backlog)
+- No Minecraft export
+- No connection-aware blocks, fences, stairs, doors as partial kinds
+- No new partial shape kinds
+- No broad UI redesign
+- No style resolver unless blacksmith presets need it later
+- No runtime registration of unsupported families
+- No generator slab trim at windows (tower policy carries over)
+- No cathedral, barn, rowhouse, or apartment implementation in first slice
+
+---
+
+## 16. Risks and open questions
 
 | Risk | Mitigation |
 |------|------------|
-| Style taxonomy too abstract to drive geometry | Anchor each style to a **real preset snapshot**; hints are copies, not imagination |
-| Early blueprint `styleId` locks wrong model | Defer schema; use preset + catalog only first |
-| Style vs material palette overlap | Style owns **defaults**; blueprint `materials` remain authoritative after edit |
-| Generator interprets style differently per family | Keep family-specific **policy tables** separate from global catalog |
-| Six presets “enough” styles | Catalog can list **theoretical** styles with `referencePresetId` optional; only six need full hints initially |
-| User-facing vs internal | First slice **internal** (preset tags, tests); UI label “Style: Gothic Stone” can wait |
-| AI maps vague prompts to wrong `styleId` | Closed enum + validator notes; require `structureType` match |
-| Encouraged partial shapes vs generator policy | Catalog `encouragedPartialShapes` is non-binding until generator tables exist; document trim/slab exclusion |
-| Style resolver overwrites user edits | Merge only empty slots, or explicit “Apply style defaults” action |
-| Multi-family future | `applicableFamilies` on each style; blacksmith styles must not appear on tower validator paths |
+| Schema union complexity | Separate types per family; shared `BlueprintMaterials` only |
+| Dispatch / resolved typing | Exhaustive `switch`; `never` exhaust checks |
+| Blacksmith reads as box | Chimney, forge bay, roof pitch, material contrast, asymmetric chimney |
+| Object vocabulary without furniture blocks | Plank/stone **placeholders**; document as v1 approximation |
+| Connectivity (chimney, bump-out) | Deterministic attachment rules; test `connectedComponentCount26` |
+| UI tower assumptions | Defer UI; grep `MedievalTowerBlueprint` at integration time |
+| Style catalog drift | Add blacksmith styles only after family tests green |
+| `validateBlueprint` god-file | Split validators per family behind single entrypoint |
+| Import/export breakage | Keep v1 tower-only until v2 designed |
+| AI requests “forge” on tower | Classification + notes; tower cannot encode forge zone |
 
 **Open questions for review**
 
-1. Should `styleId` equal preset id (`gothic_stone`) or be decoupled (`gothic_stone_tower` vs preset `gothic_stone`)?
-2. When schema gains `styleId`, does it live on `metadata` or top-level?
-3. Should catalog include **anti-patterns** (e.g. “do not use slab trim near panes”) for generator stage 3?
-4. Is a separate `materialPaletteId` needed, or is `defaultPalette` enough?
-5. How will style interact with future **floor-plan zones** (forge style → forge room hint)?
+1. Allow **non-square** footprint for blacksmith in v1, or force square like tower?
+2. `structureType` string: `"blacksmith_workshop"` vs `"blacksmith"`?
+3. Is one 26-component mandatory for chimney, or allow documented exceptions?
+4. Ship **import/export v2** in same PR as generator, or tests-only until UI?
+5. Minimum preset count: 1 (default forge) or 2 (rustic + dark iron)?
+6. Add **`buildingFamilies.ts` catalog** in slice C, or only types + generator?
+7. Should unsupported-family backlog live in blueprint `metadata.notes` or separate telemetry type later?
 
 ---
 
