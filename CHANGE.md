@@ -1,49 +1,35 @@
-# CHANGE.md — Medieval tower window panes (Phase A)
+# CHANGE.md — Documentation: blueprints, generators, AI boundary, future floor plans
 
 ## Files changed
 
-- `src/lib/generation/generators/generateMedievalTower.ts` — extended **`Placement`**, **`mergePlacements`**, **`push`**, window branch emits **`pane`** when metadata allows; exported **`paneAxisForWindowCell`**.
-- `src/lib/generation/__tests__/testUtils.ts` — **`assertGeneratedStructurePlacementSemantics`** (`validateVoxelStructurePlacements`).
-- `src/lib/generation/__tests__/generatorPresetInvariants.test.ts` — placement semantics assertion after hard invariants.
-- `src/lib/generation/__tests__/generatorEdgeCaseInvariants.test.ts` — same.
-- `src/lib/generation/__tests__/generatorPipeline.smoke.test.ts` — placement semantics on smoke output.
-- `src/lib/generation/__tests__/generatorWindowPanes.test.ts` — **new**: axis helper tests, pane emission, **`oak_planks`** window fallback.
+- `docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md` — expanded **responsibility split** (blueprint vs generator vs AI vs voxels), **future floor plans / interiors** (explicitly not implemented), demo motivation, **current medieval tower** limits; glossary **`VoxelBlock`** clarified (optional partial shapes).
+- `docs/blueprints/BLUEPRINT_JSON_FORMAT.md` — blueprint as **semantic intent**; **blueprint vs generator** table; **AI and structured intent**; **future floor plans** note; related-doc link fix.
+- `docs/generation/GENERATION_DESIGN_PRINCIPLES.md` — new **§1.1–§1.5** (blueprint responsibility, generator responsibility, AI boundary, future floor plans/interiors, current pipeline scope); **Purpose** links fixed (`../blueprints/…`, `./GENERATOR_RELIABILITY.md`).
+- `docs/generation/GENERATOR_RELIABILITY.md` — placement-semantics coverage note; **`assertGeneratedStructurePlacementSemantics`** / **`generatorWindowPanes`** in table; intra-folder link to design principles.
+- `docs/VISION.md` — **structured generation** refined (blueprint-first AI); **interior exploration** subsection under MVP; **current development status** de-staled; backlog pointer.
+- `docs/GENERATION_DESIGN_PRINCIPLES.md` — **new** stub pointing to `docs/generation/GENERATION_DESIGN_PRINCIPLES.md`.
 
-## Placement / merge
+## Blueprint responsibility (added/updated)
 
-- **`Placement`** optionally carries **`shapeKind`** / **`state`**.
-- **`mergePlacements`** still merges on **`(x,y,z)`** only (sort unchanged); outputs **`VoxelBlock`** with optional partial fields.
-- Omitted partial fields ⇒ legacy cube behavior.
+Blueprints are **structured semantic intent and constraints** (family, dimensions, materials, roof/crown/openings, features, budgets)—**not** **`VoxelBlock[]`** dumps. Future **floor-plan / interior intent** is described as **forward-looking only** (no schema yet).
 
-## Window pane behavior
+## Generator responsibility (added/updated)
 
-- Where **`windowGlass`** forces **`PRI.WINDOW`** + **`m.window`**: if **`paneAxisForWindowCell(lx,lz,W,D)`** is defined **and** **`isShapeAllowedForBlockType(m.window, "pane")`**, emit **`shapeKind: "pane"`** + **`state: { axis }`**; else emit cube (**no** **`shapeKind`**).
+Generators **deterministically** realize validated blueprints into **`VoxelBlock[]`**, owning placement, merges, shell/void/openings, partial shapes where implemented (**pane** windows when material-compatible), **`maxBlockCount`**, and test-covered reliability—including **`validateVoxelStructurePlacements`** in preset/edge suites.
 
-## Pane axis rule (`paneAxisForWindowCell`)
+## AI boundary (added/updated)
 
-- **`lz === 0`** or **`lz === D - 1`** (non-corner ⇒ **`lx`** strictly interior on that edge): **`axis: "x"`**.
-- **`lx === 0`** or **`lx === W - 1`** (non-corner): **`axis: "z"`**.
-- Corners / ambiguous: **`undefined`** → cube fallback.
-- Comment in source: **not** connection-aware (see backlog for future work).
+AI should target **blueprint-level** briefs (materials, openings, massing; someday rooms/zones); **avoid** raw coordinate streams as the primary path. Generator keeps exact geometry **deterministic** and **testable**.
 
-## Tests
+## Future floor plans / interiors (documentation only)
 
-- All curated presets + edge-case fixtures: **`assertGeneratedStructurePlacementSemantics`**.
-- **`generatorWindowPanes.test.ts`**: axis unit tests; default preset (**`northwatch`**) has **≥1** pane, **`axis`** ∈ **`x|z`**, **`isShapeAllowedForBlockType(..., "pane")`** on pane rows; cloned **`height_budget_body_clamp`** with **`window: oak_planks`** ⇒ **no** panes, placement validation still passes.
+Documented as: **semantic constraints at blueprint level**, **deterministic realization in generators**; possible future fields (rooms, zones, circulation, doors, stairs, object zones, walkability); **not in schema today**; templates may precede full schema; AI floor plans only as **structured intent**, not voxel output.
 
 ## Confirmations
 
-- **Fallback:** non-pane-compatible **`m.window`** (e.g. **`oak_planks`**) keeps **cube** windows — tested.
-- **Slabs / posts:** not added in generator.
-- **UI:** **`/preview`**, **`/visualizer`**, **`VoxelViewer`**, **`StructureInspectionPanel`** unchanged.
-- **Generator output:** **`shapeKind === "pane"`** only for window cells when material allows pane + axis resolved.
-- **Textures:** none added/generated.
-- **Blueprints / presets:** curated data unchanged; test-only clone mutates materials for fallback case.
+- **No** changes to blueprint **schema**, source **code**, **tests**, **generator**, **presets**, **`/preview`**, **`/visualizer`**, textures, or **`docs/blocks/BLOCK_SYSTEM_BACKLOG.md`**.
+- **Documentation-only** task.
 
 ## Verification
 
-| Command | Result |
-|---------|--------|
-| `pnpm test:generator` | Pass — 8 files, 51 tests |
-| `pnpm exec tsc --noEmit` | Pass |
-| `pnpm run build` | Pass — Next.js 16.2.6 |
+**Not run** — docs-only update (`pnpm test:generator`, `tsc`, `build` unchanged by this commit).

@@ -2,7 +2,9 @@
 
 Developer-facing overview of **what generator reliability means today**, **what Vitest enforces**, and **what is out of scope**. This is **maintainer infrastructure**, not an end-user feature.
 
-Passing these checks means outputs are **mechanically sane** for the current **deterministic single-building medieval tower** path—they do **not** prove beauty, architectural taste, or design correctness in an aesthetic sense (see also [`GENERATION_DESIGN_PRINCIPLES.md`](../GENERATION_DESIGN_PRINCIPLES.md), §2.2).
+Passing these checks means outputs are **mechanically sane** for the current **deterministic single-building medieval tower** path—they do **not** prove beauty, architectural taste, or design correctness in an aesthetic sense (see also [`GENERATION_DESIGN_PRINCIPLES.md`](./GENERATION_DESIGN_PRINCIPLES.md), §2.2).
+
+Preset and edge-case suites also assert **`validateVoxelStructurePlacements`** (structural shape/state **plus** material/shape semantics for partial blocks such as window **panes**) via **`assertGeneratedStructurePlacementSemantics`**—orthogonal to 26-connectivity but required for safe partial-block emission.
 
 ---
 
@@ -35,7 +37,8 @@ Production UI flows may call `generateStructure()` (validate + generate); tests 
 | **Structure analysis helpers** | `src/lib/voxel/structureAnalysis.ts`, `src/lib/voxel/__tests__/structureAnalysis.test.ts` — coordinate keys, duplicates, invalid IDs, 26-connectivity, grounding |
 | **Curated preset invariants** | `src/lib/generation/__tests__/generatorPresetInvariants.test.ts` — every entry in `MEDIEVAL_TOWER_PRESETS` |
 | **Edge-case blueprint invariants** | `src/lib/generation/__tests__/generatorEdgeCaseInvariants.test.ts`, fixtures in `src/lib/generation/__tests__/fixtures/edgeCaseBlueprints.ts` |
-| **Shared assertions** | `src/lib/generation/__tests__/testUtils.ts` — `formatGeneratorInvariantDiagnostics`, `assertGeneratedStructureHardInvariants` |
+| **Shared assertions** | `src/lib/generation/__tests__/testUtils.ts` — `formatGeneratorInvariantDiagnostics`, `assertGeneratedStructureHardInvariants`, `assertGeneratedStructurePlacementSemantics` (`validateVoxelStructurePlacements`) |
+| **Window pane regression** | `src/lib/generation/__tests__/generatorWindowPanes.test.ts` — pane emission + material fallback |
 
 **Vitest** is configured in `vitest.config.ts` to include:
 

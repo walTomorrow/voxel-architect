@@ -117,9 +117,11 @@ before advanced AI features.
 
 ## 4. Structured Generation
 
-AI models should generate structured plans and blueprints rather than raw geometry whenever possible.
+AI models should generate **structured blueprint intent**—dimensions, materials, openings, massing, and someday floor-plan / interior semantics—not raw per-voxel placement lists.
 
-Procedural code should handle voxel placement and geometry generation.
+Procedural **generators** should turn validated blueprints into **`VoxelBlock[]`** (including partial shapes such as **panes** where the pipeline supports them). That separation keeps outputs **deterministic**, **testable**, and aligned with [`generation/GENERATOR_RELIABILITY.md`](generation/GENERATOR_RELIABILITY.md).
+
+**Principle:** conversational AI may propose “add a forge room and storage zone” or “narrow glass windows” as **blueprint-level** requests (once interior schema exists for rooms); it should **not** normally emit **`{ x, y, z, blockTypeId }`** streams as the primary authoring path. See [`generation/GENERATION_DESIGN_PRINCIPLES.md`](generation/GENERATION_DESIGN_PRINCIPLES.md) §1.3–§1.4 for the AI boundary and future floor-plan note.
 
 ---
 
@@ -275,6 +277,12 @@ Persistence and saved builds.
 
 ---
 
+## Interior exploration (future-facing)
+
+Explorable **interiors** (walking inside generated buildings) depend on intentional voids, room structure, circulation, and eventually objects—those capabilities start as **blueprint-level floor-plan intent** and **generator-level realization**, not as raw voxel coordinate dumps from AI (see [`generation/GENERATION_DESIGN_PRINCIPLES.md`](generation/GENERATION_DESIGN_PRINCIPLES.md) §1.4).
+
+---
+
 # Future Possibilities
 
 Potential future directions:
@@ -291,10 +299,18 @@ Potential future directions:
 
 # Current Development Status
 
-Current active branch:
+Implementation evolves on active Git branches; treat the repository as the source of truth for branch names and milestones.
 
-feature/voxel-renderer
+**As of this documentation revision:**
 
-Current milestone:
+- **Blueprints:** **`MedievalTowerBlueprint`** / JSON v1 exchange describe **semantic intent**, not voxel grids (`docs/blueprints/BLUEPRINT_JSON_FORMAT.md`).
+- **Generation:** Validated blueprints resolve to **`generateMedievalTower()`** → **`VoxelBlock[]`**; partial shapes include **cube / slab / pane / post**, with **pane** windows when the window material allows (**material metadata**).
+- **Interiors:** Towers may use hollow shells and sparse interior floors; a **full floor-plan / room system** remains **future work** (see [`generation/GENERATION_DESIGN_PRINCIPLES.md`](generation/GENERATION_DESIGN_PRINCIPLES.md) §1.4).
 
-Build a functional voxel renderer before adding AI systems.
+Block-system follow-ups (connection-aware blocks, richer shapes, textures) are tracked separately in [`blocks/BLOCK_SYSTEM_BACKLOG.md`](blocks/BLOCK_SYSTEM_BACKLOG.md).
+
+---
+
+# Historical note
+
+Earlier drafts of this file referenced a fixed branch name; branch strategy may change. Prefer **`git status`** / repo docs for the live branch.

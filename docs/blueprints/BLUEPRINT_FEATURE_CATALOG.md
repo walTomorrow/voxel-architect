@@ -55,6 +55,62 @@ displays the voxel structure
 
 ---
 
+## Responsibility split: blueprint, generator, voxels, AI
+
+### Blueprints = semantic intent (not voxel grids)
+
+A **blueprint** is **structured architectural intent and constraints**: building family, dimensions, semantic materials (classic-pack keys), massing, roof/crown, entrance and window parameters, features (e.g. crenellations), and global constraints (`maxBlockCount`, grounding, symmetry). Blueprints may someday describe **interior layout intent** (rooms, circulation, zones)—see **Future floor plans** below.
+
+Blueprints are **not**:
+
+- Raw **`VoxelBlock[]`** coordinates or block-by-block placement scripts  
+- Minecraft schematics or arbitrary voxel dumps  
+- Implicit “whatever the generator did last time” without a serialized authoring state  
+
+### Generators = deterministic realization
+
+**Generators** turn a **validated** blueprint (and resolved registry ids) into an inspectable **`VoxelBlock[]`**. They own exact lattice placement, merge/priority rules, **duplicate-cell prevention**, shell vs void carving where supported, openings, façade/roof/crown detail, **partial-block realization** (e.g. glass **pane** windows when material metadata allows), **`maxBlockCount`** compliance, and output checks exercised by automated tests. Validation occurs **before** generation; reliability tests additionally stress geometric and placement-semantics invariants.
+
+### AI boundary
+
+**Good AI (and human) outputs** operate on **blueprint-level intent**, for example:
+
+- “Gothic tower, narrow glass windows, limestone accents.”  
+- “Add a forge room and a storage zone upstairs.” (future, when interior schema exists)  
+- “Stone walls, slate roof, oak trim; interior explorable with a central stair.” (future)  
+
+**Poor primary outputs** for this system:
+
+- Raw **`{ x, y, z, blockTypeId, … }`** streams as the main authoring path  
+- Per-block placement commands without a structured blueprint  
+
+The generator—not the AI—should remain the source of **exact** voxel geometry for deterministic, testable builds.
+
+### Future floor plans and interior layouts (not implemented yet)
+
+**Floor plans are blueprint-level semantic constraints.** **Floor-plan realization is generator-level deterministic geometry.** A future blueprint layer might describe, among other things:
+
+- Floors / stories as organizational bands  
+- Rooms, zones, and purposes (forge, storage, barracks, etc.)  
+- Circulation (stairs, ladders, corridors) and door connections  
+- Window/opening **intent** tied to rooms  
+- Furniture/object **zones** or lightweight placement hints  
+- Walkable regions  
+
+The generator would then realize those into hollow interiors, partitions, doorways, stairs, placed props where supported, collision checks, reachability/walkability checks, and **`maxBlockCount`-safe** **`VoxelBlock[]`** output—including partial shapes where the block system allows.
+
+**Today:** no **`floorPlan`**, **`interiorLayout`**, **`room`**, or furniture schema exists in code; **do not treat this catalog section as a specification to implement without a dedicated milestone.** Early work might prototype **deterministic layout templates** before exposing a full editable floor-plan schema. **AI-created floor plans are acceptable only as structured blueprint intent**, never as authoritative raw voxel output.
+
+### Why interiors matter for demos
+
+Explorable interiors need intentional **voids**, **rooms**, **openings**, **circulation**, and eventually **object placement**. Floor-plan-aware blueprints are how buildings become **usable volumes** rather than solid exterior masses—without replacing the generator’s role in realizing geometry.
+
+### Current pipeline reality
+
+The shipped **medieval tower** path is still primarily **exterior mass, shell, openings, roof/crown, and detail generation**. Hollow shells and thin interior floors exist in limited form; there is **no full interior layout or room system** yet. Partial blocks today include **cube / slab / pane / post**; the medieval generator emits **pane** windows when the resolved window material allows **pane**.
+
+---
+
 ## What This Catalog Is For
 
 This catalog should help answer:
@@ -1875,7 +1931,7 @@ Deterministic code that turns a validated blueprint into voxel blocks.
 
 ## VoxelBlock
 
-A single block with position and semantic material/block type.
+A single placement with integer lattice coordinates and a semantic **`blockTypeId`** (registry id). May optionally include **`shapeKind`** / **`state`** for partial shapes (e.g. **pane**, **slab**) realized by the generator and renderer—not authored as raw coordinates in blueprints.
 
 ## Massing
 

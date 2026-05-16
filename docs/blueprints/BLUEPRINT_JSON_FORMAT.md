@@ -4,7 +4,19 @@ This document defines the **official frontend-only** JSON format for exchanging 
 
 ## What a blueprint is
 
-A **blueprint** is the **editable architectural authoring state** used by **`/visualizer`**: parameters such as `structureType`, dimensions, materials (classic pack keys), massing, levels, openings, roof, features, constraints, and metadata. In code this is modeled as **`MedievalTowerBlueprint`** (`src/lib/blueprints/types.ts`). It expresses **design intent**, not placed voxels.
+A **blueprint** is the **editable architectural authoring state** used by **`/visualizer`**: parameters such as `structureType`, dimensions, materials (classic pack keys), massing, levels, openings, roof, features, constraints, and metadata. In code this is modeled as **`MedievalTowerBlueprint`** (`src/lib/blueprints/types.ts`).
+
+Blueprints express **structured semantic intent and constraints**—building family (today: **`medieval_tower`**), style-like choices carried by materials and parameters, dimensions, roof/crown/entrance/window options, features, and budgets. They are **not** lists of voxel placements. A future blueprint layer may describe **floor-plan / interior layout intent** (rooms, zones, circulation); that **does not exist in the schema yet** (see [`../generation/GENERATION_DESIGN_PRINCIPLES.md`](../generation/GENERATION_DESIGN_PRINCIPLES.md) §1.4).
+
+## Blueprint vs generator responsibilities
+
+| Layer | Role |
+|-------|------|
+| **Blueprint** | What to build: intent, parameters, constraints. Serialized in v1 JSON as the inner **`blueprint`** object only. |
+| **Validator** | Normalizes and resolves semantic materials to **`BlockTypeId`**; rejects invalid combinations; produces **`ResolvedMedievalTower`** internally (not part of the exchange envelope). |
+| **Generator** | **Deterministic** realization: exact **`VoxelBlock[]`**, shell/void, openings, merge priorities, partial shapes where implemented (e.g. glass **pane** windows when material-compatible), **`maxBlockCount`** behavior, reliability-tested geometry. |
+
+Generated **`VoxelBlock[]`** is **never** part of the official blueprint JSON format.
 
 ## Blueprint vs generated voxel blocks
 
@@ -13,6 +25,20 @@ A **blueprint** is the **editable architectural authoring state** used by **`/vi
 - **`ResolvedMedievalTower`:** Derived internal representation after validation; **not** included in the v1 envelope.
 
 Keeping the file to the **authoring blueprint** avoids duplicating generator internals and keeps issues and AI outputs aligned with what the UI edits.
+
+## AI and structured intent
+
+Tools or models should **propose or edit blueprint fields** (or natural-language that maps to those fields)—for example materials, window density, entrance emphasis, or someday room/zoning intent **once a schema exists**.
+
+They should **not** treat raw **`VoxelBlock[]`** coordinate dumps as the primary authoring or exchange format. Good outputs read like architectural briefs; bad outputs enumerate individual block coordinates as the main generation path.
+
+## Future: floor plans and interiors (not in v1 schema)
+
+**Floor plans belong at the blueprint level as semantic constraints; realization belongs in deterministic generators.** Future extensions might describe floors, rooms, zones, circulation, door links, stairs/ladders, and furniture/object zones—then generators would carve interiors, place partitions and openings, and validate walkability—see [`../generation/GENERATION_DESIGN_PRINCIPLES.md`](../generation/GENERATION_DESIGN_PRINCIPLES.md) §1.4.
+
+**v1 JSON does not include floor-plan fields.** Import/export semantics are unchanged until a later **`schemaVersion`** explicitly adds them.
+
+---
 
 ## Official v1 wrapped JSON
 
@@ -102,5 +128,5 @@ For any UI that calls **`parseBlueprintExchange`**, failures should surface **`e
 
 ## Related docs
 
-- **Feature coverage (architectural systems the blueprint may express):** [`BLUEPRINT_FEATURE_CATALOG.md`](./BLUEPRINT_FEATURE_CATALOG.md)
-- **Generation and AI principles (broader than this file):** [`../GENERATION_DESIGN_PRINCIPLES.md`](../GENERATION_DESIGN_PRINCIPLES.md)
+- **Feature coverage (architectural systems the blueprint may express):** [`BLUEPRINT_FEATURE_CATALOG.md`](./BLUEPRINT_FEATURE_CATALOG.md) — includes responsibility split, AI boundary, and future floor-plan note.
+- **Generation and AI principles (broader than this file):** [`../generation/GENERATION_DESIGN_PRINCIPLES.md`](../generation/GENERATION_DESIGN_PRINCIPLES.md)
