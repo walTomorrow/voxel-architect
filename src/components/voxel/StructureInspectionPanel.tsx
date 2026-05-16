@@ -10,7 +10,10 @@ export type StructureInspectionPresetOption = {
   readonly label: string;
 };
 
-export type PreviewLabSource = "preset_towers" | "partial_showcase";
+export type PreviewLabSource =
+  | "preset_towers"
+  | "preset_blacksmith"
+  | "partial_showcase";
 
 type Props = {
   readonly title?: string;
@@ -19,6 +22,8 @@ type Props = {
   readonly onPreviewSourceChange?: (source: PreviewLabSource) => void;
   /** Intro paragraph under the title; defaults to preset-tower copy. */
   readonly panelDescription?: string;
+  /** Validator notes when inspecting a generated preset (optional). */
+  readonly validationNotes?: readonly string[];
   readonly presetOptions: readonly StructureInspectionPresetOption[];
   readonly selectedPresetId: string;
   readonly onPresetIdChange: (id: string) => void;
@@ -129,18 +134,26 @@ function InspectionPanelBody(p: Props) {
             <button
               type="button"
               aria-pressed={p.previewSource === "preset_towers"}
-              className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${p.previewSource === "preset_towers" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
+              className={`flex-1 rounded-md px-1.5 py-1.5 text-[11px] font-medium transition ${p.previewSource === "preset_towers" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
               onClick={() => p.onPreviewSourceChange!("preset_towers")}
             >
-              Preset towers
+              Towers
+            </button>
+            <button
+              type="button"
+              aria-pressed={p.previewSource === "preset_blacksmith"}
+              className={`flex-1 rounded-md px-1.5 py-1.5 text-[11px] font-medium transition ${p.previewSource === "preset_blacksmith" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
+              onClick={() => p.onPreviewSourceChange!("preset_blacksmith")}
+            >
+              Blacksmith
             </button>
             <button
               type="button"
               aria-pressed={p.previewSource === "partial_showcase"}
-              className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${p.previewSource === "partial_showcase" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
+              className={`flex-1 rounded-md px-1.5 py-1.5 text-[11px] font-medium transition ${p.previewSource === "partial_showcase" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
               onClick={() => p.onPreviewSourceChange!("partial_showcase")}
             >
-              Partial block showcase
+              Partials
             </button>
           </div>
         </section>
@@ -152,9 +165,9 @@ function InspectionPanelBody(p: Props) {
         </label>
         {p.previewSource === "partial_showcase" ? (
           <p className="rounded-md border border-zinc-700/80 bg-zinc-900/50 px-2 py-2 text-[11px] leading-snug text-zinc-400">
-            Preset list applies to{" "}
-            <span className="text-zinc-300">Preset towers</span> only. This mode
-            uses a static developer showcase (partial shapes).
+            Preset lists apply to <span className="text-zinc-300">Towers</span> and{" "}
+            <span className="text-zinc-300">Blacksmith</span>. This mode uses a static
+            developer showcase (partial shapes).
           </p>
         ) : (
           <select
@@ -170,6 +183,19 @@ function InspectionPanelBody(p: Props) {
           </select>
         )}
       </section>
+
+      {p.validationNotes && p.validationNotes.length > 0 ? (
+        <section className="space-y-1.5">
+          <span className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+            Validation notes
+          </span>
+          <ul className="space-y-1 rounded-md border border-zinc-700/80 bg-zinc-900/50 px-2 py-2 text-[10px] leading-snug text-zinc-400">
+            {p.validationNotes.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="space-y-2">
         <span className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">

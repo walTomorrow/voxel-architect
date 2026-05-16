@@ -1,89 +1,42 @@
-# CHANGE.md — Blacksmith workshop family (library / generator / tests)
+# CHANGE.md — /preview blacksmith preset inspection
 
 ## Files changed
 
-- `src/lib/blueprints/types.ts` — `BlacksmithWorkshopBlueprint`, `ResolvedBlacksmithWorkshop`, `StructureBlueprint` / `ResolvedStructure` unions; `StructureType` includes `blacksmith_workshop`.
-- `src/lib/blueprints/validateBlueprint.ts` — dispatches by `structureType`; tower logic unchanged in `validateMedievalTowerBlueprint`.
-- `src/lib/blueprints/validateBlacksmithWorkshop.ts` — **new** blacksmith validation, clamps, material resolution, `maxBlockCount` estimate.
-- `src/lib/generation/generators/generateBlacksmithWorkshop.ts` — **new** deterministic generator.
-- `src/lib/generation/generateStructure.ts` — `generateStructureFromResolved` dispatches `blacksmith_workshop`.
-- `src/lib/blueprints/sampleBlacksmithBlueprints.ts` — **new** `BLACKSMITH_PRESETS` (2 curated).
-- `src/lib/generation/families/buildingFamilies.ts` — **new** lightweight family catalog.
-- `src/lib/generation/styles/buildingStyles.ts` — `BuildingFamilyId` re-exported from family catalog.
-- `src/lib/generation/__tests__/generatorBlacksmithPresetInvariants.test.ts` — **new**
-- `src/lib/generation/__tests__/generatorBlacksmithEdgeCaseInvariants.test.ts` — **new**
-- `src/lib/generation/__tests__/fixtures/blacksmithEdgeCaseBlueprints.ts` — **new**
-- `src/lib/generation/__tests__/generatorBlacksmithPanes.test.ts` — **new**
-- `src/lib/generation/__tests__/buildingFamilies.test.ts` — **new**
-- `docs/generation/GENERATOR_RELIABILITY.md` — blacksmith test matrix + pipeline wording.
-- `docs/generation/GENERATION_DESIGN_PRINCIPLES.md` — §1.5 notes second shipped family.
-- `src/lib/blueprints/blueprintExchange.ts` — import parse narrows to `MedievalTowerBlueprint` after `structureType` check (no v2 exchange).
+- `src/app/preview/PreviewInspectionClient.tsx` — three read-only sources (Towers / Blacksmith / Partials); separate tower/blacksmith preset ids; `StructureBlueprint` validate → `generateStructureFromResolved`; family-aware panel copy; validation notes when present.
+- `src/components/voxel/StructureInspectionPanel.tsx` — `PreviewLabSource` adds `preset_blacksmith`; three-way source toggle (Towers, Blacksmith, Partials); optional `validationNotes`; partial-showcase preset hint updated.
+- `src/app/preview/page.tsx` — **not** modified (header unchanged).
 
-## Blacksmith blueprint / resolved types
+## /preview source changes
 
-- **Dimensions:** `width` (7–15), `depth` (5–11), `height` (4–8); **non-square** allowed.
-- **Materials:** same six classic slots as tower.
-- **Massing:** `wallThickness` (1–2), `hollowInterior`.
-- **Roof:** `pitched_gable` | `shed`, `height`, `overhang`.
-- **Openings:** entrance side/width/height; `windowsPlacement` (`none` | `front_only` | `front_and_sides`); `windowsCount`.
-- **Features:** `chimney` (enabled + `left` | `right`), `forge`, `workbench`, `storage` booleans.
-- **Constraints:** `maxBlockCount`, `allowFloatingBlocks`, `requireGroundedStructure`.
-- **No** `floorPlan` / rooms / circulation.
+| Source | Behavior |
+|--------|----------|
+| **Towers** (default) | Unchanged: `MEDIEVAL_TOWER_PRESETS`, default `northwatch`. |
+| **Blacksmith** | `BLACKSMITH_PRESETS`, default `rustic_village_forge`; validate + generate + `VoxelViewer` with `boundsStructure`. |
+| **Partials** | Unchanged: static `PARTIAL_BLOCK_SHOWCASE_STRUCTURE`, no blueprint validation. |
 
-## Validation
+## Blacksmith preset rendering
 
-- `validateBlueprint()` routes `blacksmith_workshop` → `validateBlacksmithWorkshopBlueprint`.
-- Tower path unchanged.
-- Unknown `structureType` fails with clear error.
-
-## Generator dispatch
-
-- `generateStructureFromResolved`: `medieval_tower` → `generateMedievalTower`; `blacksmith_workshop` → `generateBlacksmithWorkshop`.
-
-## `generateBlacksmithWorkshop` behavior
-
-- Foundation + hollow shell walls (y = 1…`bodyLayers`).
-- Front (or configured) entrance aperture + door row.
-- Sparse windows; **pane** when `isShapeAllowedForBlockType(window, "pane")` (reuses `paneAxisForWindowCell` from tower module).
-- **Pitched gable** or **shed** shrinking roof layers above body.
-- **Chimney:** accent column on left/right exterior wall through roof (+1 above).
-- **Forge:** accent “hearth” at rear interior + accent extension (uses blueprint **`accent`**, not new furnace block).
-- **Workbench / storage:** `door` material placeholder cubes in interior (connected to floor).
-- Merge-by-priority; `filterGrounded` when required.
-- **No** slabs/posts; **no** window-adjacent slab trim.
-
-## Presets
-
-| id | Label |
-|----|--------|
-| `rustic_village_forge` | Rustic Village Forge (11×7, pitched gable) |
-| `dark_ironworks` | Dark Ironworks (9×8, shed roof, obsidian/schist) |
-
-No `styleId` on blacksmith presets (blacksmith styles deferred).
-
-## Building family catalog
-
-- `BUILDING_FAMILIES`: `medieval_tower`, `blacksmith_workshop` (both `shipped`).
-- Helpers: `getBuildingFamily`, `getAllBuildingFamilies`.
-
-## Tests
-
-- **73** generator-related tests pass (13 files).
-- Blacksmith: preset invariants, 3 edge fixtures (min footprint, non-square, tight budget), pane + oak_planks fallback smoke.
-- Tower suites unchanged in behavior.
+- Clone selected preset blueprint → `validateBlueprint` → `generateStructureFromResolved`.
+- Generic block breakdown, layer modes, refit camera (same as towers).
+- Panel shows family label, `structureType: blacksmith_workshop`, preset name/description, read-only note.
+- Validator **notes** listed when non-empty (no error UI expansion).
 
 ## Confirmations
 
-- **Medieval tower:** generator, presets, validation path **not** changed in behavior.
-- **UI:** `/preview`, `/visualizer` **not** modified.
-- **Import/export v2:** **not** added (`blueprintExchange` still tower-only v1).
-- **Style resolver:** **not** added.
-- **Blacksmith styles:** **not** added.
-- **Textures / block definitions:** **none** added.
-- **Floor plan / interior schema:** **not** implemented.
-- **AI / photo input:** **not** implemented.
+- **Default tower preview:** still loads `preset_towers` + `northwatch`.
+- **Partial showcase:** unchanged (no generator path).
+- **`/visualizer`:** not modified.
+- **Import/export v2:** not added; `blueprintExchange` unchanged.
+- **Blueprint editing:** not added for blacksmith.
+- **Generators:** not changed.
+- **Blacksmith styles / style resolver:** not added.
+- **Textures / assets / block definitions:** none added.
 
-## Verification
+## Follow-up (visual QA, not fixed here)
+
+- Generator polish (chimney width, forge pad visibility, roof silhouette) deferred until after inspecting presets in `/preview`.
+
+## Tests / verification
 
 | Command | Result |
 |---------|--------|
