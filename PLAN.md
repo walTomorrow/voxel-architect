@@ -1,226 +1,157 @@
-# Plan — Minecraft-Inspired Material Families and Texture Roles
-
-**Branch:** `milestone/generator-expansion`  
-**Status:** Scoping / audit only — **no code, tests, textures, or CHANGE.md updates in this step.**
-
-**Carry-forward from Partial Block Foundation:** The renderer today **skips** invalid **`shapeKind`/`state`** with a dev warning (`VoxelViewer.tsx`). That is acceptable render-safety for slice 1. Once generators emit partial blocks, **correctness should be enforced earlier** via **`validateVoxelBlockShapeState`** (and kin) **before** placement lists reach the viewer — extend reliability / generator tests accordingly in a later slice.
-
----
+# Plan — Partial Block Showcase Preview
 
 ## 1. Purpose
 
-The **partial block model** answers: *How can one **`blockTypeId`** (one texture bundle) render as **cube / slab / pane / post** inside a cell?*
+The next incremental step should be a **small visual preview**, not a new texture set or building family. Adding textures or generators before we have confidence in partial geometry would obscure whether problems come from assets, metadata, or rendering.
 
-The **material-family / texture-role** layer answers: *What **materials** exist in the vocabulary, how are they **grouped**, what **roles** (log vs planks vs brick) do entries play, and **which shapes** are semantically allowed for each role so generators don’t invent nonsense combinations?*
+This preview exists to **prove**, with existing classic textures only:
 
-This plan is the **next conceptual layer**: organize **Minecraft-inspired** families and roles **before** adding many new **`classic`** keys or wiring generators to partial shapes at scale. Goal is **architectural usefulness**, not **exhaustive Minecraft parity**.
+- Registered materials still read well when scaled and positioned as **slabs, panes, and posts** (not only full cubes).
+- **`shapeKind` / `state`** produce **correct, inspectable** variants (top vs bottom slab, pane **x** vs **z**).
+- Companion **material metadata** lines up with what we actually place (annotated materials only use allowed shapes).
+- **`VoxelViewer`** batching via **`getVoxelBlockRenderBucketKey`** remains sound when multiple shape/state buckets exist for the same **`blockTypeId`**.
 
----
+Once this is trustworthy, follow-on work (more textures, generators emitting partials, export) can proceed with a clearer signal.
 
-## 2. Current registry and texture summary
+## 2. Current foundations available
 
-**Inspected paths:**
+The codebase already provides:
 
-- **`src/lib/voxel/blocks/registry-types.ts`** — **`BlockTypeDefinition`**: **`faces`** only (`uniform` | `topSideBottom`), plus optional **`metalness`**, **`roughness`**, **`transparent`**, **`opacity`**, **`alphaTest`**, **`depthWrite`**. **No** material family, role, allowed shapes, or Minecraft metadata.
-- **`src/lib/voxel/blocks/registry.ts`** — **`getBlockDefinition`**, **`blockTypeId(pack, local)`**, pack map; **`BlockTypeId`** = **`pack/localKey`** string.
-- **`src/lib/voxel/blocks/packs/classic.ts`** — Flat **`Record<string, BlockTypeDefinition>`**: ~40 entries (`as const satisfies BlockPackDefinitions`). Comment: PNGs under **`public/textures/classic/*.png`**. **Workspace snapshot:** **`public/textures/classic`** may be absent from the repo mirror (textures often shipped separately); runtime still expects URLs from **`textureUrls.ts`**.
-- **`src/lib/voxel/blocks/textureUrls.ts`** — **`/textures/{packId}/{filename}`**.
+- **`VoxelBlock`** optional **`shapeKind`** and **`state`** (`src/lib/voxel/types.ts`): **`cube` | `slab` | `pane` | `post`**, with slab **`half`** and pane **`axis`**.
+- **Structural validation**: **`validateVoxelBlockShapeState`** (`src/lib/voxel/voxelBlockShape.ts`) — required fields per shape, rejects nonsense **`state`** on cubes/posts.
+- **Rendering**: **`VoxelViewer`** (`src/components/voxel/VoxelViewer.tsx`) resolves **`getVoxelBlockRenderVariant`**, applies scale/offset per variant, buckets instances by **`getVoxelBlockRenderBucketKey`**, skips invalid blocks in dev with a console warning (acceptable safety net, **not** a substitute for upstream validation).
+- **Material metadata**: **`CLASSIC_MATERIAL_META`** (`src/lib/voxel/blocks/packs/classicMaterialMeta.ts`) partial map by classic **local** keys; **`getMaterialMetaForBlockTypeId`**, **`isShapeAllowedForBlockType`**, **`validateVoxelBlockMaterialShape`** (`src/lib/voxel/blocks/materialMetaHelpers.ts`). Unannotated classic blocks: **non-cube disallowed** by helpers; **cube** allowed if registered.
+- **Sample data**: **`SAMPLE_STRUCTURE`** — procedural **cube-only** tower (`src/lib/voxel/sampleStructure.ts`). **`SAMPLE_PARTIAL_BLOCK_FOUNDATION`** — minimal inline row of cube / slab(bottom) / pane(**x**) / post on **cobblestone** only; comment states it is **not wired to the default viewer** (manual/tests).
+- **Generators**: **`generateMedievalTower`** and pipeline output remain **cube-shaped placements**; **no** requirement to change them for this slice.
+- **Tests**: **`pnpm test:generator`** runs **`vitest run`** (`package.json`) — generator reliability tests plus voxel unit tests; must stay green after implementation.
 
-**Naming patterns already implying families / roles (implicit, not typed):**
+## 3. Preview scope
 
-| Pattern | Examples |
-|---------|-----------|
-| **Species wood** | **`oak_*`**, **`pine_*`**, **`maple_*`**, **`beech_*`**, **`eucalyptus_*`** — paired **`_log`**, **`_planks`**, **`_leaves`** |
-| **Stone / masonry** | **`cobblestone`**, **`mossy_cobblestone`**, **`limestone`**, **`limestone_bricks`**, **`mudstone`**, **`schist`**, **`slate`**, **`slate_tiles`**, **`andesite`**, **`mud_bricks`**, **`mud_cracked`**, **`layer_rock`**, **`gravel`**, **`snow`** |
-| **Glass** | **`glass`** (transparent material flags) |
-| **Terrain / organic** | **`grass`**, **`grass_snowy`**, **`mud`** |
-| **Special** | **`obsidian`**, **`old_clay`** |
+**Audience:** internal developer inspection — prove rendering + metadata alignment, not a product feature.
 
-**Placement model today:** **`src/lib/voxel/types.ts`** + **`voxelBlockShape.ts`** — **`blockTypeId`** + optional **`shapeKind`/`state`**; **`VoxelViewer.tsx`** batches by **`blockTypeId` + shape bucket** and builds materials only from **`BlockTypeDefinition`**.
+**Content:** one hand-authored **`VoxelBlock[]`** (exported as a **`VoxelStructure`** constant) using **only**:
 
----
+- Registered **`classic/...`** **`blockTypeId`** values from the existing pack.
+- Supported shapes/states: **cube**, **slab bottom**, **slab top**, **pane axis x**, **pane axis z**, **post**.
 
-## 3. Proposed metadata model (design only)
+**Material usage** should stick to **annotated** companion-metadata combinations (adjust names if the codebase differs — today these locals exist in **`classic.ts`**):
 
-**Goal:** Attach **family**, **role**, **shape policy**, and **future MC hints** without exploding **`blockTypeId`** strings (`oak_slab_top_north` — **avoid**).
+| Material (`classic/...`) | Allowed shapes for this preview |
+|-------------------------|----------------------------------|
+| `oak_planks` | cube, slab, post |
+| `oak_log` | cube, post |
+| `cobblestone` | cube, slab, post |
+| `limestone_bricks` | cube, slab, post |
+| `glass` | cube, pane |
+| `slate_tiles` | cube, slab |
 
-**Recommended least-disruptive approach (slice 1 of metadata):**
+**Out of scope for the structure itself:** decorative block types without metadata rows used as non-cube placements (would fail material validation), arbitrary unsupported shapes, or generator-produced layouts.
 
-- **Companion metadata map** keyed by **`BlockTypeId`** (or by **`classic`** local key + resolver), **alongside** existing **`CLASSIC_BLOCK_PACK`**, **not** yet mandatory fields inside **`BlockTypeDefinition`**.
-  - Keeps **`classic.ts`** readable and avoids churn to **`satisfies BlockPackDefinitions`** until shape is proven.
-  - Allows **partial annotation**: only curated keys get metadata rows initially; missing key ⇒ safe defaults (see below).
-- **Later optional:** Fold proven fields into **`BlockTypeDefinition`** if ergonomics win.
+## 4. Proposed preview composition
 
-**Proposed fields (on metadata row or future extended definition):**
+Prefer one **compact, readable vignette** (dozens of blocks, not hundreds), not an isolated unit-test row and not a full building.
 
-| Field | Purpose |
-|-------|---------|
-| **`materialFamily`** | Minecraft-inspired family id, e.g. `oak`, `pine`, `limestone`, `cobble`, `glass_clear` |
-| **`materialGroup`** | Coarser bucket for UI / generators: `wood`, `stone_masonry`, `glass`, `metal`, `organic`, `roof`, `light`, … |
-| **`textureRole`** | `log`, `planks`, `leaves`, `cobble`, `brick`, `tile`, `block`, `pane_proxy`, … |
-| **`defaultShapeKind`** | Usually `cube`; could default `glass` entries toward `cube` until pane placement exists |
-| **`allowedShapeKinds`** | Subset of **`VoxelBlockShapeKind`** (+ future kinds): generator validation target |
-| **`tags`** | `exterior_shell`, `roof`, `accent`, `foundation`, `transparent`, … |
-| **`minecraftCompatibility`** | See §9 — `exact` / `approximate` / `composed` / `unsupported` + optional payload |
+Illustrative layout (coordinates flexible at implementation time):
 
-**Defaults when metadata missing:** **`materialFamily`** inferred from naming heuristics **or** `unknown`; **`allowedShapeKinds`** = **`["cube"]`** only until annotated (conservative).
+- **Base:** a few **`cobblestone`** cubes forming a small footprint pad.
+- **Corner / vertical accents:** **`oak_log`** **posts** at corners or short columns.
+- **Trim:** **`oak_planks`** **slabs** (mix **top** and **bottom**) along an edge or sill height.
+- **Wall sample:** **`limestone_bricks`** **cubes** plus one **slab** course to show masonry + partial thickness together.
+- **Openings:** **`glass`** **panes** with both **`axis: "x"`** and **`axis: "z"`** so thin-wall direction is obvious.
+- **Roof / cap:** **`slate_tiles`** **slabs** (e.g. **top** half) as a small cap or shallow pitch hint — **cubes** optional for contrast.
 
----
+Goal: orbit once and see **every supported variant** and **multiple materials**, without mistaking the scene for **`generateMedievalTower`** output.
 
-## 4. Material family taxonomy (first pass)
+## 5. Where to expose it
 
-Manageable **Minecraft-inspired** groups (not exhaustive):
+**Inspect findings:**
 
-1. **Wood** — species trunk, planks, leaves; trim/beam roles later.  
-2. **Stone / masonry** — raw stone, cobble, brick-like, sedimentary, decorative variants.  
-3. **Glass / stained glass** — clear + tinted roles (tint may share geometry, different texture later).  
-4. **Metal / utility** — iron, copper, chains, bars, lanterns (many **not** in **`classic`** yet).  
-5. **Organic / nature** — leaves, grass, flowers, vines, crops.  
-6. **Roof-like** — slate tiles, clay, shingles; often overlaps stone/clay families.  
-7. **Light / emissive** — lanterns, glowstone-like (texture + emissive in renderer later).  
-8. **Decorative / crafted utility** — clay pots, carved stone — **low priority** until core shells work.
+- **`/visualizer`** (`VisualizerClient.tsx`): blueprint edit → **`validateBlueprint`** → **`generateStructureFromResolved`**. The viewer always reflects **generated** output from the current blueprint. Adding a showcase mode here risks **confusing or disrupting** the primary lab workflow unless carefully isolated.
+- **`/preview`** (`PreviewInspectionClient.tsx`): **read-only** medieval **preset** inspection — same **`VoxelViewer`** + layer tools, **no** blueprint JSON/editor. Already positioned as inspection, not authoring.
+- **Home / marketing preview:** **`VoxelPreviewPanel`** uses **`VoxelViewer`** with **default `SAMPLE_STRUCTURE`** only (`page` composition). Swapping that to partial blocks would change **public-facing** landing behavior — avoid without an explicit product decision.
+- **Package scripts:** no separate **`test:visual`** or E2E; verification remains **`pnpm test:generator`**, **`tsc`**, **`pnpm run build`**.
 
-**Custom VA-only families** — explicitly **out of scope** for this taxonomy slice.
+**Recommendation (single approach):** expose the showcase through **`/preview`**, not **`/visualizer`**.
 
----
+- Add a **minimal source switch** on the preview page (e.g. segmented control or secondary select): **“Preset towers”** (current behavior) vs **“Partial block showcase”** (static exported constant).
+- When showcase is selected, pass the static **`VoxelStructure`** into **`VoxelViewer`** (and **`boundsStructure`**), bypassing **`generateStructureFromResolved`** for that mode only.
+- Label the showcase option clearly as **developer / partial-shape inspection** so it is not mistaken for a curated medieval preset.
 
-## 5. Texture / material roles by family
+This preserves **`/visualizer`** as the uninterrupted blueprint → generator path, avoids replacing **`MEDIEVAL_TOWER_PRESETS`**, and reuses an existing inspection shell (**`StructureInspectionPanel`** may need a slim branch for “no preset” when showcasing static data — implementation detail).
 
-| Family group | Example **`textureRole`** values | Texture reuse for partial shapes (now) |
-|--------------|-----------------------------------|----------------------------------------|
-| **Wood** | `log`, `planks`, `stripped_log` (later), `leaves`, `door` (later) | Slab/pane/post reuse **planks** / **log** cube textures; leaves stay **cube** until **`cross_plant`** |
-| **Stone / masonry** | `raw`, `cobble`, `brick`, `carved`, `tile`, `cap` | Slab/post reuse **same uniform or brick** texture |
-| **Glass** | `block`, `pane` (logical role), `stained` | **Pane** shape reuses **`glass.png`** until dedicated pane texture |
-| **Metal** | `block`, `bars`, `chain`, `lantern`, `grate`, `door` | Often need **new textures later**; defer entries until assets exist |
-| **Nature** | `leaves`, `grass_top`, `vine`, `flower`, `crop`, `cross_plant` | **`cross_plant`** deferred; cube textures now |
-| **Roof-like** | `tile`, `slate`, `ridge`, `trim` | **`slate_tiles`**, **`slate`** — slab/stair roles later |
-| **Light** | `lantern`, `torch`, `glow` | Metadata ahead of textures/renderer emissive |
+**Fallback** if product owners want **`/preview`** strictly preset-only: add a sibling route (e.g. **`/preview/partial-showcase`**) that renders only the showcase + viewer, with no preset selector — still avoids touching **`/visualizer`**.
 
-Roles that **likely need custom textures later:** door panels, trapdoors, distinct pane borders, multi-face lanterns, connected fences/walls.
+## 6. Validation behavior for preview blocks
 
----
+The preview must **not** depend on the renderer skipping bad blocks for correctness.
 
-## 6. Shape compatibility matrix
+For **every** block in the exported showcase structure:
 
-**Current implemented shapes:** **`cube`**, **`slab`**, **`pane`**, **`post`** (`types.ts`, **`voxelBlockShape.ts`**).  
-**Deferred:** door, stair, fence, wall, trapdoor, **`cross_plant`**, lantern geometry, sign, bars-as-own-shape (may share **pane** branch).
+1. **`validateVoxelBlockShapeState(block)`** — structural validity (**half** / **axis** rules).
+2. **`validateVoxelBlockMaterialShape(block)`** — semantic validity (material allows normalized shape).
 
-| Material group / typical role | **Now** (`cube` / `slab` / `pane` / `post`) | **Later** |
-|-------------------------------|---------------------------------------------|-----------|
-| **Stone / brick / cobble** (`brick`, `cobble`, `raw`) | **cube**, **slab**, **post**; **pane** odd unless “iron grate” proxy | **stair**, **wall** |
-| **`glass` block role** | **cube**, **pane** | stained variants |
-| **Wood planks** | **cube**, **slab**, **post** (beam) | **door**, **fence**, **trapdoor**, **stair** |
-| **Wood log** | **cube**, **post** (vertical beam); **slab** weaker semantically but texture-reusable | stripped log, bark rules |
-| **Leaves / foliage** | **cube** only recommended until **`cross_plant`** | **`cross_plant`**, vine |
-| **Grass / mud topsoil** | **cube** | specialized ground layers |
-| **Roof tiles** (`slate_tiles`, etc.) | **cube**, **slab** | **stair**, ridge **trim** |
+There is **no** combined helper yet; **`materialMetaHelpers`** explicitly notes combining both for generators later.
 
-**Policy:** **`allowedShapeKinds`** in metadata encodes this; **`validateVoxelBlockShapeState`** stays structural — add **`validateVoxelBlockMaterialShape`** later that checks **`(blockTypeId, shapeKind)`** against metadata.
+**Implementation recommendation:** add a small pure helper, e.g. **`validateVoxelBlockPlacement(block)`** (name TBD), returning **`{ ok: true } | { ok: false; errors: string[] }`** that:
 
----
+- Runs **`validateVoxelBlockShapeState`**; if not ok, return those errors (optionally prefixed).
+- If shape ok, runs **`validateVoxelBlockMaterialShape`**; merge failures.
 
-## 7. Initial curated family set
+Optionally add **`validateVoxelStructurePlacements(structure)`** that maps over **`blocks`** and aggregates errors with coordinates for clearer test failures. Keep **orthogonal** responsibilities inside existing functions; the combined helper is **convenience only**.
 
-**Map to what exists in `classic.ts` today** (do **not** assume spruce/dark_oak/stone_brick/iron/copper/stained_glass until textures exist).
+At runtime (preview client), optionally **`console.assert`** or dev-only guard in development — product requirement is **tests** proving the constant is valid (see §7).
 
-| Conceptual family | Representative **`classic`** keys (existing) |
-|-------------------|-----------------------------------------------|
-| **Oak wood** | `oak_log`, `oak_planks`, `oak_leaves` |
-| **Pine / conifer** | `pine_log`, `pine_planks`, `pine_leaves` (MC “spruce-like”) |
-| **Maple / secondary hardwood** | `maple_*` |
-| **Beech** | `beech_*` |
-| **Eucalyptus** | `eucalyptus_*` |
-| **Cobble / moss** | `cobblestone`, `mossy_cobblestone` |
-| **Limestone masonry** | `limestone`, `limestone_bricks` |
-| **Mud / mudstone** | `mud`, `mudstone`, `mud_bricks`, `mud_cracked` |
-| **Schist / slate roof line** | `schist`, `slate`, `slate_tiles` |
-| **Andesite / gravel / snow** | `andesite`, `gravel`, `snow`, `layer_rock` |
-| **Glass** | `glass` |
-| **Grass / turf** | `grass`, `grass_snowy` |
-| **Dark / special stone** | `obsidian` |
-| **Clay / ceramic** | `old_clay` |
+## 7. Tests to add during implementation
 
-**Later asset slices** can add true **MC-named** families (`stone_brick`, `iron_block`, `copper`, stained glass) **with** textures — not required for this planning doc’s taxonomy to be “wrong,” only **prioritized**.
+(No tests written during planning; list for the implementation PR.)
 
----
+- Showcase export defines **at least one** instance of each required variant: cube, slab bottom, slab top, pane x, pane z, post.
+- Every showcase block passes **`validateVoxelBlockShapeState`**.
+- Every showcase block passes **`validateVoxelBlockMaterialShape`**.
+- **`analyzeVoxelStructure`** (or equivalent) reports **no duplicate coordinates** for the showcase list (same rule as generator occupancy).
+- Every **`blockTypeId`** resolves via **`getBlockDefinition`** (only registered classic ids).
+- Combined placement helper (if added): rejects deliberate fixtures where one of the two validators fails.
+- **`pnpm test:generator`** (full Vitest suite) still passes — no regression to generator reliability tests.
 
-## 8. Texture asset policy
+**Explicitly out:** Playwright, screenshot baselines, browser-based regression.
 
-- **No auto-generated / mystery textures** (agents must not drop unnamed PNGs without registry rows).
-- **Prefer existing `classic` textures** for new metadata-only work.
-- **Partial shapes reuse** parent **`blockTypeId`** textures (`CHANGE.md` confirms foundation behavior).
-- **Iconic blocks** (doors, lanterns) may later get **dedicated** textures **explicitly** authored.
-- **Missing textures:** keep **loud failure** in dev (`VoxelViewer` throws on missing map entry) unless a later issue adds opt-in debug fallback.
-- **Later slice:** **`classic.ts` filename ↔ disk** audit script (CI optional) — not blocking metadata introduction.
+## 8. Texture policy
 
----
+- **Do not** add, delete, rename, or procedurally generate texture files.
+- **Reuse** only existing **`classic`** pack textures already referenced by **`CLASSIC_BLOCK_PACK`**.
+- The showcase is partly **diagnostic**: which surfaces look wrong on thin geometry informs **future** texture work — **after** this preview validates the pipeline.
 
-## 9. Future Minecraft compatibility metadata (no export yet)
+## 9. Non-goals
 
-Proposed per-**`blockTypeId`** (or per logical VA primitive):
+- New building family or curated preset replacing medieval towers.
+- Changes to **`generateMedievalTower`**, **`generateStructure`** dispatch, blueprint schema, or **`validateBlueprint`** behavior for production towers.
+- Minecraft export or pack interchange.
+- Expanding **`CLASSIC_MATERIAL_META`** beyond what the showcase needs (can stay minimal).
+- Asset pipeline cleanup, normal maps, or texture variants.
+- Screenshot / visual regression automation.
+- Marketing polish, SEO copy, or treating the showcase as a flagship demo.
+- New shapes (**doors, stairs, fences, walls, plants, lanterns**, …).
 
-```ts
-minecraftCompatibility: {
-  status: "exact" | "approximate" | "composed" | "unsupported";
-  notes?: string;
-  // optional: suggested MC block id(s), blockstate hints — TBD when export exists
-}
-```
+## 10. Recommended implementation slice
 
-- **Normal VA mode:** full internal vocabulary + partial shapes.  
-- **Future MC-compatible mode:** restrict placements to **`exact`** or approved **`approximate`** rows.  
-- **`composed`:** one VA cell maps to multiple MC blocks (document only).  
-- **`unsupported`:** VA-only aesthetic.
+Concrete order of work:
 
-**No export implementation** in this milestone slice.
+1. **Author `PARTIAL_BLOCK_SHOWCASE_STRUCTURE`** (name TBD) in **`sampleStructure.ts`** (or a sibling module if file grows), replacing or superseding **`SAMPLE_PARTIAL_BLOCK_FOUNDATION`** as the canonical multi-material demo — keep the old constant only if tests still reference it, otherwise deprecate inline comment.
+2. **Add `validateVoxelBlockPlacement`** (+ optional structure-level aggregator) in **`voxelBlockShape.ts`** or adjacent pure module, composing **`validateVoxelBlockShapeState`** and **`validateVoxelBlockMaterialShape`** without blurring their responsibilities.
+3. **Add Vitest tests** that freeze showcase invariants (§7) and cover the combined validator on a tiny invalid fixture.
+4. **Wire `/preview`** with the source toggle (§5) and pass the showcase **`VoxelStructure`** into **`VoxelViewer`**; avoid changing **`/visualizer`** blueprint flow.
+5. **Do not** change generator outputs or presets for this slice.
+6. **Verify:** `pnpm test:generator`, `pnpm exec tsc --noEmit`, `pnpm run build`.
 
----
+## 11. Risks and open questions
 
-## 10. Relationship to generators and building families
-
-- **Tower generator:** Can adopt **slab/pane/post** for roofs, windows, pillars **once** **`allowedShapeKinds`** + **`validateVoxelBlockMaterialShape`** exist — avoids invalid combos noted in § carry-forward.  
-- **Cottages / houses:** need **wood + stone + glass** families and slab/stair/pane vocabulary.  
-- **Blacksmith / workshop:** stone + **metal** (future textures) + slab/post.  
-- **Chapel / shrine:** stone variants + glass pane + vertical emphasis (posts).  
-- **Tavern / shop / barn:** overlap cottage vocabulary + larger openings (doors later).  
-
-**Blueprint catalog** (`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`) stays the **feature taxonomy**; material metadata is the **voxel vocabulary** underneath. **Building-family schemas** should wait until **material + shape policies** stabilize enough for generators to stay testable (`docs/generation/GENERATOR_RELIABILITY.md`).
-
-**Design principles** (`docs/GENERATION_DESIGN_PRINCIPLES.md`): readability still **not** guaranteed by mechanical tests — metadata reduces “random toggle” growth by scoping **allowed** material/shape pairs.
-
----
-
-## 11. Recommended next implementation slice
-
-1. **Add `src/lib/voxel/blocks/classicMaterialMeta.ts`** (name TBD): **`Partial<Record<ClassicLocalKey, MaterialMeta>>`** or map builder from **`blockTypeId`** strings — **optional fields only**, defaults conservative.  
-2. **Define TypeScript types** for **`MaterialMeta`** (family, group, role, **`allowedShapeKinds`**, optional **`minecraftCompatibility`**).  
-3. **Annotate a small curated subset** (e.g. `oak_planks`, `cobblestone`, `limestone_bricks`, `glass`, `slate_tiles`) — **no new PNGs**.  
-4. **Pure helpers:** `getMaterialMeta(blockTypeId)`, `isShapeAllowedForBlockType(blockTypeId, shapeKind)` — used in tests only until generators call them.  
-5. **Tests:** metadata presence for annotated keys; **`allowedShapeKinds`** includes **`cube`**; unknown keys fall back safely; optional MC status shape.  
-6. **Do not** change **`generateMedievalTower`** output yet (unless a **dev-only** structure mirrors **`SAMPLE_PARTIAL_BLOCK_FOUNDATION`** pattern).  
-7. **Do not** extend **`BlockTypeDefinition`** in **`registry-types.ts`** until companion map proves stable (follow-on PR).
-
----
-
-## 12. Risks and open questions
-
-| Risk | Mitigation idea |
-|------|-----------------|
-| **Over-modeling early** | Ship **partial** metadata map + defaults; expand incrementally. |
-| **Registry churn** | Companion map first; migrate to **`BlockTypeDefinition`** only when stable. |
-| **Texture sprawl** | Roles table + policy; defer MC-complete asset sets. |
-| **Minecraft parity rabbit hole** | Architectural usefulness gate; **`minecraftCompatibility`** explicitly **`approximate`**. |
-| **Family vs role confusion** | Docs + naming: **family** = species/material line; **role** = how texture is used (log vs planks). |
-| **Invalid generator combos** | **`validateVoxelBlockMaterialShape`** + reliability tests **before** viewer. |
-| **Wrong export assumptions** | Status + notes; revisit when MC version target chosen. |
-
-**Open questions from codebase:**
-
-- Should **`materialFamily`** be **MC-canonical** (`oak`) while **`classic`** uses **`pine`** as spruce surrogate — document mapping in meta **`notes`**.  
-- **`grass`** / **`grass_snowy`** — family `terrain` vs `organic`?  
-- **`obsidian`** — `stone_special` or `nether_theme` for MC metadata?  
-- **`allowedShapeKinds`** for **`glass`**: allow **`post`**? (Probably **no** — metadata should forbid meaningless combos.)  
-- When to merge **`validateVoxelBlockShapeState`** + material validator — single **`assertValidPlacedBlock`** for generators?
+- **`/visualizer` vs `/preview`:** Any showcase UI mistakenly added to **`/visualizer`** could confuse “generated vs static” — mitigate by keeping **`/visualizer`** strictly blueprint-driven.
+- **Public vs internal:** **`/preview`** may still be reachable publicly; if that is undesirable, gate behind **`process.env.NODE_ENV === "development"`**, a query flag, or a dedicated low-traffic route — decide with maintainers.
+- **Sample confusion:** Clear labeling (“Partial shapes · dev showcase”) reduces mistaking static geometry for **tower generator** output.
+- **Transparency:** **`glass`** panes may show sorting/depth artifacts; note findings but do not expand scope to fix Three.js transparency in this slice unless blocking.
+- **Slab readability:** top vs bottom halves may be subtle from certain angles; composition should include **adjacent cubes** or **height offsets** so the difference is visible.
+- **Metadata enforcement scope:** preview validates aggressively in **tests**; generators remain unchanged until a later milestone intentionally combines validators **before emit**.
+- **`StructureInspectionPanel`:** preset-centric UI may need empty/disabled preset state when showcase mode is active — avoid throwing away layout/debug value.
 
 ---
 
