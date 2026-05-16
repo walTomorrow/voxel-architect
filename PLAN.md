@@ -1,149 +1,214 @@
-# Plan: Generator Reliability Testing — Issue 5 (document reliability rules)
+# ADR Plan — Partial Block Model Foundation
 
-## 1. Current understanding
-
-### Milestone
-
-**Generator Reliability Testing** adds **developer-facing automation** around the deterministic medieval tower pipeline: blueprint validation, voxel generation, and **pure structural analysis** of outputs (`analyzeVoxelStructure`). Issues **1–4** delivered Vitest, analysis helpers, preset invariant tests, edge-case fixtures, and shared assertion helpers (**no user-visible product feature**).
-
-### Meaning of “reliability” today
-
-**Reliability** means **geometric / structural sanity** for **deterministic, single-building** tower generation:
-
-- Output exists and respects lattice bookkeeping (unique coordinates, registry-backed block IDs).
-- Output forms **one** 26-connected, ground-reachable mass under the current analysis rules.
-- Output stays within **`resolved.constraints.maxBlockCount`**.
-
-This **does not** mean beauty, architectural correctness in an aesthetic sense, or parity with screenshots.
-
-### Audience / infra stance
-
-Documentation targets **future contributors and maintainers**. Tests guard regressions in core geometry—not marketing claims about quality.
+**Branch:** `milestone/generator-expansion`  
+**Status:** Planning only — no code, tests, textures, or registry entries in this step.
 
 ---
 
-## 2. Proposed documentation location
+## 1. Decision summary
 
-### Primary doc
+**Decision:** Voxel Architect keeps **`blockTypeId`** as the **stable material / block-definition handle** (unchanged addressing model). **Optional** **`shapeKind`** and **`state`** are added on **placed `VoxelBlock` instances** to describe how that definition is realized geometrically in the cell.
 
-**Path:** **`docs/generation/GENERATOR_RELIABILITY.md`**
-
-**Actions:**
-
-- Create directory **`docs/generation/`** (currently only **`docs/blueprints/`** exists — inspected).
-- Add **`GENERATOR_RELIABILITY.md`** as the canonical reliability overview.
-
-### Optional cross-links (minimal edits elsewhere)
-
-| Location | Change |
-|----------|--------|
-| **`README.md`** | Add **one short subsection or bullet** (e.g. under Getting Started): generator reliability tests → link to **`docs/generation/GENERATOR_RELIABILITY.md`**, **`pnpm test:generator`**. **Do not** expand README into a full rewrite. |
-| **`GENERATION_DESIGN_PRINCIPLES.md`** | After the opening **Purpose** block (~lines 3–11), add **one sentence + markdown link** to **`GENERATOR_RELIABILITY.md`** clarifying that **automated structural checks** are documented there separately from readability philosophy. |
-
-**Do not** heavily edit **`BLUEPRINT_JSON_FORMAT.md`** or **`BLUEPRINT_FEATURE_CATALOG.md`** unless adding a single “See also” line fits naturally—prefer keeping blueprint docs scoped to exchange/feature catalogs.
+**Backward compatibility:** Instances that omit **`shapeKind`** / **`state`** remain valid and **behave as full unit cubes** (today’s behavior). No migration is required for existing generator output or any future structure lists that only carry **`x, y, z, blockTypeId`**.
 
 ---
 
-## 3. Documentation contents (`GENERATOR_RELIABILITY.md`)
+## 2. Why this decision comes first
 
-Suggested outline (concise, accurate to repo):
+Partial blocks are **not** a texture-only problem. Slabs, panes, posts (and later doors, stairs, fences) require:
 
-1. **Purpose** — Why these tests exist: catch structural regressions early; document what “good geometry” means **mechanically** for current towers.
+1. **Placed-instance geometry** — something the renderer must interpret beyond a single **`BoxGeometry(1,1,1)`**.
+2. **Consistent occupancy rules** — one logical cell vs multi-cell doors/fences must be modeled deliberately.
+3. **Batching / materials** — different shapes or orientations break “one **`InstancedMesh`** per **`blockTypeId`**” unless grouping accounts for shape/state.
 
-2. **Pipeline** (verbatim-ish):
+Without locking **`VoxelBlock`** + validation rules **first**, parallel work diverges:
 
-   ```text
-   MedievalTowerBlueprint
-     → validateBlueprint()
-     → generateStructureFromResolved()   // ResolvedMedievalTower in practice
-     → VoxelBlock[]
-     → analyzeVoxelStructure(blocks)
-   ```
+- **New Minecraft-inspired families** would accumulate ad-hoc **`blockTypeId`** explosions (`*_slab_north`, …) or ambiguous cubes-with-textures.
+- **New building families** (cottages, blacksmiths, …) would duplicate hacks instead of sharing one placement model.
+- **Minecraft export metadata** needs a stable internal primitive (shape + state + material handle), not raw MC IDs only.
 
-3. **What tests currently cover** (point to files):
-
-   | Suite | File(s) |
-   |-------|---------|
-   | Smoke | `src/lib/generation/__tests__/generatorPipeline.smoke.test.ts` |
-   | Structure helpers | `src/lib/voxel/structureAnalysis.ts`, `src/lib/voxel/__tests__/structureAnalysis.test.ts` |
-   | Curated presets | `generatorPresetInvariants.test.ts`, fixtures from **`MEDIEVAL_TOWER_PRESETS`** (`sampleBlueprints.ts`) |
-   | Edge cases | `generatorEdgeCaseInvariants.test.ts`, `fixtures/edgeCaseBlueprints.ts` |
-   | Shared assertions | `src/lib/generation/__tests__/testUtils.ts` (`assertGeneratedStructureHardInvariants`) |
-
-   Mention **`vitest.config.ts`** **`include`**: `src/lib/generation/__tests__/**/*.test.ts`, `src/lib/voxel/__tests__/**/*.test.ts`; **`pnpm test:generator`** runs **`vitest run`** (**inspected `package.json`**).
-
-4. **Hard invariants** (mirror **`assertGeneratedStructureHardInvariants`**):
-
-   - `blocks.length > 0`
-   - `analysis.blockCount === blocks.length`
-   - `analysis.uniqueBlockCount > 0`
-   - `analysis.invalidBlockTypeIds.length === 0`
-   - `analysis.duplicateCoordinateCount === 0`
-   - `analysis.connectedComponentCount26 === 1` — **scoped** to current single-building tower presets/fixtures; **not** a universal rule for future towns / multi-mass outputs.
-   - `analysis.ungroundedBlockCount26 === 0`
-   - `analysis.allBlocksGroundedConnected26 === true`
-   - `blocks.length <= resolved.constraints.maxBlockCount`
-
-5. **Connectivity (26-neighbor)** — Offsets `(dx, dy, dz) ∈ {-1,0,1}³ \ {(0,0,0)}`; adjacency if neighbor cell occupied (analysis operates on **unique** lattice positions).
-
-6. **Grounding** — Seeds: **`y === minY`** over **unique** occupied coordinates (structure-relative “floor”). Good fit for current towers (**foundation typically at bottom layer**). Note caveat: **world-space or vertically stacked structures** may need different policies later.
-
-7. **Fixture coverage**
-
-   - **Curated:** all presets in **`MEDIEVAL_TOWER_PRESETS`**.
-   - **Edge-case IDs** (from **`EDGE_CASE_BLUEPRINT_FIXTURES`**): `height_budget_body_clamp`, `wide_entrance_max`, `authoring_overhang_clamp`, `thick_shell_narrow_void`, `window_density_wide`, `tight_max_block_count_roof_trim`.
-
-8. **Out of scope / not tested** — Bullet list matching milestone intent: aesthetics; golden counts/bounds/material mixes; snapshots/visual/AI quality; strict semantic “must have roof/door/windows”; towns, compounds; **`allowFloatingBlocks`** / intentional floaters.
-
-9. **How to run** — **`pnpm test:generator`**, **`pnpm exec tsc --noEmit`**, **`pnpm run build`** (common local sanity).
-
-10. **Future directions** — CI wiring for **`pnpm test:generator`** (separate issue unless trivial); invalid blueprint tests; regression corpus from bugs; optional **`/visualizer`** diagnostics; blueprint-aware invariant policies for multi-component or floating designs.
+So: **data model + renderer contract** precedes content and generators.
 
 ---
 
-## 4. Tone and audience
+## 3. Current constraints from the repo
 
-- **Maintainers / contributors**: practical, scannable, no aesthetic overclaims.
-- **Explicit disclaimer**: passing tests ≠ proof of visual quality (aligns with **`GENERATION_DESIGN_PRINCIPLES.md`** §2.2 “valid geometry necessary but not sufficient” — may reference that phrase briefly).
-
----
-
-## 5. Scope boundaries (this issue)
-
-**Do not:**
-
-- Add or change tests, fixtures, generator, validator, UI, CI workflows, screenshots.
-- Rewrite **`README.md`** beyond a **small** reliability pointer.
-- Expand unrelated docs.
-
----
-
-## 6. Verification (after implementation)
-
-Even though changes are documentation-only, run:
-
-| Command | Purpose |
-|---------|--------|
-| **`pnpm test:generator`** | Confirm suite still green |
-| **`pnpm exec tsc --noEmit`** | Types unchanged |
-| **`pnpm run build`** | Ensure no accidental breakage |
+| Area | Path / behavior |
+|------|------------------|
+| **`VoxelBlock`** | `src/lib/voxel/types.ts` — **`x, y, z, blockTypeId`** only; comments assume unit cubes on integer lattice. |
+| **Registry** | `src/lib/voxel/blocks/registry-types.ts` — **`BlockTypeDefinition`** = **`faces`** (uniform / topSideBottom) + optional material flags; **`registry.ts`** resolves **`pack/localKey`**. No shape/family/role. |
+| **Classic pack** | `src/lib/voxel/blocks/packs/classic.ts` — flat **`localKey → definition`**; PNG names under **`/textures/{packId}/`** via `textureUrls.ts`. |
+| **Renderer** | `src/components/voxel/VoxelViewer.tsx` — shared **`UNIT_BOX`**, **`InstancedMesh`** per **`blockTypeId`**, identity rotation, scale **`(1,1,1)`**; **`groupBlocksByType`** batches by **`blockTypeId`** only. Missing texture → throw when building materials (dev logs). |
+| **Generator** | `src/lib/generation/generators/generateMedievalTower.ts` — **`mergePlacements`** dedupes by **`${x},${y},${z}`**; emits **`{ x, y, z, blockTypeId }`**. **`filterGrounded`** uses downward face adjacency. |
+| **`generateStructure`** | `src/lib/generation/generateStructure.ts` — validate → **`generateMedievalTower`** only for current type. |
+| **Structure analysis** | `src/lib/voxel/structureAnalysis.ts` — occupancy / connectivity / duplicates keyed by **`voxelPositionKey(x,y,z)`**; **`duplicateCoordinateCount`** is extra rows sharing **`(x,y,z)`**. |
+| **Reliability tests** | `src/lib/generation/__tests__/testUtils.ts` — expects **`analysis.blockCount === blocks.length`**, **`duplicateCoordinateCount === 0`**, **`connectedComponentCount26 === 1`**, etc., on **unique lattice coordinates**. |
+| **Blueprint v1 exchange** | `docs/blueprints/BLUEPRINT_JSON_FORMAT.md` — envelope wraps **authoring blueprint only**; **`VoxelBlock[]` is explicitly not** part of v1. **`validateBlueprint`** / types under `src/lib/blueprints/` do not serialize placed voxels today. |
 
 ---
 
-## 7. CHANGE.md (after implementation)
+## 4. Proposed `VoxelBlock` extension (types only — not implemented here)
 
-Overwrite **`CHANGE.md`** with Issue 5 summary:
+```ts
+// Conceptual — do not paste into codebase until approved.
 
-- Title: document generator reliability rules
-- Branch: `milestone/generator-reliability-testing`
-- Files: **`docs/generation/GENERATOR_RELIABILITY.md`** (+ optional **`README.md`**, **`GENERATION_DESIGN_PRINCIPLES.md`** touch)
-- What the doc explains + cross-links added
-- Deferred: CI, new tests, UI diagnostics
-- Results table: test / tsc / build
-- Follow-ups: keep doc in sync when invariants or suites change
+export type VoxelBlockShapeKind =
+  | "cube"
+  | "slab"
+  | "pane"
+  | "post";
+
+export interface VoxelBlockState {
+  /** Primary horizontal facing for asymmetric shapes (pane normal in XZ). */
+  readonly facing?: "north" | "south" | "east" | "west";
+  /** Slab vertical half; omit implies full cube behavior when shape is slab only if validated elsewhere. */
+  readonly half?: "top" | "bottom";
+  /** Pane: thin plane orientation — extruded along Y, thin along one horizontal axis. */
+  readonly axis?: "x" | "z";
+  // Reserved for later: open, hinge, connections, variant, …
+}
+
+export interface VoxelBlock {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly blockTypeId: BlockTypeId;
+  /** Omit or `"cube"` → full unit cube (legacy). */
+  readonly shapeKind?: VoxelBlockShapeKind;
+  /** Geometry/orientation; omit when shapeKind is cube or post (post uses fixed centered geometry). */
+  readonly state?: VoxelBlockState;
+}
+```
+
+**First union (`VoxelBlockShapeKind`):** **`cube`**, **`slab`**, **`pane`**, **`post`** only.
+
+**Deferred explicit union members** (documented for roadmap, **not** in first slice): **`door`**, **`stair`**, **`fence`**, **`wall`**, **`trapdoor`**, **`cross_plant`**, **`lantern`**, **`sign`**, **`bars`**.
+
+**Defaulting rule:** **`shapeKind` omitted** or **`"cube"`** → renderer uses current cube path. **`state` omitted** where allowed → defined per-shape defaults in validation/renderer docs (e.g. pane default **`axis`** if ever needed — preferably require explicit state for **`pane`** to avoid ambiguity).
 
 ---
 
-## 8. Approval checkpoint
+## 5. Proposed `VoxelBlockState` model
 
-**Waiting for approval before implementation.**
+**Goal:** One optional **`state`** bag that grows (facing, hinge, connections, …) **without** new **`blockTypeId`** strings per variant.
+
+**First-slice field usage:**
+
+| `shapeKind` | Required / optional state | Notes |
+|-------------|---------------------------|--------|
+| **`cube`** | none | Legacy; ignore **`state`** if present (validation may strip or warn). |
+| **`slab`** | **`half`** required (`top` / `bottom`) | Half-height cuboid inside cell. |
+| **`pane`** | **`facing`** **or** **`axis`** — pick **one** convention in implementation (recommend **`axis`** **`x` \| `z`** for vertical glass sheets aligned to grid; **`facing`** if matching Minecraft cardinal semantics later). | Thin vertical slab; document chosen rule in code comments. |
+| **`post`** | none | Centered narrow cuboid; optional **`variant`** later for thickness. |
+
+**Hard rule:** **`state` must not participate in coordinate identity.** Uniqueness = **`(x, y, z)`** only (see §6).
+
+---
+
+## 6. Coordinate and occupancy rule
+
+**Rule:** **Exactly one `VoxelBlock` row per occupied lattice cell `(x, y, z)`** for structures that participate in **`mergePlacements`** and **`analyzeVoxelStructure`**.
+
+**Optional `shapeKind` / `state`** only change **rendered geometry inside the cell**, not **whether the cell is occupied** or **which integer coordinates** belong to the structure.
+
+**Duplicate detection & generator merge:** Continue keying by **`x, y, z`** (e.g. **`${x},${y},${z}`**). Two rows at the same coordinates remain invalid / merged-away behavior unchanged.
+
+**Why this preserves reliability semantics:** **`structureAnalysis`** duplicate and connectivity graphs stay on **unique keys**; **`connectedComponentCount26 === 1`** and **`ungroundedBlockCount26 === 0`** remain defined on **occupied cells**, independent of whether a cell renders as a slab or pane. Generator tests that assume **`duplicateCoordinateCount === 0`** keep meaning **no double rows per cell**.
+
+*(Future multi-cell features — e.g. tall doors spanning Y — would need a separate ADR; out of scope for this foundation slice.)*
+
+---
+
+## 7. Registry metadata direction
+
+**Longer term**, definitions should support:
+
+- material **family**, texture **role**, **default shape**, **allowed shapes**, **tags**, **Minecraft compatibility** metadata.
+
+**First implementation — smallest registry change:**
+
+- **Prefer no mandatory registry schema change** for slice 1: **`blockTypeId`** still resolves to **textures + PBR flags** as today.
+- **Recommendation (approach C — both):**
+  - **A (placement):** **`shapeKind` / `state`** live on **`VoxelBlock`** — author/generator chooses placement shape.
+  - **B (defaults / policy):** **`BlockTypeDefinition`** later gains optional **`allowedShapes?: VoxelBlockShapeKind[]`**, **`defaultShapeKind?: …`**, **`mcCompat?: …`** — **optional** in a follow-on PR so slice 1 stays thin.
+  - **Resolution order:** placement **`shapeKind`** if present → else registry **`defaultShapeKind`** → else **`cube`**.
+
+This avoids **`classic/oak_planks_slab`** ID proliferation while keeping **one handle** per material definition.
+
+---
+
+## 8. Renderer implications
+
+**Minimum changes implied:**
+
+1. **`cube`** — keep **`UNIT_BOX`** + current **`InstancedMesh`** path (**fast path**).
+2. **`slab`** — **scaled **`BoxGeometry`**** (e.g. height **0.5**), **translated** so **`half`** sits correctly in the cell; still batchable via **`InstancedMesh`** if geometry + material set match.
+3. **`pane`** — **thin **`BoxGeometry`**** along one horizontal axis; orientation from **`axis`** or **`facing`** per §5.
+4. **`post`** — **narrow cuboid** centered in cell (fixed proportions v1).
+
+**Batching:** **`groupBlocksByType`** becomes insufficient. Buckets should be something like **`blockTypeId + shapeKind + normalizedStateKey`** (e.g. hash or string key for **`half`**, **`axis`**) so each **`InstancedMesh`** shares **same geometry + six-face material assignment**.
+
+**Non-goals in renderer for slice 1:** connection meshes, multi-pass transparency sorting beyond current transparent sort, skeletal animation.
+
+---
+
+## 9. Import/export and schema compatibility
+
+**Blueprint v1 (`BLUEPRINT_JSON_FORMAT.md`):** Describes **authoring blueprint**, **not** **`VoxelBlock[]`**. **No breaking change** to v1 envelopes when **`VoxelBlock`** grows optional fields **if** exchange format stays blueprint-only.
+
+**If later** a separate **structure JSON** or **preview snapshot** serializes blocks:
+
+- **Non-breaking:** Omitting **`shapeKind`/`state`** means **cube**.
+- **Forward-compatible:** Unknown **`shapeKind`** values → validation error or **preserve-as-unknown** JSON field policy (decide when that format exists).
+
+**TypeScript / runtime:** `JSON.parse` of plain objects into **`VoxelBlock[]`** will need **narrowing/validation** when optional fields appear — **later**, when such IO exists.
+
+---
+
+## 10. Tests that should eventually be added (not written in this step)
+
+- **Regression:** All **current generator reliability** tests pass **unchanged** on medieval tower output (still cubes only).
+- **Defaults:** **`VoxelBlock`** without **`shapeKind`** renders / analyzes as **cube**.
+- **Validation:** Invalid **`shapeKind`/`state`** combos rejected or dev-warning (policy TBD).
+- **Duplicates:** **`analyzeVoxelStructure`** still flags duplicate rows by **`x,y,z`** only.
+- **Renderer contract:** Grouping key includes **shape/state bucket** (unit or integration smoke).
+- **Registry:** Existing **`getBlockDefinition`** entries remain valid; optional metadata tests when added.
+- **Round-trip:** When structure serialization exists, optional **`shapeKind`/`state`** survives parse/stringify.
+
+---
+
+## 11. Explicit non-goals for the first implementation
+
+- Full Minecraft block coverage or material-family taxonomy in registry.
+- Minecraft schematic / datapack export.
+- Connection-aware **fence** / **wall** meshes.
+- Full **door** / **stair** / **trapdoor** behavior.
+- New PNG generation or large asset pipeline rework.
+- New **building families** or major **medieval tower** refactors.
+- Rewriting **`filterGrounded`** or reliability **26-neighbor** rules (unless proven incompatible — unlikely for cube/slab/pane/post within one cell).
+
+---
+
+## 12. Recommended first implementation slice
+
+1. **Types:** Extend **`VoxelBlock`** with optional **`shapeKind`** and **`state`** (`src/lib/voxel/types.ts`); add **`VoxelBlockShapeKind`** + **`VoxelBlockState`** types (or dedicated `voxelBlockShape.ts` if preferred).
+2. **Validation helpers:** Small pure functions: **`normalizeVoxelBlock`**, **`assertValidShapeState`**, or validate inside viewer only for slice 1 — keep scope minimal.
+3. **Renderer:** Refactor **`groupBlocksByType`** → **bucket by `(blockTypeId, shapeKind, stateKey)`**; implement **slab/pane/post** geometries; preserve **cube** path bit-identical where possible.
+4. **Generator:** **Do not** change **`generateMedievalTower`** output in slice 1 (still cubes) so tests stay green without edits.
+5. **Manual / tiny fixture:** **`sampleStructure.ts`** or a dev-only constant with **one slab, one pane, one post** beside cubes — verify visually + typecheck.
+6. **Verification:** **`pnpm test:generator`**, **`pnpm exec tsc --noEmit`**, **`pnpm run build`** all pass.
+
+---
+
+## 13. Open questions
+
+- **Optional vs resolved `shapeKind`:** Should omission mean **`cube`** always, or **`cube`** only when registry has no **`defaultShapeKind`**? (Recommendation: omission = **cube** for predictable migration.)
+- **Pane convention:** Standardize on **`axis: x | z`** vs **`facing`** first to reduce renderer branches.
+- **Validation ownership:** **`structureAnalysis`** stays dumb about shape; should **`validateVoxelStructure`** exist beside **`analyzeVoxelStructure`**?
+- **Instancing:** One mesh per bucket vs dynamic geometry merging — performance vs simplicity for **`/visualizer`** large structures.
+- **Import/export:** When structure JSON appears, **strict validate** vs **tolerant preserve unknown fields**?
+- **Layer view / breakdown:** `layerView.ts`, **`fullStructureBlockBreakdown`** — slab/pane still occupy one **Y** layer; confirm UI assumes cell occupancy, not cube height only.
+
+---
+
+Scoping only — waiting for review before implementation.

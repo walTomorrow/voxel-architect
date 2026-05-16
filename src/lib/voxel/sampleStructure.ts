@@ -40,3 +40,36 @@ function buildSampleTower(): VoxelBlock[] {
 export const SAMPLE_STRUCTURE: VoxelStructure = {
   blocks: buildSampleTower(),
 };
+
+/**
+ * Minimal dev fixture: one cube, slab, pane, and post using the same material.
+ * Not wired to the default viewer — use for manual inspection or tests.
+ */
+export const SAMPLE_PARTIAL_BLOCK_FOUNDATION: VoxelStructure = {
+  blocks: [
+    { x: 0, y: 0, z: 0, blockTypeId: stone },
+    {
+      x: 2,
+      y: 0,
+      z: 0,
+      blockTypeId: stone,
+      shapeKind: "slab",
+      state: { half: "bottom" },
+    },
+    {
+      x: 4,
+      y: 0,
+      z: 0,
+      blockTypeId: stone,
+      shapeKind: "pane",
+      state: { axis: "x" },
+    },
+    {
+      x: 6,
+      y: 0,
+      z: 0,
+      blockTypeId: stone,
+      shapeKind: "post",
+    },
+  ],
+};

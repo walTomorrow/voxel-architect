@@ -4,6 +4,8 @@
  * - Coordinate keys `${x},${y},${z}` match generator conventions for stable maps.
  * - Connectivity uses 26-neighbor adjacency on **unique occupied cells**.
  * - Duplicates in the block list are counted separately (`duplicate*` fields).
+ * - Optional `shapeKind` / `state` do not affect occupancy, duplicates, or
+ *   connectivity — only integer coordinates `(x, y, z)` matter.
  *
  * Grounding: seeds are unique cells with `y === minY` where `minY` is computed
  * from unique coordinates. Reachability uses the same 26-neighbor adjacency as
