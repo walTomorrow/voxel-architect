@@ -7,7 +7,7 @@ import {
 import type { MedievalTowerBlueprint } from "@/src/lib/blueprints/types";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
-import { paneAxisForWindowCell } from "@/src/lib/generation/generators/generateMedievalTower";
+import { paneAxisForWindowCell } from "@/src/lib/generation/facade/paneAxis";
 import { EDGE_CASE_BLUEPRINT_FIXTURES } from "@/src/lib/generation/__tests__/fixtures/edgeCaseBlueprints";
 import { isShapeAllowedForBlockType } from "@/src/lib/voxel/blocks/materialMetaHelpers";
 import { analyzeVoxelStructure } from "@/src/lib/voxel/structureAnalysis";

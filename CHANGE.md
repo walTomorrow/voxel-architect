@@ -1,45 +1,81 @@
-# CHANGE.md — /preview blacksmith preset inspection
+# CHANGE.md — Revert cottage WIP + neutral helper extraction (slice B)
 
-## Files changed
+## Interrupted cottage WIP removed
 
-- `src/app/preview/PreviewInspectionClient.tsx` — three read-only sources (Towers / Blacksmith / Partials); separate tower/blacksmith preset ids; `StructureBlueprint` validate → `generateStructureFromResolved`; family-aware panel copy; validation notes when present.
-- `src/components/voxel/StructureInspectionPanel.tsx` — `PreviewLabSource` adds `preset_blacksmith`; three-way source toggle (Towers, Blacksmith, Partials); optional `validationNotes`; partial-showcase preset hint updated.
-- `src/app/preview/page.tsx` — **not** modified (header unchanged).
+**Deleted (untracked):**
 
-## /preview source changes
+- `src/lib/blueprints/validateCottageHouse.ts`
+- `src/lib/blueprints/sampleCottageBlueprints.ts`
+- `src/lib/generation/generators/generateCottageHouse.ts`
+- `src/app/preview/previewGeneratorFamilies.ts`
+- `src/lib/generation/__tests__/generatorCottagePresetInvariants.test.ts`
+- `src/lib/generation/__tests__/generatorCottageEdgeCaseInvariants.test.ts`
+- `src/lib/generation/__tests__/generatorCottagePanes.test.ts`
+- `src/lib/generation/__tests__/fixtures/cottageEdgeCaseBlueprints.ts`
 
-| Source | Behavior |
-|--------|----------|
-| **Towers** (default) | Unchanged: `MEDIEVAL_TOWER_PRESETS`, default `northwatch`. |
-| **Blacksmith** | `BLACKSMITH_PRESETS`, default `rustic_village_forge`; validate + generate + `VoxelViewer` with `boundsStructure`. |
-| **Partials** | Unchanged: static `PARTIAL_BLOCK_SHOWCASE_STRUCTURE`, no blueprint validation. |
+**Restored to last known good (`git checkout HEAD`):**
 
-## Blacksmith preset rendering
+- `src/lib/blueprints/types.ts`
+- `src/lib/blueprints/validateBlueprint.ts`
+- `src/lib/generation/generateStructure.ts`
+- `src/lib/generation/families/buildingFamilies.ts`
+- `src/app/preview/PreviewInspectionClient.tsx`
+- `src/components/voxel/StructureInspectionPanel.tsx`
 
-- Clone selected preset blueprint → `validateBlueprint` → `generateStructureFromResolved`.
-- Generic block breakdown, layer modes, refit camera (same as towers).
-- Panel shows family label, `structureType: blacksmith_workshop`, preset name/description, read-only note.
-- Validator **notes** listed when non-empty (no error UI expansion).
+## Neutral helper extraction (behavior-neutral)
+
+**Added:**
+
+- `src/lib/generation/placement/placementUtils.ts` — `GeneratorPlacement`, `centerOrigin`, `mergePlacements`, `filterGrounded`, `placementCoordKey`
+- `src/lib/generation/facade/paneAxis.ts` — `paneAxisForWindowCell`
+- `src/lib/generation/__tests__/placementUtils.test.ts` — merge priority/tie, shapeKind/state, duplicate collapse, grounding
+
+**Updated (imports only; generator output intended unchanged):**
+
+- `src/lib/generation/generators/generateMedievalTower.ts`
+- `src/lib/generation/generators/generateBlacksmithWorkshop.ts`
+- `src/lib/generation/__tests__/generatorWindowPanes.test.ts` — `paneAxis` import from `facade/paneAxis`
+
+### `placementUtils`
+
+- **Merge:** descending `p`, then descending `i`; one block per `(x,y,z)`; optional `shapeKind` / `state` preserved.
+- **Grounding:** structure-relative; blocks at `y ≤ 0` or with grounded cell below kept when `allowFloatingBlocks` is false.
+
+### `paneAxis`
+
+- Front/back façades (`lz === 0` or `lz === D - 1`, not corner): axis `"x"`.
+- Left/right façades (`lx === 0` or `lx === W - 1`, not corner): axis `"z"`.
+- Corners: `undefined`. Not connection-aware.
 
 ## Confirmations
 
-- **Default tower preview:** still loads `preset_towers` + `northwatch`.
-- **Partial showcase:** unchanged (no generator path).
-- **`/visualizer`:** not modified.
-- **Import/export v2:** not added; `blueprintExchange` unchanged.
-- **Blueprint editing:** not added for blacksmith.
-- **Generators:** not changed.
-- **Blacksmith styles / style resolver:** not added.
-- **Textures / assets / block definitions:** none added.
+| Item | Status |
+|------|--------|
+| `medieval_tower` output | Intended unchanged (shared helpers only) |
+| `blacksmith_workshop` output | Intended unchanged (shared helpers only) |
+| `cottage_house` | **Not** added (no types, validator, generator, presets, tests, catalog, preview) |
+| `BUILDING_FAMILIES` | `medieval_tower`, `blacksmith_workshop` only |
+| `/preview` | Restored: **Towers \| Blacksmith \| Partials**; default **Towers / northwatch** |
+| Partial showcase | Static `PARTIAL_BLOCK_SHOWCASE_STRUCTURE` (no generator path) |
+| `/visualizer` | Not modified |
+| `blueprintExchange` / import-export v2 | Not modified / not added |
+| Component grammar / `ComponentPlan` | Not implemented |
+| New textures / block definitions | None |
 
-## Follow-up (visual QA, not fixed here)
+## Tests
 
-- Generator polish (chimney width, forge pad visibility, roof silhouette) deferred until after inspecting presets in `/preview`.
+- **Added:** `placementUtils.test.ts` (6 cases)
+- **Updated:** `generatorWindowPanes.test.ts` (import path)
+- **Removed:** all cottage generator tests/fixtures
 
-## Tests / verification
+## Verification
 
 | Command | Result |
 |---------|--------|
-| `pnpm test:generator` | Pass — **13** files, **73** tests |
-| `pnpm exec tsc --noEmit` | Pass |
-| `pnpm run build` | Pass — Next.js **16.2.6** |
+| `pnpm test:generator` | **79 passed** (14 files) |
+| `pnpm exec tsc --noEmit` | **Pass** |
+| `pnpm run build` | **Pass** |
+
+## Residue check
+
+`git grep cottage_house / CottageHouse / validateCottage / generateCottage` under `src/` — only `buildingFamilies.test.ts` expects `getBuildingFamily("cottage")` to be undefined (intentional).

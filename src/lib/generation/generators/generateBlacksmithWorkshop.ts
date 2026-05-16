@@ -1,7 +1,13 @@
 import type { BlockTypeId } from "@/src/lib/voxel/blocks/registry-types";
 import type { ResolvedBlacksmithWorkshop } from "@/src/lib/blueprints/types";
+import { paneAxisForWindowCell } from "@/src/lib/generation/facade/paneAxis";
+import {
+  centerOrigin,
+  filterGrounded,
+  mergePlacements,
+  type GeneratorPlacement,
+} from "@/src/lib/generation/placement/placementUtils";
 import { isShapeAllowedForBlockType } from "@/src/lib/voxel/blocks/materialMetaHelpers";
-import { paneAxisForWindowCell } from "@/src/lib/generation/generators/generateMedievalTower";
 import type {
   VoxelBlock,
   VoxelBlockShapeKind,
@@ -21,72 +27,7 @@ const PRI = {
   CHIMNEY: 60,
 } as const;
 
-type Placement = {
-  x: number;
-  y: number;
-  z: number;
-  p: number;
-  id: BlockTypeId;
-  i: number;
-  shapeKind?: VoxelBlockShapeKind;
-  state?: VoxelBlockState;
-};
-
-function key(x: number, y: number, z: number): string {
-  return `${x},${y},${z}`;
-}
-
-function lk(lx: number, y: number, lz: number): string {
-  return `${lx},${y},${lz}`;
-}
-
-function centerOrigin(n: number): number {
-  return -Math.floor(n / 2);
-}
-
-function mergePlacements(placements: Placement[]): VoxelBlock[] {
-  placements.sort((a, b) => b.p - a.p || b.i - a.i);
-  const seen = new Set<string>();
-  const out: VoxelBlock[] = [];
-  for (const q of placements) {
-    const k = key(q.x, q.y, q.z);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    const block: VoxelBlock =
-      q.shapeKind !== undefined
-        ? {
-            x: q.x,
-            y: q.y,
-            z: q.z,
-            blockTypeId: q.id,
-            shapeKind: q.shapeKind,
-            ...(q.state !== undefined ? { state: q.state } : {}),
-          }
-        : { x: q.x, y: q.y, z: q.z, blockTypeId: q.id };
-    out.push(block);
-  }
-  return out;
-}
-
-function filterGrounded(
-  blocks: readonly VoxelBlock[],
-  allowFloating: boolean,
-): VoxelBlock[] {
-  if (allowFloating) return [...blocks];
-  const sorted = [...blocks].sort(
-    (a, b) => a.y - b.y || a.x - b.x || a.z - b.z,
-  );
-  const grounded = new Set<string>();
-  const out: VoxelBlock[] = [];
-  for (const b of sorted) {
-    const k = key(b.x, b.y, b.z);
-    if (b.y <= 0 || grounded.has(key(b.x, b.y - 1, b.z))) {
-      grounded.add(k);
-      out.push(b);
-    }
-  }
-  return out;
-}
+type Placement = GeneratorPlacement;
 
 function isExterior(lx: number, lz: number, W: number, D: number): boolean {
   return lx === 0 || lx === W - 1 || lz === 0 || lz === D - 1;
