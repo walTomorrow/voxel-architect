@@ -1,52 +1,60 @@
-# Change log — Partial Block Model Foundation
-
-## Branch
-
-`milestone/generator-expansion`
+# CHANGE.md — Material families & texture roles (companion metadata)
 
 ## Files changed
 
-| Area | Files |
-|------|--------|
-| Types | `src/lib/voxel/types.ts` — `VoxelBlockShapeKind`, `VoxelBlockState`, optional `shapeKind` / `state` on `VoxelBlock` |
-| Shape helpers | `src/lib/voxel/voxelBlockShape.ts` — **new** normalization, validation, render variant, batch bucket key |
-| Renderer | `src/components/voxel/VoxelViewer.tsx` — batch by `blockTypeId` + shape/state bucket; matrix scale/position per `VoxelRenderVariant` |
-| Fixture | `src/lib/voxel/sampleStructure.ts` — **new** `SAMPLE_PARTIAL_BLOCK_FOUNDATION` |
-| Analysis docs | `src/lib/voxel/structureAnalysis.ts` — comment that shape/state do not affect occupancy |
-| Tests | `src/lib/voxel/__tests__/voxelBlockShape.test.ts` — **new** |
+- `src/lib/voxel/blocks/materialMetaTypes.ts` — **new** (`MaterialMeta`, `MaterialGroup`, `TextureRole`, optional `minecraftCompatibility`)
+- `src/lib/voxel/blocks/packs/classicMaterialMeta.ts` — **new** (`CLASSIC_MATERIAL_META` partial map by classic **local** keys)
+- `src/lib/voxel/blocks/materialMetaHelpers.ts` — **new** (pure lookup / validation helpers)
+- `src/lib/voxel/__tests__/materialMetaHelpers.test.ts` — **new** (Vitest coverage)
+- `CHANGE.md` — this report (overwrite)
 
-## Type / model summary
+## Metadata types
 
-- **`blockTypeId`** remains the stable registry handle.
-- **`shapeKind?: "cube" \| "slab" \| "pane" \| "post"`** — omitted ⇒ **cube** (legacy).
-- **`state?: { half?: "top"|"bottom"; axis?: "x"|"z" }`** — **slab** requires **`half`**; **pane** requires **`axis`** (not `facing`); **cube** / **post** must not set conflicting fields.
-- Occupancy, **`mergePlacements`**, and **`analyzeVoxelStructure`** remain keyed by **`(x,y,z)`** only.
+- **`MaterialMeta`**: `materialFamily` (string), `materialGroup`, `textureRole`, `allowedShapeKinds`, optional `tags`, optional `minecraftCompatibility` (`exact` | `approximate` | `composed` | `unsupported` + optional notes).
+- **No `defaultShapeKind`** in this slice; omitted `shapeKind` still defaults to **`cube`** only via existing **`normalizeVoxelBlockShapeKind`**.
 
-## Renderer summary
+## Curated classic locals annotated
 
-- **`InstancedMesh`** still uses shared **`UNIT_BOX`**; **position + scale** encode slab/pane/post.
-- **Batching key:** `getVoxelBlockRenderBucketKey` (`blockTypeId|cube`, `…|slab|bottom`, etc.).
-- Invalid shape/state: dev **`console.warn`** and block skipped (no silent cube fallback).
-- **No** new textures; materials still from existing **`BlockTypeDefinition`** per **`blockTypeId`**.
+Keys match `classic.ts` exactly:
 
-## Tests added
+| Local key | Allowed shapes |
+|-----------|------------------|
+| `oak_planks` | cube, slab, post |
+| `oak_log` | cube, post |
+| `cobblestone` | cube, slab, post |
+| `limestone_bricks` | cube, slab, post |
+| `glass` | cube, pane |
+| `slate_tiles` | cube, slab |
 
-- **`voxelBlockShape.test.ts`:** normalization, validation rules, bucket keys, unknown `shapeKind`, **`analyzeVoxelStructure`** duplicate detection with differing **`shapeKind`/state** at same coordinates.
+All other classic blocks: **no row** → helpers use **cube-only** fallback for non-cube shapes.
 
-## Explicit confirmations
+## Helpers (`materialMetaHelpers.ts`)
 
-- **`generateMedievalTower`** and curated presets were **not** modified; tower output remains cube-only rows.
-- **No** new texture files; **no** registry metadata expansion beyond existing definitions.
-- Blueprint **v1** JSON exchange unchanged (still blueprint-only, no voxel dump).
+- **`getClassicMaterialMeta(localKey)`** — row from companion map or `undefined`.
+- **`getMaterialMetaForBlockTypeId(blockTypeId)`** — classic pack only; returns `undefined` elsewhere.
+- **`isShapeAllowedForBlockType(blockTypeId, shapeKind)`** — **`cube`** iff registry definition exists; non-cube iff metadata lists the shape; unknown IDs never throw (non-cube false; cube false if no definition).
+- **`validateVoxelBlockMaterialShape(block)`** — material × shape semantics only; does **not** replace **`validateVoxelBlockShapeState`** (axis/half etc.).
+
+## Tests (`materialMetaHelpers.test.ts`)
+
+Covers: oak_planks / oak_log / glass / slate_tiles shape allowances; unannotated **`andesite`** cube-only for partials; unknown **`classic/__nonexistent_block__`**; allowed vs disallowed **`validateVoxelBlockMaterialShape`**; glass pane **without** axis → material OK, **`validateVoxelBlockShapeState`** still fails.
+
+## Explicit non-goals (confirmed)
+
+- **`BlockTypeDefinition` / `CLASSIC_BLOCK_PACK`**: **not** modified.
+- **Generators** (`generateMedievalTower`, presets, blueprint validation, structure dispatch): **not** modified; output unchanged.
+- **Textures**: none added, removed, renamed, or generated.
+- **Renderer (`VoxelViewer`)**: **not** modified.
+- Metadata **not** wired into generation (helpers/tests only).
 
 ## Verification
 
 | Command | Result |
 |---------|--------|
-| `pnpm test:generator` | **Passed** (28 tests, 5 files) |
-| `pnpm exec tsc --noEmit` | **Passed** |
-| `pnpm run build` | **Passed** (Next.js 16.2.6) |
+| `pnpm test:generator` | Pass — 6 files, 37 tests |
+| `pnpm exec tsc --noEmit` | Pass — exit code 0 |
+| `pnpm run build` | Pass — Next.js 16.2.6 production build |
 
-## Follow-up (not this slice)
+## Follow-up
 
-- Registry defaults / allowed shapes; doors, stairs, fences; generator adoption; optional structure serialization for shape/state.
+- Generator-side correctness should eventually combine **`validateVoxelBlockShapeState`** + **`validateVoxelBlockMaterialShape`** before emitting partial blocks.
