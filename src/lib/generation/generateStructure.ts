@@ -3,7 +3,6 @@ import type {
   StructureBlueprint,
 } from "@/src/lib/blueprints/types";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
-import { generateBlacksmithWorkshop } from "@/src/lib/generation/generators/generateBlacksmithWorkshop";
 import { generateMedievalTower } from "@/src/lib/generation/generators/generateMedievalTower";
 import type { VoxelBlock } from "@/src/lib/voxel/types";
 
@@ -29,11 +28,5 @@ export function generateStructureFromResolved(
   switch (resolved.structureType) {
     case "medieval_tower":
       return generateMedievalTower(resolved);
-    case "blacksmith_workshop":
-      return generateBlacksmithWorkshop(resolved);
-    default: {
-      const _exhaust: never = resolved;
-      return _exhaust;
-    }
   }
 }

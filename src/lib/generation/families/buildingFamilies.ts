@@ -3,10 +3,7 @@
  * Styles live in `buildingStyles.ts`; presets are curated blueprint snapshots.
  */
 
-export const BUILDING_FAMILY_IDS = [
-  "medieval_tower",
-  "blacksmith_workshop",
-] as const;
+export const BUILDING_FAMILY_IDS = ["medieval_tower"] as const;
 
 export type BuildingFamilyId = (typeof BUILDING_FAMILY_IDS)[number];
 
@@ -28,13 +25,6 @@ export const BUILDING_FAMILIES: Record<
     displayName: "Medieval tower",
     description:
       "Vertical shell tower with roof crown, crenellations, and symmetric window columns.",
-    status: "shipped",
-  },
-  blacksmith_workshop: {
-    familyId: "blacksmith_workshop",
-    displayName: "Blacksmith workshop",
-    description:
-      "Low rectangular workshop with pitched roof, chimney, and interior forge/workbench zones.",
     status: "shipped",
   },
 };

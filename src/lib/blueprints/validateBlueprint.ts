@@ -8,8 +8,6 @@ import type {
   ResolvedStructure,
   BlueprintMassing,
 } from "./types";
-import { validateBlacksmithWorkshopBlueprint } from "./validateBlacksmithWorkshop";
-
 export interface BlueprintValidationResult {
   readonly ok: boolean;
   readonly errors: readonly string[];
@@ -239,8 +237,6 @@ export function validateBlueprint(
   switch (blueprint.structureType) {
     case "medieval_tower":
       return validateMedievalTowerBlueprint(blueprint);
-    case "blacksmith_workshop":
-      return validateBlacksmithWorkshopBlueprint(blueprint);
     default: {
       const unknown = blueprint as { structureType?: string };
       return {

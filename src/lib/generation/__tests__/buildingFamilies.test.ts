@@ -8,20 +8,20 @@ import {
 } from "@/src/lib/generation/families/buildingFamilies";
 
 describe("building family catalog", () => {
-  test("BUILDING_FAMILIES includes medieval_tower and blacksmith_workshop", () => {
+  test("BUILDING_FAMILIES includes only medieval_tower", () => {
     expect(Object.keys(BUILDING_FAMILIES).sort()).toEqual(
       [...BUILDING_FAMILY_IDS].sort(),
     );
-    expect(BUILDING_FAMILY_IDS).toHaveLength(2);
+    expect(BUILDING_FAMILY_IDS).toHaveLength(1);
   });
 
-  test("getBuildingFamily returns definitions for shipped families", () => {
+  test("getBuildingFamily returns definition for shipped tower family", () => {
     expect(getBuildingFamily("medieval_tower")?.status).toBe("shipped");
-    expect(getBuildingFamily("blacksmith_workshop")?.status).toBe("shipped");
+    expect(getBuildingFamily("blacksmith_workshop")).toBeUndefined();
     expect(getBuildingFamily("cottage")).toBeUndefined();
   });
 
-  test("getAllBuildingFamilies returns both families", () => {
-    expect(getAllBuildingFamilies()).toHaveLength(2);
+  test("getAllBuildingFamilies returns the single shipped family", () => {
+    expect(getAllBuildingFamilies()).toHaveLength(1);
   });
 });

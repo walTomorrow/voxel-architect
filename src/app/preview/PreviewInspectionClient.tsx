@@ -7,13 +7,7 @@ import {
   MEDIEVAL_TOWER_PRESETS,
   getMedievalTowerPreset,
 } from "@/src/lib/blueprints/sampleBlueprints";
-import {
-  BLACKSMITH_PRESETS,
-  DEFAULT_BLACKSMITH_PRESET_ID,
-  getBlacksmithPreset,
-} from "@/src/lib/blueprints/sampleBlacksmithBlueprints";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
-import { getBuildingFamily } from "@/src/lib/generation/families/buildingFamilies";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
 import {
   StructureInspectionPanel,
@@ -38,15 +32,9 @@ const TOWER_PRESET_OPTIONS: readonly StructureInspectionPresetOption[] =
     label: p.label,
   }));
 
-const BLACKSMITH_PRESET_OPTIONS: readonly StructureInspectionPresetOption[] =
-  BLACKSMITH_PRESETS.map((p) => ({
-    id: p.id,
-    label: p.label,
-  }));
-
 /**
- * Read-only inspection for `/preview` — tower/blacksmith presets or static
- * partial-block showcase; no blueprint editing.
+ * Read-only inspection for `/preview` — tower presets or static partial-block
+ * showcase; no blueprint editing.
  */
 export function PreviewInspectionClient() {
   const [previewSource, setPreviewSource] =
@@ -54,8 +42,6 @@ export function PreviewInspectionClient() {
   const [selectedTowerPresetId, setSelectedTowerPresetId] = useState<string>(
     DEFAULT_MEDIEVAL_PRESET_ID,
   );
-  const [selectedBlacksmithPresetId, setSelectedBlacksmithPresetId] =
-    useState<string>(DEFAULT_BLACKSMITH_PRESET_ID);
   const [cameraResetNonce, setCameraResetNonce] = useState(0);
   const [layerViewMode, setLayerViewMode] = useState<LayerViewMode>("full");
   const [selectedLayer, setSelectedLayer] = useState(0);
@@ -72,18 +58,11 @@ export function PreviewInspectionClient() {
   }, []);
 
   const activePresetMeta = useMemo(() => {
-    if (previewSource === "preset_blacksmith") {
-      const preset = getBlacksmithPreset(selectedBlacksmithPresetId);
-      const fallback = getBlacksmithPreset(DEFAULT_BLACKSMITH_PRESET_ID);
-      return preset ?? fallback!;
-    }
-    if (previewSource === "preset_towers") {
-      const preset = getMedievalTowerPreset(selectedTowerPresetId);
-      const fallback = getMedievalTowerPreset(DEFAULT_MEDIEVAL_PRESET_ID);
-      return preset ?? fallback!;
-    }
-    return null;
-  }, [previewSource, selectedTowerPresetId, selectedBlacksmithPresetId]);
+    if (previewSource !== "preset_towers") return null;
+    const preset = getMedievalTowerPreset(selectedTowerPresetId);
+    const fallback = getMedievalTowerPreset(DEFAULT_MEDIEVAL_PRESET_ID);
+    return preset ?? fallback!;
+  }, [previewSource, selectedTowerPresetId]);
 
   const blueprint = useMemo((): StructureBlueprint | null => {
     if (previewSource === "partial_showcase" || !activePresetMeta) {
@@ -157,13 +136,9 @@ export function PreviewInspectionClient() {
   };
 
   const handlePresetIdChange = (id: string) => {
-    if (previewSource === "preset_blacksmith") {
-      if (!getBlacksmithPreset(id)) return;
-      setSelectedBlacksmithPresetId(id);
-    } else if (previewSource === "preset_towers") {
-      if (!getMedievalTowerPreset(id)) return;
-      setSelectedTowerPresetId(id);
-    }
+    if (previewSource !== "preset_towers") return;
+    if (!getMedievalTowerPreset(id)) return;
+    setSelectedTowerPresetId(id);
     setLayerViewMode("full");
   };
 
@@ -174,41 +149,17 @@ export function PreviewInspectionClient() {
 
   const hasStructure = totalCount > 0;
 
-  const selectedPresetId =
-    previewSource === "preset_blacksmith"
-      ? selectedBlacksmithPresetId
-      : selectedTowerPresetId;
-
-  const presetOptions =
-    previewSource === "preset_blacksmith"
-      ? BLACKSMITH_PRESET_OPTIONS
-      : TOWER_PRESET_OPTIONS;
-
   const panelTitle =
     previewSource === "partial_showcase"
       ? "Partial block showcase"
-      : previewSource === "preset_blacksmith"
-        ? "Blacksmith preset inspection"
-        : "Preset inspection";
+      : "Preset inspection";
 
   const panelDescription = useMemo(() => {
     if (previewSource === "partial_showcase") {
       return "Developer inspection: static slabs, panes, and posts using classic textures only — not preset generator output. Layer modes filter the canvas; breakdown reflects this showcase.";
     }
-    if (previewSource === "preset_blacksmith" && activePresetMeta) {
-      const family = getBuildingFamily("blacksmith_workshop");
-      const bp = activePresetMeta.blueprint;
-      const parts = [
-        family?.displayName ?? "Blacksmith workshop",
-        `structureType: ${bp.structureType}`,
-        bp.metadata.name,
-        bp.metadata.description,
-        "Read-only curated preset — validate → generate → inspect. No blueprint editing on this page.",
-      ].filter(Boolean);
-      return parts.join(" · ");
-    }
     return undefined;
-  }, [previewSource, activePresetMeta]);
+  }, [previewSource]);
 
   const validationNotes =
     previewSource !== "partial_showcase" &&
@@ -245,8 +196,8 @@ export function PreviewInspectionClient() {
         validationNotes={validationNotes}
         previewSource={previewSource}
         onPreviewSourceChange={handlePreviewSourceChange}
-        presetOptions={presetOptions}
-        selectedPresetId={selectedPresetId}
+        presetOptions={TOWER_PRESET_OPTIONS}
+        selectedPresetId={selectedTowerPresetId}
         onPresetIdChange={handlePresetIdChange}
         hasStructure={hasStructure}
         layerViewMode={layerViewMode}
