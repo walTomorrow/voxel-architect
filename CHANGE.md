@@ -1,41 +1,49 @@
-# CHANGE.md — Partial Block Showcase Preview
+# CHANGE.md — Medieval tower window panes (Phase A)
 
 ## Files changed
 
-- `src/lib/voxel/sampleStructure.ts` — added **`PARTIAL_BLOCK_SHOWCASE_STRUCTURE`** (compact vignette); **`SAMPLE_PARTIAL_BLOCK_FOUNDATION`** comment updated to point at showcase.
-- `src/lib/voxel/voxelBlockPlacement.ts` — **new** combined placement validators.
-- `src/lib/voxel/__tests__/partialBlockShowcase.test.ts` — **new** Vitest coverage for showcase + placement failures.
-- `src/components/voxel/StructureInspectionPanel.tsx` — optional **`previewSource`** toggle (**Preset towers** / **Partial block showcase**), **`panelDescription`**, preset placeholder in showcase mode, default title fallback.
-- `src/app/preview/PreviewInspectionClient.tsx` — wires showcase vs generated presets; dev-only **`validateVoxelStructurePlacements`** guard in development.
+- `src/lib/generation/generators/generateMedievalTower.ts` — extended **`Placement`**, **`mergePlacements`**, **`push`**, window branch emits **`pane`** when metadata allows; exported **`paneAxisForWindowCell`**.
+- `src/lib/generation/__tests__/testUtils.ts` — **`assertGeneratedStructurePlacementSemantics`** (`validateVoxelStructurePlacements`).
+- `src/lib/generation/__tests__/generatorPresetInvariants.test.ts` — placement semantics assertion after hard invariants.
+- `src/lib/generation/__tests__/generatorEdgeCaseInvariants.test.ts` — same.
+- `src/lib/generation/__tests__/generatorPipeline.smoke.test.ts` — placement semantics on smoke output.
+- `src/lib/generation/__tests__/generatorWindowPanes.test.ts` — **new**: axis helper tests, pane emission, **`oak_planks`** window fallback.
 
-## Showcase structure (`PARTIAL_BLOCK_SHOWCASE_STRUCTURE`)
+## Placement / merge
 
-Hand-authored **`VoxelBlock[]`** (~24 blocks): **`classic/cobblestone`** floor + slab/post; **`classic/oak_log`** corner posts + one cube column; **`classic/oak_planks`** slab trim (top + bottom halves); **`classic/limestone_bricks`** wall cube + slab; **`classic/glass`** panes (**x** and **z**) + cube; **`classic/slate_tiles`** top slab cap. Covers **cube**, **slab bottom/top**, **pane x/z**, **post** using only **annotated** material × shape pairs.
+- **`Placement`** optionally carries **`shapeKind`** / **`state`**.
+- **`mergePlacements`** still merges on **`(x,y,z)`** only (sort unchanged); outputs **`VoxelBlock`** with optional partial fields.
+- Omitted partial fields ⇒ legacy cube behavior.
 
-## Combined validation
+## Window pane behavior
 
-- **`validateVoxelBlockPlacement(block)`** — runs **`validateVoxelBlockShapeState`** then **`validateVoxelBlockMaterialShape`**; errors prefixed with **`(x,y,z) pack/local`** and labeled **`shape/state`** vs **`material/shape`**.
-- **`validateVoxelStructurePlacements(structure)`** — aggregates per-block failures. Does **not** replace underlying helpers or change **`analyzeVoxelStructure`**.
+- Where **`windowGlass`** forces **`PRI.WINDOW`** + **`m.window`**: if **`paneAxisForWindowCell(lx,lz,W,D)`** is defined **and** **`isShapeAllowedForBlockType(m.window, "pane")`**, emit **`shapeKind: "pane"`** + **`state: { axis }`**; else emit cube (**no** **`shapeKind`**).
 
-## Tests added (`partialBlockShowcase.test.ts`)
+## Pane axis rule (`paneAxisForWindowCell`)
 
-Non-empty showcase; presence of all shape variants; per-block **`validateVoxelBlockShapeState`**, **`validateVoxelBlockMaterialShape`**, **`validateVoxelBlockPlacement`**; full-structure placement ok; **`analyzeVoxelStructure`** duplicate count **0**; registry resolution for all ids; combined validator rejects **pane without axis** (structural) and **`oak_log` slab** (material).
+- **`lz === 0`** or **`lz === D - 1`** (non-corner ⇒ **`lx`** strictly interior on that edge): **`axis: "x"`**.
+- **`lx === 0`** or **`lx === W - 1`** (non-corner): **`axis: "z"`**.
+- Corners / ambiguous: **`undefined`** → cube fallback.
+- Comment in source: **not** connection-aware (see backlog for future work).
 
-## `/preview` UI
+## Tests
 
-Small **Source** segmented control: **Preset towers** (unchanged — blueprint → **`generateStructureFromResolved`**) vs **Partial block showcase** (static **`PARTIAL_BLOCK_SHOWCASE_STRUCTURE`** → **`VoxelViewer`** with **`boundsStructure`**). Showcase mode replaces preset `<select>` with a short note; title/description clarify developer inspection. Layer modes + breakdown still apply to the visible structure.
+- All curated presets + edge-case fixtures: **`assertGeneratedStructurePlacementSemantics`**.
+- **`generatorWindowPanes.test.ts`**: axis unit tests; default preset (**`northwatch`**) has **≥1** pane, **`axis`** ∈ **`x|z`**, **`isShapeAllowedForBlockType(..., "pane")`** on pane rows; cloned **`height_budget_body_clamp`** with **`window: oak_planks`** ⇒ **no** panes, placement validation still passes.
 
-## Explicit confirmations
+## Confirmations
 
-- **`/visualizer`**: **not** modified.
-- **Generator output / presets / blueprint validation / `generateStructure`**: **not** modified; towers remain cube-only.
-- **Textures**: none added, removed, renamed, or generated.
-- **Landing `VoxelPreviewPanel`**: unchanged (still default **`SAMPLE_STRUCTURE`**).
+- **Fallback:** non-pane-compatible **`m.window`** (e.g. **`oak_planks`**) keeps **cube** windows — tested.
+- **Slabs / posts:** not added in generator.
+- **UI:** **`/preview`**, **`/visualizer`**, **`VoxelViewer`**, **`StructureInspectionPanel`** unchanged.
+- **Generator output:** **`shapeKind === "pane"`** only for window cells when material allows pane + axis resolved.
+- **Textures:** none added/generated.
+- **Blueprints / presets:** curated data unchanged; test-only clone mutates materials for fallback case.
 
 ## Verification
 
 | Command | Result |
 |---------|--------|
-| `pnpm test:generator` | Pass — 7 files, 46 tests |
-| `pnpm exec tsc --noEmit` | Pass — exit code 0 |
+| `pnpm test:generator` | Pass — 8 files, 51 tests |
+| `pnpm exec tsc --noEmit` | Pass |
 | `pnpm run build` | Pass — Next.js 16.2.6 |

@@ -4,7 +4,10 @@ import { generateStructureFromResolved } from "@/src/lib/generation/generateStru
 import { analyzeVoxelStructure } from "@/src/lib/voxel/structureAnalysis";
 
 import { EDGE_CASE_BLUEPRINT_FIXTURES } from "./fixtures/edgeCaseBlueprints";
-import { assertGeneratedStructureHardInvariants } from "./testUtils";
+import {
+  assertGeneratedStructureHardInvariants,
+  assertGeneratedStructurePlacementSemantics,
+} from "./testUtils";
 
 describe("generator edge-case blueprint invariants", () => {
   it.each(EDGE_CASE_BLUEPRINT_FIXTURES)(
@@ -32,6 +35,11 @@ describe("generator edge-case blueprint invariants", () => {
         blocks,
         analysis,
         maxBlockCount: resolved.constraints.maxBlockCount,
+      });
+      assertGeneratedStructurePlacementSemantics({
+        id: fixture.id,
+        label: fixture.label,
+        blocks,
       });
     },
   );

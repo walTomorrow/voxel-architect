@@ -1,6 +1,11 @@
 import type { BlockTypeId } from "@/src/lib/voxel/blocks/registry-types";
 import type { ResolvedMedievalTower } from "@/src/lib/blueprints/types";
-import type { VoxelBlock } from "@/src/lib/voxel/types";
+import { isShapeAllowedForBlockType } from "@/src/lib/voxel/blocks/materialMetaHelpers";
+import type {
+  VoxelBlock,
+  VoxelBlockShapeKind,
+  VoxelBlockState,
+} from "@/src/lib/voxel/types";
 
 /**
  * Deterministic merge: higher priority wins first; first placement kept per voxel.
@@ -29,6 +34,8 @@ type Placement = {
   p: number;
   id: BlockTypeId;
   i: number;
+  shapeKind?: VoxelBlockShapeKind;
+  state?: VoxelBlockState;
 };
 
 function key(x: number, y: number, z: number): string {
@@ -55,9 +62,40 @@ function mergePlacements(placements: Placement[]): VoxelBlock[] {
     const k = key(q.x, q.y, q.z);
     if (seen.has(k)) continue;
     seen.add(k);
-    out.push({ x: q.x, y: q.y, z: q.z, blockTypeId: q.id });
+    const block: VoxelBlock =
+      q.shapeKind !== undefined
+        ? {
+            x: q.x,
+            y: q.y,
+            z: q.z,
+            blockTypeId: q.id,
+            shapeKind: q.shapeKind,
+            ...(q.state !== undefined ? { state: q.state } : {}),
+          }
+        : { x: q.x, y: q.y, z: q.z, blockTypeId: q.id };
+    out.push(block);
   }
   return out;
+}
+
+/**
+ * Pane thickness axis for a façade window cell (generator-authored hint).
+ * Not connection-aware — future neighbor-derived panes belong in backlog work.
+ *
+ * - Front/back façades (constant `lz`): thin extent along world Z → `axis: "x"`.
+ * - Left/right façades (constant `lx`): thin extent along world X → `axis: "z"`.
+ */
+export function paneAxisForWindowCell(
+  lx: number,
+  lz: number,
+  W: number,
+  D: number,
+): "x" | "z" | undefined {
+  const onFrontBack = lz === 0 || lz === D - 1;
+  const onLeftRight = lx === 0 || lx === W - 1;
+  if (onFrontBack && !onLeftRight) return "x";
+  if (onLeftRight && !onFrontBack) return "z";
+  return undefined;
 }
 
 function filterGrounded(
@@ -529,15 +567,21 @@ export function generateMedievalTower(
     lz: number,
     p: number,
     id: BlockTypeId,
+    partial?: { shapeKind: VoxelBlockShapeKind; state: VoxelBlockState },
   ) => {
-    pl.push({
+    const row: Placement = {
       x: ox + lx,
       y,
       z: oz + lz,
       p,
       id,
       i: idx++,
-    });
+    };
+    if (partial) {
+      row.shapeKind = partial.shapeKind;
+      row.state = partial.state;
+    }
+    pl.push(row);
   };
 
   const { lo: elx0, hi: elx1 } = entranceSpanRange(W, r.openings.entranceWidth);
@@ -618,7 +662,18 @@ export function generateMedievalTower(
         }
 
         if (windowGlass.has(lk(lx, y, lz))) {
-          push(lx, y, lz, PRI.WINDOW, m.window);
+          const axis = paneAxisForWindowCell(lx, lz, W, D);
+          if (
+            axis !== undefined &&
+            isShapeAllowedForBlockType(m.window, "pane")
+          ) {
+            push(lx, y, lz, PRI.WINDOW, m.window, {
+              shapeKind: "pane",
+              state: { axis },
+            });
+          } else {
+            push(lx, y, lz, PRI.WINDOW, m.window);
+          }
         } else {
           push(lx, y, lz, PRI.WALL, m.wall);
         }

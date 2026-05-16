@@ -2,6 +2,7 @@ import { expect } from "vitest";
 
 import type { VoxelStructureAnalysis } from "@/src/lib/voxel/structureAnalysis";
 import type { VoxelBlock } from "@/src/lib/voxel/types";
+import { validateVoxelStructurePlacements } from "@/src/lib/voxel/voxelBlockPlacement";
 
 export function formatGeneratorInvariantDiagnostics(ctx: {
   readonly id: string;
@@ -68,4 +69,19 @@ export function assertGeneratedStructureHardInvariants(ctx: {
     blocks.length,
     `block count exceeds maxBlockCount (${diag})`,
   ).toBeLessThanOrEqual(maxBlockCount);
+}
+
+/** Shape/state + material/shape semantics (orthogonal to lattice connectivity checks). */
+export function assertGeneratedStructurePlacementSemantics(ctx: {
+  readonly id: string;
+  readonly label: string;
+  readonly blocks: readonly VoxelBlock[];
+}): void {
+  const { id, label, blocks } = ctx;
+  const diag = `[${id}] ${label}`;
+  const r = validateVoxelStructurePlacements({ blocks });
+  expect(
+    r.ok,
+    `${diag} validateVoxelStructurePlacements: ${!r.ok ? r.errors.join("; ") : ""}`,
+  ).toBe(true);
 }
