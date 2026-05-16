@@ -1,9 +1,12 @@
+import type { BuildingStyleId } from "@/src/lib/generation/styles/buildingStyles";
 import type { MedievalTowerBlueprint } from "./types";
 
 /** Stable id + UI label + frozen authoring snapshot (always `structuredClone` before mutating in UI). */
 export interface MedievalTowerPreset {
   readonly id: string;
   readonly label: string;
+  /** Reusable style vocabulary (see `BUILDING_STYLES`; not part of blueprint schema). */
+  readonly styleId: BuildingStyleId;
   readonly blueprint: MedievalTowerBlueprint;
 }
 
@@ -303,31 +306,37 @@ export const MEDIEVAL_TOWER_PRESETS: readonly MedievalTowerPreset[] = [
   {
     id: "northwatch",
     label: "Northwatch Spire (default)",
+    styleId: "rustic_stone_watchtower",
     blueprint: SAMPLE_MEDIEVAL_TOWER_BLUEPRINT,
   },
   {
     id: "tall_watchtower",
     label: "Tall Watchtower",
+    styleId: "tall_military_watchtower",
     blueprint: TALL_WATCHTOWER_BLUEPRINT,
   },
   {
     id: "fortified_gate",
     label: "Fortified Gate Tower",
+    styleId: "fortified_gatehouse",
     blueprint: FORTIFIED_GATE_TOWER_BLUEPRINT,
   },
   {
     id: "gothic_stone",
     label: "Gothic Stone Tower",
+    styleId: "gothic_stone",
     blueprint: GOTHIC_STONE_TOWER_BLUEPRINT,
   },
   {
     id: "compact_guard",
     label: "Compact Guard Tower",
+    styleId: "compact_guard_post",
     blueprint: COMPACT_GUARD_TOWER_BLUEPRINT,
   },
   {
     id: "dark_wizard",
     label: "Dark Wizard Tower",
+    styleId: "dark_wizard",
     blueprint: DARK_WIZARD_TOWER_BLUEPRINT,
   },
 ];

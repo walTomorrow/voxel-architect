@@ -1,206 +1,377 @@
-# Plan — Safe Partial Block Adoption in Medieval Tower Generator
+# Plan — Building Style System for Generator Expansion
 
 ## 1. Purpose
 
-The stack already has: partial **`shapeKind` / `state`** on **`VoxelBlock`**, renderer support for **cube / slab / pane / post**, companion **`CLASSIC_MATERIAL_META`**, **`validateVoxelBlockPlacement`**, **`/preview`** partial showcase, and tests that prove hand-authored placements are valid.
+Generator Expansion has established the **partial block foundation** (`shapeKind` / `state` on `VoxelBlock`), **renderer support** for cube / slab / pane / post, a **curated `CLASSIC_MATERIAL_META`** layer, **placement validation** (`validateVoxelBlockPlacement` / `validateVoxelStructurePlacements`), **generator-emitted pane windows** when window materials allow pane, and **reliability tests** that treat placement semantics as correctness—not viewer fallbacks.
 
-The **next** increment is to show that the **deterministic medieval tower generator** can emit a **small, controlled** set of partial shapes **without** blueprint churn, new assets, or new building families—so future work (more shapes, connection-aware blocks per **`docs/blocks/BLOCK_SYSTEM_BACKLOG.md`**, texture packs, export) builds on **generator-enforced** correctness, not only viewer fallbacks.
+The **next** component is a **building style system**: a reusable layer that describes **aesthetic and material/detail intent** without adding another **building family** or rewriting the medieval tower generator.
 
-This slice is intentionally **narrow**: prove safe emission and keep **generator reliability tests** meaningful—not a full visual redesign.
+**Why style now**
 
-**Reference context:** [`docs/blocks/BLOCK_SYSTEM_BACKLOG.md`](docs/blocks/BLOCK_SYSTEM_BACKLOG.md) records deferred items (connection-aware fences/walls/bars/panes, richer validation policy, texture expansion, Minecraft compatibility). This plan **does not** implement those backlog items; it should stay aligned with them so manual axis-from-wall panes are **not** mistaken for future neighbor-derived connection logic.
+- Curated presets already read as distinct moods (gothic stone, dark wizard, fortified gate) but express that only through **scattered blueprint fields** and **preset ids**—there is no shared vocabulary for AI, docs, or future families.
+- **Material metadata** answers “can this block be a pane/slab/post?”; **style** should answer “which palette and detail profile fit this mood?”—orthogonal concerns.
+- Partial-block adoption taught a constraint: **style must not bypass generator rules** (e.g. slab trim below pane windows was reverted because it looked wrong). A style layer should guide **blueprint defaults** and **future generator policy**, not raw per-voxel overrides.
 
----
+**Goal of this milestone slice (after plan approval)**
 
-## 2. Current generator behavior
-
-**Pipeline:** [`validateBlueprint()`](src/lib/blueprints/validateBlueprint.ts) resolves semantic classic keys to **`BlockTypeId`**s → [`generateStructureFromResolved`](src/lib/generation/generateStructure.ts) dispatches → [`generateMedievalTower`](src/lib/generation/generators/generateMedievalTower.ts) returns **`VoxelBlock[]`** (today **cube-only**: **`mergePlacements`** emits `{ x, y, z, blockTypeId }` only).
-
-**Merge model:** Placements carry priority **`p`** and insertion index **`i`**. [`mergePlacements`](src/lib/generation/generators/generateMedievalTower.ts) sorts by **descending `p`**, then **`i`**, keeps **first per `(x,y,z)`**. Higher priority wins.
-
-**Representative priorities** (abbreviated): foundation → interior floor → wall → roof → façade trim → corner pillar → corner capstone → **window** → portal accent → entrance arch → door → parapet → merlon.
-
-**Windows:** [`buildWindowGlassSet`](src/lib/generation/generators/generateMedievalTower.ts) collects lattice keys for glass cells on exterior shells (respecting hollow interior, door aperture, corners, floor bands). Main body loop places **`m.window`** at **`PRI.WINDOW`** (50), else **`m.wall`** at **`PRI.WALL`** (30).
-
-**Façade trim:** After the body loop, for each window glass key, optional **`PRI.FACADE_TRIM`** (**44**) placements add **`m.accent`** at **`yy ± 1`** on the shell (sill/lintel neighbors), guarded by [`shellCell`](src/lib/generation/generators/generateMedievalTower.ts) and door aperture.
-
-**Entrance:** Portal jambs/lintel (**`PRI.PORTAL_ACCENT`**), door row (**`PRI.DOOR`**), optional arch voxels (**`PRI.ENTRANCE_ARCH`**), all **`m.accent`** or **`m.door`**.
-
-**Roof / crown:** Flat or stepped pyramid **`m.roof`** (**`PRI.ROOF`**); parapet (**`PRI.PARAPET`**) and optional merlons (**`PRI.MERLON`**) use **`m.accent`**; corner capstones (**`PRI.CORNER_CAPSTONE`**) use **`m.accent`**.
-
-**Coordinates:** Local **`lx, lz`** with **`ox = centerOrigin(W)`**, **`oz = centerOrigin(D)`**; world **`x = ox + lx`**, **`z = oz + lz`**. **Front** means **`lz === D - 1`**; **back** **`lz === 0`**; **left** **`lx === 0`**; **right** **`lx === W - 1`** ([`onFace`](src/lib/generation/generators/generateMedievalTower.ts)).
-
-**structureAnalysis:** Still **occupancy-only** on **`(x,y,z)`**; **`shapeKind` / `state`** do not affect duplicates or connectivity ([`structureAnalysis.ts`](src/lib/voxel/structureAnalysis.ts), [`GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md)).
+- Define how Voxel Architect **represents** and **uses** style across families.
+- **Not** in scope for the first implementation: new building families, new textures, schema churn, interiors, or broad generator redesign.
 
 ---
 
-## 3. Candidate partial-block substitutions
+## 2. Current style behavior
 
-| Candidate | Visual value | Risk | Metadata today | State | Duplicate risk |
-|-----------|----------------|------|----------------|-------|----------------|
-| **Glass panes** for window cells | Reads as thin glazing vs solid cube | Low if axis rule matches façade | **`classic/glass`** allows **pane** (presets resolve **`window`** → **`glass`**) | **`axis: "x" \| "z"`** | **Replace** same cell as current window cube → **no new coords** |
-| **Accent slabs** for façade trim above/below windows | Subtle sill/lintel | Medium: wrong **`half`** looks muddy; **accent** keys often **unannotated** | Presets use **`limestone`**, **`mudstone`**, **`andesite`**, **`schist`** etc.—**not** in **`CLASSIC_MATERIAL_META`** today (**cube-only** fallback) | **`half: "top" \| "bottom"`** | **Replace** existing trim cubes → **no new coords** if same algorithm keys |
-| **Accent / wall slabs** for roof parapet or flat roof cap | Possible crown read | Higher: competes with **roof** priority (**40** vs parapet **56**—usually OK); materials **`m.roof`** may be **slate_tiles** (**slab** ok) or unannotated | **Roof** / **accent** IDs vary by blueprint | **`half`** | Replacing cubes only—avoid stacking second block in same cell |
-| **Posts** for portal jambs or corner accents | Strong vertical read | Higher collision risk with door/arch priorities; user preference: **defer** | **`oak_log`** allows **post**; generator rarely uses **oak_log** for jambs today (**accent** cubes) | none | Same-cell **replace** possible but **material** (`m.accent`) usually **not** post-annotated |
+Today, “style” is **implicit**—encoded by **curated preset snapshots** and **blueprint parameters**, not by a dedicated `style` field (`src/lib/blueprints/types.ts` has no style property).
 
-**Connection-aware panes** (neighbor-derived) are **explicitly out of scope**—see backlog § connection-aware blocks.
+### Preset catalog (`MEDIEVAL_TOWER_PRESETS`)
 
----
+| Preset id | Label (implicit style read) | Distinctive material palette | Massing / silhouette | Openings / crown |
+|-----------|----------------------------|------------------------------|----------------------|------------------|
+| `northwatch` | Default balanced medieval watch | cobblestone walls, limestone accent, slate_tiles roof, glass | medium vertical, T=2, bilateral | arched entrance, symmetric upper windows, stepped pyramid + crenellations + corner pillars |
+| `tall_watchtower` | Slender military watch | mudstone accent, thin shell T=1, tall emphasis | very tall body, simple entrance | same window banding pattern, stepped crown |
+| `fortified_gate` | Fortress / gatehouse mass | mossy_cobblestone walls, wide 13×13, T=3 | medium, thick shell | flat roof (tests flat cap path), windows on all floors |
+| `gothic_stone` | Pale gothic stone | limestone_bricks wall+floor, arched windows | tall, 11×11 | arched entrance + arched window style |
+| `compact_guard` | Minimal border post | gravel floor, slate roof, andesite accent | low emphasis, 5×5, T=1, no corner pillars | front_only windows, width-1 door |
+| `dark_wizard` | Dark fantasy tower | obsidian wall, schist floor/accent, dense windows | tall, arched windows all floors, 4/side | moody palette, stepped crown |
 
-## 4. Recommended first adoption scope
+Preset **ids** and **`metadata.name` / `description`** carry human style language; the **blueprint body** carries the machine-readable choices.
 
-**Recommendation:** **Phase A — windows only**
+### What is blueprint-driven vs hardcoded
 
-- For each lattice cell that today receives **`PRI.WINDOW`** + **`m.window`**, emit **`shapeKind: "pane"`** + appropriate **`state.axis`**, **only if** material allows **`pane`**; otherwise keep **full cube** (backward-compatible).
-- **Defer** façade-trim slabs, roof/parapet slabs, and **posts** until either:
-  - **`CLASSIC_MATERIAL_META`** is extended for the **actual** accent keys used by curated presets / common imports, **or**
-  - trim/slab logic is gated strictly on **`isShapeAllowedForBlockType(m.accent, "slab")`** (meaning **most** current presets would **stay cube trim** until metadata catches up).
+| Concern | Blueprint-driven today | Generator-hardcoded today |
+|--------|-------------------------|---------------------------|
+| Materials (6 slots) | `materials.*` classic keys → resolved `BlockTypeId` | No style resolver; uses `r.materials` directly |
+| Footprint / height budget | `dimensions` + validator clamps → `grid` | `centerOrigin`, shell/void rules |
+| Vertical read | `massing.verticalEmphasis`, `wallThickness`, `hollowInterior` | Body layer loop, corner pillar branch |
+| Symmetry | `massing.symmetry`, `constraints.enforceSymmetry` | Window column placement algorithm |
+| Entrance | `openings.entranceSide/Style/Width/Height` | Portal jambs, door row, optional arch voxels |
+| Windows | `windowsStyle`, `windowsPlacement`, `windowsFloors`, `windowsCountPerSide` | `buildWindowGlassSet`, pane vs cube via `isShapeAllowedForBlockType(m.window, "pane")` |
+| Roof / crown | `roof.style`, `height`, `overhang`; `features.crenellations`, `cornerPillars` | Roof layers, parapet, merlons, capstones |
+| Façade trim | *(no trim-specific blueprint flags)* | `PRI.FACADE_TRIM` cubes at `yy±1` around glass (**full cube**; slabs reverted) |
+| Partial shapes | Indirect via material choice | Pane emission only; no generator slabs/posts from trim |
 
-This matches the stated preference: **glass panes first**, **slabs only if placement points are clean**—trim points exist, but **metadata** on **`limestone`** / **`mudstone`** / etc. is **not** clean today without a **small metadata extension slice** (allowed as a **separate** commit before or after pane adoption, **not** mixed with connection-aware work).
+### Implicit style categories already present
 
-**Phase B (optional follow-up commit):** façade-trim **slabs** **replacing** existing accent cubes **above/below** windows, with explicit **`half`** rules (§6), gated on metadata.
+- **Gothic / ecclesiastical stone**: `gothic_stone` (limestone mass, arched openings).
+- **Fortified / military**: `fortified_gate`, `tall_watchtower`, `compact_guard` (mass, thickness, or austerity).
+- **Fantasy / dark**: `dark_wizard` (obsidian, dense glazing).
+- **Rustic / village stone**: `northwatch`, `fortified_gate` (cobble + limestone family).
+- **Wizard / forge mood** (future blacksmith family): not a separate generator yet, but palette patterns (dark stone + accent schist) preview how **style** might later attach to other families.
 
-**Defer:** posts for entrances, parapet/roof slab refactors, any change that touches **`PRI.DOOR`** / arch overlap logic without a dedicated review.
+### Aspirational docs vs code
 
----
-
-## 5. Pane orientation rules
-
-**Goal:** Pane thickness lies **in-plane with the wall normal** conceptually: façade lies in a plane constant in **`lx`** or **`lz`**.
-
-**Concrete rule (verify in implementation against [`isExterior`](src/lib/generation/generators/generateMedievalTower.ts)):**
-
-- If **`lz === 0`** or **`lz === D - 1`** (front/back façades): **`state.axis = "x"`**  
-  (Wall plane spans **X × Y**; thin extent aligns with **world Z**.)
-
-- If **`lx === 0`** or **`lx === W - 1`** (left/right façades): **`state.axis = "z"`**  
-  (Wall plane spans **Z × Y**; thin extent aligns with **world X**.)
-
-**Corners:** Window placement already excludes corners (**`isCorner`**); no ambiguous axis choice for window columns.
-
-**Alignment with user-facing compass language:** Treat **front/back** (∓**Z** façades) like **“north/south-facing walls → axis `x`”**, and **left/right** (∓**X** façades) like **“east/west-facing → axis `z`”**, modulo your external compass convention—the **code truth** is **`lx/lz` vs `W/D`** above.
-
-**Backlog separation:** These axes are **generator-authored hints**, not **connection-resolved** pane geometry (backlog: connection-aware panes).
+- [`BLUEPRINT_FEATURE_CATALOG.md`](docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md) Tier 5 and §8 show **future** `style`, `mood`, and AI vocabulary—these are **not** in the shipped schema.
+- [`BLUEPRINT_JSON_FORMAT.md`](docs/blueprints/BLUEPRINT_JSON_FORMAT.md) notes style-like choices are carried by **materials and parameters** today.
 
 ---
 
-## 6. Slab placement rules (Phase B only)
+## 3. Family vs style distinction
 
-If façade trim slabs are adopted **after** pane Phase A:
+| Concept | Definition | Examples |
+|--------|------------|----------|
+| **Building family** | Structural **generator strategy** + blueprint shape: footprint grammar, which subsystems exist (tower shell vs cottage hall vs forge workshop). Dispatched by `structureType` → `generateStructureFromResolved`. | `medieval_tower` (only family shipped); future: `cottage`, `blacksmith`, `chapel`, `tavern` |
+| **Building style** | **Aesthetic and detail rules within a family**: material mood, opening vocabulary, ornament density, symmetry habits, encouraged partial shapes **where generator policy allows**. | Gothic stone tower, dark wizard, fortified military, wooden frontier cottage, rustic village forge |
+| **Material palette** | Concrete classic keys (or resolved ids) for slots: wall, floor, roof, window, door, accent. | `{ wall: "limestone_bricks", accent: "limestone", window: "glass", … }` |
+| **Feature / detail profile** | Boolean and enum knobs the generator understands today: crenellations, corner pillars, roof style, window style/placement, entrance style. | `features.crenellations: true`, `openings.windowsStyle: "arched"` |
 
-- **Material:** Keep **`m.accent`** (same **`blockTypeId`** as today’s trim cubes)—**replace cube with slab** at the **same `(x,y,z)`**, never add a second block in the cell.
-- **`half`:**
-  - Cell **below** the glass stack (**sill** neighbor): prefer **`bottom`** (lower half fills “ledge” read toward ground).
-  - Cell **above** the glass stack (**lintel** neighbor): prefer **`top`**.
-- **Collision:** Trim pushes **must remain** lower priority than **window** on glass cells (already separate **`y`**). Watch **portal accent** / **arch** overlaps on the entrance face—**do not** introduce slabs without checking **`mergePlacements`** ordering for those **`lx,lz,y`** keys.
-- **Metadata gate:** Emit slab **only** when **`isShapeAllowedForBlockType(m.accent, "slab")`** is true; otherwise leave **cube**.
+**Concrete pairings (family fixed, style varies)**
 
----
+- Family **tower**, style **gothic stone** → pale masonry, arched openings, stepped slate crown (`gothic_stone` preset).
+- Family **tower**, style **dark wizard** → dark shell, dense arched glazing, schist accents (`dark_wizard`).
+- Family **blacksmith** (future), style **rustic village forge** → not implemented; would share forge family grammar but warm stone/wood palette and forge-zone semantics later.
+- Family **cottage** (future), style **wooden frontier** → different generator; low massing, plank-forward palette.
 
-## 7. Material compatibility
+**Why style ≠ family**
 
-**Window → pane**
-
-- Curated presets and edge-case fixtures resolve **`materials.window`** to **`classic/glass`** ([`sampleBlueprints`](src/lib/blueprints/sampleBlueprints.ts), [`edgeCaseBlueprints`](src/lib/generation/__tests__/fixtures/edgeCaseBlueprints.ts)).
-- **`glass`** is annotated with **`allowedShapeKinds`** including **`pane`** ([`classicMaterialMeta.ts`](src/lib/voxel/blocks/packs/classicMaterialMeta.ts)).
-- **Blueprint reality:** Any **`CLASSIC_BLOCK_PACK`** key is allowed for **`materials.window`** ([`resolveMaterial`](src/lib/blueprints/validateBlueprint.ts)). If **`window`** were **`oak_leaves`** or **`oak_planks`**, **`pane`** would be **disallowed** by metadata—implementation **must** fall back to **cube** (or skip pane) so **`validateVoxelBlockPlacement`** never fails on valid blueprints.
-
-**Trim → slab (Phase B)**
-
-- Presets commonly use **`accent: "limestone"`**—maps to **`classic/limestone`**, which is **not** currently annotated (**cube-only** metadata fallback).
-- **`limestone_bricks`**, **`cobblestone`**, **`slate_tiles`** **are** slab-annotated—generator **does not** use those keys for accent unless the blueprint says so.
-
-**Conclusion**
-
-- **Pane adoption** does **not** require metadata expansion **if** pane emission is **`glass`**-compatible or gated by **`isShapeAllowedForBlockType(m.window, "pane")`**.
-- **Trim slab adoption** almost certainly requires either **annotating** common accent locals (**`limestone`**, **`mudstone`**, **`andesite`**, **`schist`**, …) with **conservative** **`allowedShapeKinds`** (**slab** only where acceptable), **or** accepting **no trim slabs** for most presets until that lands.
-
-**No new textures or `CLASSIC_BLOCK_PACK` entries** in this milestone slice.
+- Same family generator can render many styles by changing **palette + feature profile** without forking placement code.
+- Adding a “gothic cottage” is a **style** (+ maybe palette defaults), not a new cottage **family**, once a cottage generator exists.
+- Confusing them leads to `structureType: "gothic_tower"` explosion; prefer `structureType: "medieval_tower"` + `styleId: "gothic_stone"`.
 
 ---
 
-## 8. Validation strategy
+## 4. Candidate style model
 
-**Do not rely on [`VoxelViewer`](src/components/voxel/VoxelViewer.tsx) skip/warn** for correctness ([`BLOCK_SYSTEM_BACKLOG.md`](docs/blocks/BLOCK_SYSTEM_BACKLOG.md) § render safety).
+Lightweight **catalog record** (TypeScript module, not blueprint schema yet):
 
-**Required checks on generator output:**
+```ts
+type BuildingFamilyId = "medieval_tower"; // extend when families ship
 
-1. **`validateVoxelBlockShapeState`** per block (or **`validateVoxelBlockPlacement`**).
-2. **`validateVoxelBlockMaterialShape`** per block (or **`validateVoxelBlockPlacement`**).
-3. Structure-level aggregation: **`validateVoxelStructurePlacements`** ([`voxelBlockPlacement.ts`](src/lib/voxel/voxelBlockPlacement.ts)).
+interface BuildingStyleDefinition {
+  readonly styleId: string;           // stable snake_case, e.g. "gothic_stone"
+  readonly displayName: string;
+  readonly description?: string;
+  readonly applicableFamilies: readonly BuildingFamilyId[];
+  readonly tags?: readonly string[];  // "gothic", "fortress", "fantasy", "stone_heavy"
 
-**Where to hook tests**
+  /** Default authoring hints — applied only when resolving style → blueprint (future) */
+  readonly defaultPalette?: Partial<BlueprintMaterials>; // classic keys only
+  readonly massingHints?: Partial<Pick<BlueprintMassing, "verticalEmphasis" | "symmetry">>;
+  readonly openingsHints?: Partial<Pick<BlueprintOpenings, "windowsStyle" | "entranceStyle" | "windowsPlacement" | "windowsFloors">>;
+  readonly roofHints?: Partial<Pick<BlueprintRoof, "style">>;
+  readonly featuresHints?: Partial<BlueprintFeatures>;
 
-- Extend **[`testUtils.ts`](src/lib/generation/__tests__/testUtils.ts)** with something like **`assertGeneratedPlacementSemantics(blocks)`** calling **`validateVoxelStructurePlacements`**, **or** add the assertion inline in preset + edge-case loops—keep diagnostics readable (`formatGeneratorInvariantDiagnostics` style).
+  /** Non-authoritative mood metadata for AI/docs */
+  readonly mood?: readonly ("bright" | "dark" | "austere" | "ornate")[];
+  readonly ornamentation?: "minimal" | "moderate" | "heavy";
+  readonly colorMood?: "warm" | "cold" | "neutral";
 
-**structureAnalysis:** Continue to assert **duplicate coordinates**, **registry IDs**, **connectivity**, **grounding** unchanged ([`GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md)). Partial shapes remain **one block per cell**; occupancy semantics unchanged.
+  /**
+   * Shapes a style *prefers* when generators support them — must still pass
+   * isShapeAllowedForBlockType at emission time.
+   */
+  readonly encouragedPartialShapes?: readonly ("pane" | "slab" | "post")[];
+}
+```
+
+**Design rules for the model**
+
+- **`styleId`** is stable across presets, AI prompts, and export metadata (future).
+- **`applicableFamilies`** prevents applying cottage palettes to tower generators.
+- **Hints** are defaults/overrides, not a second blueprint—merged only through an explicit resolver (later).
+- **Tags** support search and prompt grounding without encoding geometry.
+- Do **not** store connection flags, voxel coordinates, or texture paths in style records.
+
+**Preset linkage (no schema change)**
+
+```ts
+interface MedievalTowerPreset {
+  readonly id: string;
+  readonly label: string;
+  readonly blueprint: MedievalTowerBlueprint;
+  readonly styleId?: string; // references catalog — optional first slice
+}
+```
 
 ---
 
-## 9. Test plan
+## 5. Relationship to material metadata
 
-| Area | Intent |
-|------|--------|
-| **Preset invariants** | Existing [`generatorPresetInvariants.test.ts`](src/lib/generation/__tests__/generatorPresetInvariants.test.ts) still pass |
-| **Edge-case invariants** | Existing [`generatorEdgeCaseInvariants.test.ts`](src/lib/generation/__tests__/generatorEdgeCaseInvariants.test.ts) still pass |
-| **Placement semantics** | After `generateStructureFromResolved`, **`validateVoxelStructurePlacements(...).ok`** for every preset + edge-case fixture |
-| **Duplicates / registry** | Still enforced via **`analyzeVoxelStructure`** + existing hard invariants |
-| **At least one pane** | Assert **≥1** block with **`shapeKind === "pane"`** and valid **`state.axis`** for a preset known to have windows (e.g. default medieval preset or **`window_density_wide`**) — **or** conditional skip only when **`windowsPlacement === "none"`** / zero window cells |
-| **No disallowed material/shape** | Covered by **`validateVoxelStructurePlacements`** if wired everywhere |
-| **Blueprint surface** | No changes to [`MedievalTowerBlueprint`](src/lib/blueprints/types.ts), [`blueprintImportStructure`](src/lib/blueprints/blueprintImportStructure.ts), or import/export behavior |
+[`CLASSIC_MATERIAL_META`](src/lib/voxel/blocks/packs/classicMaterialMeta.ts) + [`materialMetaHelpers`](src/lib/voxel/blocks/materialMetaHelpers.ts) define **per-block** capabilities:
 
-**Avoid:** screenshot / browser tests.
+- `materialGroup`, `textureRole`, `tags`
+- `allowedShapeKinds` (cube / slab / pane / post)
+- Unannotated keys: **cube-only** for partial shapes
+
+**How style should use metadata**
+
+| Layer | Responsibility |
+|-------|----------------|
+| **Style** | Chooses palette keys and mood; may *prefer* pane windows when `window` resolves to glass. |
+| **Material metadata** | Authoritative on whether `shapeKind: "pane"` (etc.) is valid for a `blockTypeId`. |
+| **Generator** | Emits partials only when metadata + local policy agree (today: panes yes; trim slabs no). |
+| **Validation** | `validateVoxelStructurePlacements` must pass on all generator output. |
+
+**Style must not bypass metadata** — e.g. a “gothic stained glass” style cannot force `pane` on `oak_planks` without changing the window material or accepting cube fallback (existing `generatorWindowPanes` behavior).
+
+**Sufficiency for first style work**
+
+- **Sufficient** for catalog + preset tagging + AI vocabulary: current metadata covers glass (pane), common roof/accent stones (slab-capable), logs (post), planks (slab/post).
+- **Future expansion** (not this slice): more annotated keys, `materialVariation` bands, style-level “discouraged shapes” tied to generator policy tables (e.g. never slab adjacent to pane trim).
+
+**Lesson from trim slabs**
+
+- Metadata allowed slab on accent stones; generator used slabs; visual QA failed. **Style/catalog should document generator policy exclusions** separately from `allowedShapeKinds` until generator rules catch up.
 
 ---
 
-## 10. Visual inspection plan
+## 6. Relationship to blueprints
 
-- **`/preview` → Partial block showcase:** sanity-check renderer behavior for panes/slabs independent of the tower.
-- **`/preview` (preset towers)** and **`/visualizer`:** inspect **before/after** window façades (orbit same preset); panes should read thinner and slightly **different** silhouette—expect **style shift**, not “wrong mesh.”
-- Optional: capture informal screenshots for PR discussion—**not** automated regression.
+**Current schema** (`MedievalTowerBlueprint`): `structureType`, `metadata`, `dimensions`, `materials`, `massing`, `levels`, `openings`, `roof`, `features`, `constraints` — **no `style` field**.
+
+**Import/export** ([`BLUEPRINT_JSON_FORMAT.md`](docs/blueprints/BLUEPRINT_JSON_FORMAT.md)): envelope is `kind` + `schemaVersion` + `blueprint` only; lab source/preset tracking is UI-local.
+
+### Staged recommendation (aligned with milestone preference)
+
+| Stage | What | Schema impact |
+|-------|------|----------------|
+| **1 — Now (first implementation)** | **Style catalog module** + taxonomy docs in code; **optional `styleId` on preset wrapper**; map existing six presets to catalog entries. | **None** on `MedievalTowerBlueprint` |
+| **2 — Later** | **Style resolver**: `resolveStyleToBlueprintHints(styleId, family)` merges hints into a clone for lab/AI seeding. | Still none if resolver runs at UI/AI boundary |
+| **3 — Optional** | `metadata.styleId?: string` or top-level `styleId?: string` on blueprint | **Additive optional** field; bump `schemaVersion` when introduced |
+| **4 — Far** | Required style for multi-family AI | Only if product needs it |
+
+**Can style live in existing fields today?**
+
+Yes, partially:
+
+- `materials` ≈ palette
+- `massing.verticalEmphasis`, `openings.*`, `roof.*`, `features.*` ≈ detail profile
+- `metadata.name/description` ≈ human style label
+
+What is **missing** without a catalog: stable **`styleId`**, cross-preset vocabulary, AI grounding, and “apply gothic defaults” without hand-copying six slot groups.
+
+**Do not add a required blueprint field yet** — avoids locking import/export and validator before multiple families exist.
+
+---
+
+## 7. Relationship to generators
+
+**Today:** [`generateMedievalTower`](src/lib/generation/generators/generateMedievalTower.ts) reads only `ResolvedMedievalTower` — no style input.
+
+**Consumption patterns (staged)**
+
+1. **None (catalog only)** — style is documentation + preset tags; generator unchanged. **Lowest risk.**
+2. **Seed resolver (pre-generator)** — `applyStyleHints(styleId, blueprint) → blueprint` for lab defaults; user edits remain authoritative. Deterministic merge rules (hints fill **missing** slots only, or explicit `resetFromStyle` action).
+3. **Generator-internal style policy (later)** — family-specific tables: e.g. `medieval_tower` + `styleId` → window density caps, trim shape policy, parapet density. Must stay **deterministic** and tested.
+4. **Family adapters (future)** — `generateCottage(resolved, stylePolicy)` where `stylePolicy` is derived from catalog, not raw voxels.
+
+**What must remain deterministic**
+
+- Same validated blueprint (+ same generator version) → same `VoxelBlock[]`.
+- Merge priority by `(x,y,z)` unchanged unless a style policy is part of **validated** blueprint fields.
+- Partial emission gated by `isShapeAllowedForBlockType` + generator policy.
+
+**Current generator facts style must respect**
+
+- Pane windows: `paneAxisForWindowCell` + `isShapeAllowedForBlockType(m.window, "pane")`.
+- Façade trim: **full cube** at `yy±1` (no slabs).
+- No posts from accent trim path.
+
+---
+
+## 8. Relationship to AI
+
+Per [`GENERATION_DESIGN_PRINCIPLES.md`](docs/generation/GENERATION_DESIGN_PRINCIPLES.md) §1.3–§1.4 and blueprint catalog **Responsibility split**:
+
+**AI may propose**
+
+- `structureType` (family)
+- `styleId` or natural language mapped to catalog entry
+- Material palette (classic keys per slot)
+- Feature/opening preferences (arched vs simple, crenellations, window density)
+- Mood / ornamentation tags (Tier 5 catalog — narrative, not geometry)
+
+**AI must not**
+
+- Emit authoritative `VoxelBlock[]` streams
+- Bypass `validateBlueprint()` / `validateVoxelStructurePlacements`
+- Invent block keys outside `CLASSIC_BLOCK_PACK`
+
+**Suggested AI flow (future)**
+
+```text
+prompt → (family, styleId?, overrides) → style catalog defaults
+       → merge into blueprint draft → validateBlueprint → generateStructure
+```
+
+**Style catalog as prompt grounding**
+
+- Gives the model a **closed set** of `styleId` values with `applicableFamilies` and example palettes (from existing presets).
+- Reduces contradictory requests (“minecraft modern cottage” on `medieval_tower`) via validation notes.
+
+**Floor plans / interiors**
+
+- Documented as future blueprint semantics only; style system should **not** imply room layout until schema exists.
+
+---
+
+## 9. Recommended first implementation slice
+
+**Recommended path: B — Style catalog module without schema changes** (with light **preset `styleId` tagging**, which is preset-wrapper metadata, not blueprint schema).
+
+**Why not A alone**
+
+- Taxonomy-only in markdown drifts from code; catalog in `src/lib/` stays testable and powers preset tags + future resolver.
+
+**Why not D/E first**
+
+- Optional/required blueprint `styleId` affects import/export and validator versioning before multi-family proof.
+- Full **resolver** that overwrites user blueprints is easy to get wrong without UX for “reset from style”.
+
+**Why B fits constraints**
+
+- No blueprint schema / import-export change.
+- No generator behavior change in the first slice (preserves trim-cube + pane behavior and all invariant tests).
+- Maps 1:1 onto existing six presets as reference implementations.
+- Enables follow-up **E** (resolver) without committing schema.
+
+**First slice deliverables (implementation prompt after review)**
+
+1. `src/lib/generation/styles/` (or `src/lib/blueprints/buildingStyles.ts`):
+   - `BUILDING_STYLES` record keyed by `styleId`
+   - `getBuildingStyle(styleId)`, `stylesForFamily(familyId)`
+   - Six entries mirroring current presets (hints copied from actual blueprint snapshots)
+2. Add optional `styleId` to `MedievalTowerPreset` + set on each `MEDIEVAL_TOWER_PRESETS` entry.
+3. Vitest: unique ids, families include `medieval_tower`, palette keys ∈ `CLASSIC_BLOCK_PACK`, no generator output change (existing suites unchanged).
+4. **Do not** wire catalog into `generateMedievalTower` yet.
+
+**Optional micro-doc** (only if team wants): short “Style catalog” subsection in `GENERATION_DESIGN_PRINCIPLES.md` — **defer** unless requested; this plan is the source of truth until implementation.
+
+---
+
+## 10. Tests and validation strategy
+
+**If first slice is catalog + preset tags (recommended)**
+
+| Test | Purpose |
+|------|---------|
+| `styleId` uniqueness | No duplicate keys in `BUILDING_STYLES` |
+| `applicableFamilies` | Each style lists `medieval_tower` for current catalog |
+| Palette keys resolvable | Every `defaultPalette` key passes `isClassicKey` / registry |
+| Hint enums valid | `verticalEmphasis`, `windowsStyle`, etc. match blueprint unions |
+| Preset ↔ style | Each `MEDIEVAL_TOWER_PRESETS[].styleId` references catalog |
+| **Regression** | Existing `generatorPresetInvariants`, `generatorEdgeCaseInvariants`, `generatorWindowPanes` unchanged (no generator edits) |
+
+**Not needed in catalog-only slice**
+
+- Snapshot voxel counts per style
+- Visual regression infrastructure
+
+**When resolver (stage 2) ships**
+
+- Unit tests: `applyStyleHints` merge rules, idempotent on full blueprint, `validateBlueprint` ok
+- Optional: cloned blueprint gets expected materials after `styleId` only
+
+**When generator consumes style (stage 3+)**
+
+- Extend `assertGeneratedStructurePlacementSemantics` per style policy fixtures
+- Never rely on VoxelViewer skip/warn
 
 ---
 
 ## 11. Non-goals
 
-- New textures, generated assets, or **`CLASSIC_BLOCK_PACK`** edits  
-- New building families  
-- Connection-aware fences / walls / bars / panes (see backlog)  
-- Doors / stairs / plants / lanterns / signs as new **shapeKind**s  
-- Minecraft export  
-- Blueprint schema / preset JSON / import-export format changes  
-- Large tower visual redesign  
-- Visual regression infrastructure  
-- **`mergePlacements`** priority overhaul without cause  
+- No new textures; no texture generation
+- No new block definitions in `CLASSIC_BLOCK_PACK`
+- No new building families or generators beyond `medieval_tower`
+- No blueprint schema change in the first slice
+- No blueprint import/export format change
+- No curated preset **blueprint body** changes unless fixing a catalog typo (prefer snapshot fidelity)
+- No interiors / floor plans / room schema
+- No AI agent implementation or prompt pipeline
+- No Minecraft export / compatibility mode
+- No connection-aware blocks (fences, walls, bars, connection-aware panes)
+- No new partial shape kinds; no doors, stairs, plants, lanterns, signs
+- No broad medieval tower generator redesign
+- No reintroduction of window-adjacent **slab** trim without explicit visual policy
+- No post adoption in tower generator from style defaults
+- No `/preview` or `/visualizer` changes unless TypeScript requires imports for preset `styleId` display (defer UI)
+- No visual regression / screenshot CI
+- No edits to `docs/blocks/BLOCK_SYSTEM_BACKLOG.md` in the first slice
 
 ---
 
-## 12. Recommended implementation slice (next coding prompt)
+## 12. Risks and open questions
 
-Single-reviewable commit sequence:
+| Risk | Mitigation |
+|------|------------|
+| Style taxonomy too abstract to drive geometry | Anchor each style to a **real preset snapshot**; hints are copies, not imagination |
+| Early blueprint `styleId` locks wrong model | Defer schema; use preset + catalog only first |
+| Style vs material palette overlap | Style owns **defaults**; blueprint `materials` remain authoritative after edit |
+| Generator interprets style differently per family | Keep family-specific **policy tables** separate from global catalog |
+| Six presets “enough” styles | Catalog can list **theoretical** styles with `referencePresetId` optional; only six need full hints initially |
+| User-facing vs internal | First slice **internal** (preset tags, tests); UI label “Style: Gothic Stone” can wait |
+| AI maps vague prompts to wrong `styleId` | Closed enum + validator notes; require `structureType` match |
+| Encouraged partial shapes vs generator policy | Catalog `encouragedPartialShapes` is non-binding until generator tables exist; document trim/slab exclusion |
+| Style resolver overwrites user edits | Merge only empty slots, or explicit “Apply style defaults” action |
+| Multi-family future | `applicableFamilies` on each style; blacksmith styles must not appear on tower validator paths |
 
-1. **Extend internal placement record + [`mergePlacements`](src/lib/generation/generators/generateMedievalTower.ts)** to carry optional **`shapeKind` / `state`** into **`VoxelBlock`** (default **cube** behavior unchanged).
-2. **Window cells only:** when emitting **`PRI.WINDOW`**, if **`isShapeAllowedForBlockType(m.window, "pane")`**, set **`pane`** + **`axis`** from §5; else legacy cube.
-3. **Unit-level helper:** **`paneAxisForWindowCell(lx, lz, W, D)`** (pure) + brief comment referencing façade conventions.
-4. **Tests:** **`validateVoxelStructurePlacements`** on all **`MEDIEVAL_TOWER_PRESETS`** + edge-case fixtures; assertion that some generated structure includes **≥1** pane where windows exist; keep **`assertGeneratedStructureHardInvariants`**.
-5. **Docs (optional but small):** One paragraph in [`GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md) noting **placement semantics** checks; optionally cross-link [`GENERATION_DESIGN_PRINCIPLES.md`](docs/generation/GENERATION_DESIGN_PRINCIPLES.md) § readability vs automated checks.
+**Open questions for review**
 
-**Separate small PR (optional):** annotate **`limestone`**, **`mudstone`**, **`andesite`**, **`schist`** (conservative **`slab`** where desired) **before** Phase B trim slabs—or implement Phase B with strict metadata gating only.
-
-**Do not** touch **`/visualizer`** wiring beyond whatever existing flows already do.
-
----
-
-## 13. Risks and open questions
-
-- **Visual shift:** Panes may look **more “open”** or expose interior emptiness differently than solid glass cubes—acceptable for Phase A but worth designer glance.  
-- **Slab collisions:** Phase B trim slabs could interact oddly with **portal**, **arch**, or **corner** geometry if **`y`** keys overlap—needs careful diff review.  
-- **Merge surprises:** Lower-priority partial could still lose if another placement shares a cell—always **replace**, don’t double-push.  
-- **Unannotated materials:** Random **`window`** classic keys force **cube fallback**; tests should still pass.  
-- **Test harness:** Reliability suite should stay fast; one **`validateVoxelStructurePlacements`** pass per fixture is cheap.  
-- **Occupancy / connectivity:** **`analyzeVoxelStructure`** still treats each cell as occupied—**pane** does not create “holes” in lattice logic—interior void remains blueprint/generator responsibility.  
-- **Interior readability:** More transparent windows may expose hollow-shell staging—note for [`GENERATION_DESIGN_PRINCIPLES.md`](docs/generation/GENERATION_DESIGN_PRINCIPLES.md) readability discussion, not this slice’s fix.  
-- **Backlog hygiene:** Keep **`BLOCK_SYSTEM_BACKLOG.md`** connection-aware **pane** ideas separate from this **axis-from-wall** generator rule—implementation comments should say **“not connection-aware.”**
+1. Should `styleId` equal preset id (`gothic_stone`) or be decoupled (`gothic_stone_tower` vs preset `gothic_stone`)?
+2. When schema gains `styleId`, does it live on `metadata` or top-level?
+3. Should catalog include **anti-patterns** (e.g. “do not use slab trim near panes”) for generator stage 3?
+4. Is a separate `materialPaletteId` needed, or is `defaultPalette` enough?
+5. How will style interact with future **floor-plan zones** (forge style → forge room hint)?
 
 ---
 

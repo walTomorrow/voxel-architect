@@ -61,6 +61,12 @@ A future blueprint extension might describe floors, rooms, zones, purposes (forg
 
 The active pipeline is **`MedievalTowerBlueprint` → `validateBlueprint()` → `generateStructureFromResolved()` → `generateMedievalTower()` → `VoxelBlock[]`**. It emphasizes **exterior mass**, shell, openings, roof/crown, and decorative detail. Hollow interiors and sparse interior floors exist in **limited** form; there is **no full interior layout or room graph** yet. Partial shapes today: **cube / slab / pane / post**; tower windows may emit **pane** when material-compatible.
 
+### 1.6 Building style catalog (metadata only)
+
+[`src/lib/generation/styles/buildingStyles.ts`](../../src/lib/generation/styles/buildingStyles.ts) defines **building styles** as reusable aesthetic vocabulary (material palettes, opening/roof/feature hints, tags, mood). Curated **`MEDIEVAL_TOWER_PRESETS`** may reference a **`styleId`** on the **preset wrapper** only.
+
+This catalog is **metadata for future AI and style resolution** — it is **not** a blueprint schema field, does **not** change blueprint import/export, and is **not** consumed by generators yet. Authoritative generation input remains the validated **`MedievalTowerBlueprint`** snapshot on each preset.
+
 ---
 
 # 2. Foundational Principles
