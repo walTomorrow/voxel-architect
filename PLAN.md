@@ -1,4 +1,4 @@
-# Plan — Architectural Component Grammar Pivot
+# Plan — Internal Architectural Component Plan
 
 **Scoping only — waiting for review before implementation.**
 
@@ -6,559 +6,536 @@
 
 ## 1. Purpose
 
-Generator Expansion validated that **multiple building families** can ship behind a shared pipeline (`StructureBlueprint` → `validateBlueprint` → `generateStructureFromResolved` → `VoxelBlock[]` → invariants). That work is valuable. The **next risk** is treating the long-term ~30-family taxonomy as a mandate for **~30 independent generator codebases**, each re-implementing shells, roofs, entrances, windows, chimneys, and interior placeholders.
+Generator Expansion has two shipped families (`medieval_tower`, `blacksmith_workshop`) behind a stable pipeline: **family blueprint → validator → monolithic family generator → merged placements → `VoxelBlock[]` → invariants**. Neutral shared helpers (`placementUtils`, `paneAxis`) now exist; cottage one-off WIP was reverted.
 
-We are **pivoting the implementation strategy**, not abandoning families.
+The **next step** is an **internal architectural component plan** layer — not a new public schema, not a wave of new families, and not AI runtime.
 
-| Concept | Role after pivot |
-|--------|-------------------|
-| **Building family** | Supported **semantic recipe** — which components, in what configuration, for which product entrypoints (presets, future AI classification) |
-| **Architectural component** | Reusable **deterministic geometry module** (foundation, hollow shell, pitched roof, entrance, window pattern, chimney, interior zone stub, etc.) |
-| **Style** | Material / detail / aesthetic overlay on top of a recipe (still metadata-first until a resolver exists) |
-| **Preset** | Concrete curated blueprint snapshot (or near-resolved example) for preview and tests |
+| We are doing | We are not doing |
+|--------------|------------------|
+| Defining **reusable deterministic components** (foundation, shell, roof, openings, zones) | Abandoning **building families** as the product/AI vocabulary |
+| Compiling **family recipes** into an internal **`ComponentPlan`** | Exposing **component graphs** in blueprint JSON or `/visualizer` |
+| Centralizing **merge/grounding** via existing `placementUtils` | Letting AI or users author **raw voxel** or unconstrained component DAGs |
+| Reducing duplication before the next family ships | Rewriting **medieval_tower** in the same slice |
 
-**Core principle:** AI (later) reasons about **intent, constraints, style, and components**. **Deterministic code** emits geometry. AI must **not** place individual blocks or output raw voxel coordinates as the authoritative plan.
+**Why now**
 
-**Why pivot now**
+- `blacksmith_workshop` and the aborted `cottage_house` path share the same rectangular grammar (foundation → hollow shell → openings → roof → chimney → y=1 zones). A third copy would repeat bugs and PRI constants.
+- Validators and presets already express **semantic intent**; generators should compile that intent into **components**, not re-encode it as nested loops per family.
+- Strong validation stays at the **blueprint/resolver** boundary; the component plan is a **deterministic IR** between resolved blueprint and geometry.
 
-- **Duplicated logic:** `blacksmith_workshop` already mirrors rectangular-shell patterns that would repeat for `cottage_house`, `tavern_inn`, `market_shopfront`, etc.
-- **Generic boxes:** Copy-paste family generators converge on “hollow rect + roof + door + windows” without shared composition rules.
-- **Weak versatility:** Changing window rhythm or roof type across families requires N edits, not one component.
-- **Brittle validation:** Each family adds another parallel schema + validator + test matrix.
-- **Hard-to-scale AI mapping:** A 30-way `structureType` switch does not give models a stable vocabulary of **semantic parts** to target.
-- **Interrupted cottage WIP** is a warning sign: a third near-duplicate generator was in flight before the abstraction boundary was defined.
+**Core principle (unchanged)**
 
-The ~30-family taxonomy remains useful for **classification, coverage planning, and product language**. It must **not** imply ~30 isolated `generateFoo.ts` monoliths.
-
-**Intended pipeline (target architecture)**
-
-```text
-user intent / future AI
-  → supported family + style + constraints
-  → architectural component recipe (component plan)
-  → deterministic component generators
-  → merge / resolve placements
-  → VoxelBlock[]
-  → validation + preview
-```
+AI reasons about **intent, constraints, style, and components**. Deterministic code generates geometry. AI must not place individual blocks.
 
 ---
 
-## 2. Current working tree / interrupted cottage inventory
+## 2. Current baseline
 
-**Branch:** `milestone/generator-expansion`  
-**Inspection date:** working tree with **uncommitted** cottage Batch A WIP (implementation paused mid-run).  
-**`CHANGE.md`:** not modified by WIP (still describes blacksmith `/preview` integration only).  
-**Docs under `docs/`:** not modified by WIP (still describe two shipped families; blacksmith “library/tests only, no lab UI” is **stale** relative to shipped `/preview` tabs).  
-**Generator tests:** `buildingFamilies.test.ts` **not** updated (still expects 2 families) while `buildingFamilies.ts` WIP registers 3 — **test/catalog mismatch** if WIP were committed as-is.
+### Shipped families and pipeline
 
-### `git status --short` (summary)
+| Family | Blueprint | Validator | Generator | Presets | Preview |
+|--------|-----------|-----------|-----------|---------|---------|
+| `medieval_tower` | `MedievalTowerBlueprint` | `validateMedievalTowerBlueprint` in `validateBlueprint.ts` | `generateMedievalTower.ts` | 6 in `sampleBlueprints.ts` | **Towers** tab |
+| `blacksmith_workshop` | `BlacksmithWorkshopBlueprint` | `validateBlacksmithWorkshop.ts` | `generateBlacksmithWorkshop.ts` | 2 in `sampleBlacksmithBlueprints.ts` | **Blacksmith** tab |
 
-**Modified (10 files)**
+- **Dispatch:** `generateStructure.ts` → `generateStructureFromResolved` switches on `structureType` (two cases only).
+- **Unions:** `StructureBlueprint`, `ResolvedStructure` — tower \| blacksmith only.
+- **Catalog:** `BUILDING_FAMILIES` — two entries, both `shipped`.
 
-| Path | Summary |
-|------|---------|
-| `PLAN.md` | Replaced with Wave 2 Batch A plan (superseded by this document) |
-| `src/lib/blueprints/types.ts` | `cottage_house` + `CottageHouseBlueprint` / `ResolvedCottageHouse` unions |
-| `src/lib/blueprints/validateBlueprint.ts` | Import + `case "cottage_house"` |
-| `src/lib/generation/generateStructure.ts` | `generateCottageHouse` dispatch |
-| `src/lib/generation/families/buildingFamilies.ts` | `cottage_house` as **shipped** |
-| `src/lib/generation/generators/generateMedievalTower.ts` | Imports shared `placementUtils` + `paneAxis`; removed local helpers |
-| `src/lib/generation/generators/generateBlacksmithWorkshop.ts` | Same helper extraction |
-| `src/lib/generation/__tests__/generatorWindowPanes.test.ts` | `paneAxis` import path → `facade/paneAxis` |
-| `src/app/preview/PreviewInspectionClient.tsx` | Presets/Partials mode + family/preset dropdowns (includes cottage) |
-| `src/components/voxel/StructureInspectionPanel.tsx` | `PreviewLabMode`, family dropdown, two-way source toggle |
+### Preview and tooling
 
-**Untracked (new)**
+| Surface | State |
+|---------|--------|
+| `/preview` | **Towers \| Blacksmith \| Partials**; default Towers / `northwatch`; validate → generate → `VoxelViewer`; partial showcase = static `PARTIAL_BLOCK_SHOWCASE_STRUCTURE` |
+| `/visualizer` | **Tower-only** authoring (unchanged) |
+| `blueprintExchange` | **v1, tower-only** envelope (`MedievalTowerBlueprint`) |
+| Import/export v2 | **Not implemented** |
 
-| Path | Summary |
-|------|---------|
-| `src/lib/generation/placement/placementUtils.ts` | `mergePlacements`, `filterGrounded`, `centerOrigin`, `GeneratorPlacement` |
-| `src/lib/generation/facade/paneAxis.ts` | `paneAxisForWindowCell` |
-| `src/lib/generation/__tests__/placementUtils.test.ts` | Unit tests for helpers |
-| `src/lib/blueprints/validateCottageHouse.ts` | Cottage validator |
-| `src/lib/blueprints/sampleCottageBlueprints.ts` | `rustic_cottage`, `forest_cabin` presets |
-| `src/lib/generation/generators/generateCottageHouse.ts` | Cottage generator (~blacksmith-shaped) |
-| `src/app/preview/previewGeneratorFamilies.ts` | Preview registry wiring tower + blacksmith + cottage |
-| `src/lib/generation/__tests__/generatorCottagePresetInvariants.test.ts` | Preset invariants |
-| `src/lib/generation/__tests__/generatorCottageEdgeCaseInvariants.test.ts` | Edge fixtures |
-| `src/lib/generation/__tests__/generatorCottagePanes.test.ts` | Pane + smoke |
-| `src/lib/generation/__tests__/fixtures/cottageEdgeCaseBlueprints.ts` | Edge blueprints |
+### Style catalog
 
-**Not touched by WIP:** `CHANGE.md`, `docs/**` (except this `PLAN.md` overwrite), `blueprintExchange.ts`, `/visualizer`, `buildingFamilies.test.ts`, tower/blacksmith preset bodies, `sampleBlueprints.ts`, `sampleBlacksmithBlueprints.ts`.
+- `buildingStyles.ts` — metadata for `medieval_tower` presets (`styleId` on preset wrapper only).
+- **No style resolver**; generators do not read styles.
 
-### Per-file classification
+### Helper extraction (landed)
 
-| File | Class | Notes |
-|------|-------|-------|
-| `PLAN.md` (prior Wave 2 content) | **D** | Superseded; safe to overwrite (this doc) |
-| `src/lib/blueprints/types.ts` | **C** | Full cottage schema on unions |
-| `src/lib/blueprints/validateBlueprint.ts` | **C** | Cottage routing |
-| `src/lib/blueprints/validateCottageHouse.ts` | **C** | Untracked; complete-looking validator |
-| `src/lib/blueprints/sampleCottageBlueprints.ts` | **C** | Untracked; 2 presets |
-| `src/lib/generation/generators/generateCottageHouse.ts` | **C** | Untracked; duplicate of blacksmith grammar |
-| `src/lib/generation/generateStructure.ts` | **C** | Cottage dispatch |
-| `src/lib/generation/families/buildingFamilies.ts` | **C** | Registers cottage as shipped |
-| `src/lib/generation/__tests__/generatorCottage*.ts` | **C** | Untracked cottage tests |
-| `src/lib/generation/__tests__/fixtures/cottageEdgeCaseBlueprints.ts` | **C** | Untracked |
-| `src/app/preview/previewGeneratorFamilies.ts` | **C** | Cottage in preview registry |
-| `src/app/preview/PreviewInspectionClient.tsx` | **C / D** | Family dropdown refactor **bundled** with cottage; revert cottage wiring; **re-plan** preview scaling separately |
-| `src/components/voxel/StructureInspectionPanel.tsx` | **C / D** | Same — API change tied to cottage preview |
-| `src/lib/generation/placement/placementUtils.ts` | **B** | Behavior-neutral extraction candidate |
-| `src/lib/generation/facade/paneAxis.ts` | **B** | Behavior-neutral extraction candidate |
-| `src/lib/generation/generators/generateMedievalTower.ts` | **B** | Imports shared helpers only (if helpers kept) |
-| `src/lib/generation/generators/generateBlacksmithWorkshop.ts` | **B** | Same |
-| `src/lib/generation/__tests__/generatorWindowPanes.test.ts` | **B** | Import path only (if `paneAxis` kept) |
-| `src/lib/generation/__tests__/placementUtils.test.ts` | **B** | New tests for helpers (optional in helper-only slice) |
-| `buildingFamilies.test.ts` (unchanged) | **E** | Would fail against WIP catalog — evidence WIP incomplete |
+| Module | Role |
+|--------|------|
+| `src/lib/generation/placement/placementUtils.ts` | `GeneratorPlacement`, `centerOrigin`, `mergePlacements`, `filterGrounded` |
+| `src/lib/generation/facade/paneAxis.ts` | `paneAxisForWindowCell` (non–connection-aware) |
+| `src/lib/generation/__tests__/placementUtils.test.ts` | 6 unit tests |
 
-**No automatic reverts in this task.** Recommendations only (§3).
+Tower and blacksmith generators **import** these modules; output intended **unchanged** (verified in slice B: 79 generator tests, `tsc`, `build`).
+
+### Tests and invariants
+
+- Shared: `testUtils.ts` — `assertGeneratedStructureHardInvariants`, `assertGeneratedStructurePlacementSemantics`.
+- Per family: preset suites, edge fixtures, blacksmith panes; tower window panes.
+- Hard invariants: single 26-component, grounded, no duplicate coords, `maxBlockCount`, valid block IDs.
+
+### Ready vs not ready for component plan
+
+| Ready | Not ready |
+|-------|-----------|
+| Resolved blueprints with `grid` (W, D, bodyLayers, roofLayers) | `ComponentPlan` / component types |
+| Shared merge + grounding | Family → plan compilers |
+| Blacksmith as rectilinear reference implementation | Component generator modules |
+| Pane axis helper for façade windows | Public component schema |
+| PRI bands proven in blacksmith | Cross-family priority registry |
+| Validator-estimated `maxBlockCount` | Per-component budget accounting |
+
+### Cottage residue
+
+No `cottage_house` in `src/` except `buildingFamilies.test.ts` expecting `getBuildingFamily("cottage")` undefined.
 
 ---
 
-## 3. Revert recommendation
-
-### Goal
-
-Return the branch to **two shipped families** (`medieval_tower`, `blacksmith_workshop`) and **known-good preview** (Towers | Blacksmith | Partials), then pursue component grammar on a clean base.
-
-### Revert — delete untracked cottage + helper test files
+## 3. Target mental model
 
 ```text
-src/lib/blueprints/validateCottageHouse.ts
-src/lib/blueprints/sampleCottageBlueprints.ts
-src/lib/generation/generators/generateCottageHouse.ts
-src/app/preview/previewGeneratorFamilies.ts
-src/lib/generation/__tests__/generatorCottagePresetInvariants.test.ts
-src/lib/generation/__tests__/generatorCottageEdgeCaseInvariants.test.ts
-src/lib/generation/__tests__/generatorCottagePanes.test.ts
-src/lib/generation/__tests__/fixtures/cottageEdgeCaseBlueprints.ts
-```
-
-**Optional (if reverting helper extraction too):**
-
-```text
-src/lib/generation/placement/placementUtils.ts
-src/lib/generation/facade/paneAxis.ts
-src/lib/generation/__tests__/placementUtils.test.ts
-```
-
-### Revert — restore modified files to `HEAD`
-
-```text
-src/lib/blueprints/types.ts
-src/lib/blueprints/validateBlueprint.ts
-src/lib/generation/generateStructure.ts
-src/lib/generation/families/buildingFamilies.ts
-src/lib/generation/generators/generateMedievalTower.ts
-src/lib/generation/generators/generateBlacksmithWorkshop.ts
-src/lib/generation/__tests__/generatorWindowPanes.test.ts
-src/app/preview/PreviewInspectionClient.tsx
-src/components/voxel/StructureInspectionPanel.tsx
-```
-
-(`PLAN.md` is intentionally overwritten by this planning doc, not reverted to Wave 2.)
-
-### Do **not** revert (unchanged at HEAD)
-
-- Tower/blacksmith preset bodies, validators (except routing), `blueprintExchange`, `/visualizer`, docs, `CHANGE.md`.
-
-### Salvage later (clean slice, not from messy WIP commit)
-
-| Item | Action |
-|------|--------|
-| `mergePlacements`, `filterGrounded`, `centerOrigin` | Re-extract in **Stage 1** with tower/blacksmith parity tests |
-| `paneAxisForWindowCell` | Move to `generation/facade/paneAxis.ts`; update pane tests import |
-| Preview family + preset dropdowns | Re-implement **without** cottage; registry local to `/preview` |
-| Cottage family | **Do not** reintroduce as one-off generator; implement as **first component-recipe family** after internal `ComponentPlan` exists |
-
----
-
-## 4. Revised architecture: component grammar over family recipes
-
-```text
-Blueprint / future AI intent
-  → family recipe (which components + params)
-  → component plan (validated, ordered)
-  → deterministic component generators (each → Placement[] or VoxelBlock[])
-  → mergePlacements + filterGrounded
-  → VoxelBlock[]
-  → validateVoxelStructurePlacements + structure invariants
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│ Blueprint       │────▶│ Resolved         │────▶│ Family recipe   │
+│ (authoring)     │     │ blueprint        │     │ (compile step)  │
+└─────────────────┘     └──────────────────┘     └────────┬────────┘
+                                                          │
+                                                          ▼
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│ VoxelBlock[]    │◀────│ mergePlacements  │◀────│ Component plan  │
+│ + invariants    │     │ filterGrounded   │     │ (internal IR)   │
+└─────────────────┘     └──────────────────┘     └────────┬────────┘
+                                                          │
+                        ┌─────────────────────────────────┴─────────────────────────────────┐
+                        ▼                 ▼                 ▼                 ▼                 ▼
+                   foundation      hollow_wall_shell   openings/roof    chimney/zones    (ordered)
+                        │                 │                 │                 │
+                        └─────────────────┴─────────────────┴─────────────────┘
+                                              │
+                                    Component generators
+                                    (deterministic → Placement[])
 ```
 
 | Layer | Responsibility |
 |-------|----------------|
-| **Architectural component** | Named semantic module with typed params (e.g. `hollow_wall_shell`, `pitched_gable_roof`). Emits staged placements. |
-| **Family recipe** | Curated list/configuration of components for a product-supported family (e.g. blacksmith = rect body + shell + roof + entrance + windows + chimney + forge/workbench/storage zones). |
-| **Style** | Material palette, opening density, roof accent hints — applied when resolving materials or component params (future resolver). |
-| **Preset** | Hand-authored or validated blueprint that compiles to a component plan (directly or via family validator). |
+| **Blueprint** | Authoring-time family-specific JSON-shaped fields (material keys, dimensions, features). |
+| **Resolved blueprint** | Validated, normalized: registry `BlockTypeId`s, integer `grid`, clamped enums. **Authority for presets and future AI targets.** |
+| **Family recipe** | Curated mapping: “for `blacksmith_workshop`, emit these components with these params.” Code-first in v1; not user-editable. |
+| **Component plan** | Internal ordered list of **component instances** + shared **footprint context** (W, D, H, origins, materials, constraints). |
+| **Architectural component** | Discriminated union entry: `kind` + typed params (e.g. `sparse_windows: { count, placement, yPolicy }`). |
+| **Component generator** | Pure function: `(plan context, component instance) → GeneratorPlacement[]`. No merge inside component. |
+| **Placement merge** | Single `mergePlacements` at end; optional `filterGrounded` per constraints. |
+| **VoxelBlock output** | What preview and analysis consume today. |
+| **Validation / invariants** | Blueprint validation (pre-plan); placement semantics + structure analysis (post-merge). |
 
-Families are **not** giant `switch` bodies that place every block. They are **orchestrators** that build a `ComponentPlan` and run shared generators.
-
----
-
-## 5. Candidate architectural component vocabulary
-
-Near-term vocabulary (implement gradually). **Deferred** items are catalogued for taxonomy alignment, not immediate code.
-
-### Massing
-
-| Component | Produces | Families (examples) | When | New blocks? |
-|-----------|----------|---------------------|------|-------------|
-| `rectangular_body` | Footprint + vertical budget, origin centering | blacksmith, cottage, tavern, market | **Soon** | No |
-| `tower_volume` | Square/round vertical prism, level stack | medieval_tower | **Soon** (extract from tower) | No |
-| `hall_volume` | Long narrow mass | chapel, barn | Defer | No |
-| `attached_bay` | Side extension volume | L-plan houses | Defer | No |
-| `courtyard_shell` | U/O perimeter | monastery, market | Later | No |
-
-### Shell
-
-| Component | Produces | Families | When | New blocks? |
-|-----------|----------|----------|------|-------------|
-| `foundation` | y=0 floor grid | rect families | **Soon** | No |
-| `floor_layer` | Interior y=1 floor | hollow rect | **Soon** | No |
-| `hollow_wall_shell` | Perimeter walls, door/window apertures | blacksmith, cottage, many | **Soon** | No (pane optional) |
-| `partition_stub` | Interior wall segment | tavern, house | Defer | No |
-
-### Roofs
-
-| Component | Produces | Families | When | New blocks? |
-|-----------|----------|----------|------|-------------|
-| `pitched_gable_roof` | Layered perimeter ring shrink | tower crown variant, blacksmith, cottage | **Soon** | No |
-| `shed_roof` | Single-slope layers | blacksmith, cottage, warehouse | **Soon** | No |
-| `flat_roof` | Single cap layer | modern/industrial | Defer | No |
-| `stepped_roof` | Pyramid steps | tower | Exists in tower | No |
-| `spire_or_steeple` | Vertical accent | chapel | Defer | No |
-
-### Openings
-
-| Component | Produces | Families | When | New blocks? |
-|-----------|----------|----------|------|-------------|
-| `front_entrance` | Door row on chosen face | most | **Soon** | No |
-| `side_entrance` | Door on left/right/back | workshop, barn | Soon | No |
-| `sparse_windows` | Count-based columns, pane-aware | blacksmith, cottage | **Soon** | No |
-| `window_band` | Horizontal run | tavern, market | Defer | No |
-| `large_double_door` | Wide aperture | barn, hangar | Defer | No |
-| `tall_feature_window` | Single tall opening | chapel | Defer | No |
-
-### Details
-
-| Component | Produces | Families | When | New blocks? |
-|-----------|----------|----------|------|-------------|
-| `chimney` | Wall-adjacent stack | blacksmith, cottage | **Soon** | No |
-| `porch_front_step` | Low connected pad outside door | cottage | Soon | No |
-| `awning` | Overhang blocks | market, tavern | Defer | No |
-| `sign_marker` | Accent plaque | tavern, shop | Defer | No |
-| `steeple_stub` | Small roof peak | chapel | Defer | No |
-| `crenellation_crown` | Merlons/parapet | medieval_tower | Exists | No |
-| `buttress_stub` | Corner mass | cathedral | Later | No |
-
-### Interior semantic zones (floor y=1 placeholders, not room graphs)
-
-| Component | Produces | Families | When | New blocks? |
-|-----------|----------|----------|------|-------------|
-| `hearth_zone` | Accent cluster | cottage | Soon | No |
-| `forge_zone` | Accent + neighbors | blacksmith | **Soon** (extract) | No |
-| `workbench_zone` | Door/accent row | blacksmith | Soon | No |
-| `storage_zone` | Corner stacks | blacksmith | Soon | No |
-| `common_room_zone` | Open floor hint | tavern | Defer | No |
-| `altar_zone` | Center accent | chapel | Defer | No |
-| `stall_zone` | Repeated bays | market | Defer | No |
+**Style (later)** overlays material/param hints on compile; not in first slice.
 
 ---
 
-## 6. How existing families map to components
+## 4. Non-goals for the first component-plan slice
 
-### `medieval_tower` (today: monolithic `generateMedievalTower.ts`)
-
-| Today (conceptual) | Future component |
-|--------------------|------------------|
-| Square footprint, centered origin | `tower_volume` |
-| Foundation + per-level floors | `foundation`, `floor_layer` (per level) |
-| Hollow or solid shell by level | `hollow_wall_shell` (level-aware) |
-| Window columns + pane axis | `sparse_windows` / tower-specific `window_columns` |
-| Door / entrance arch | `front_entrance` + tower portal accents |
-| Roof crown (stepped/pyramid) | `stepped_roof` or `pitched_gable_roof` variant |
-| Crenellations, corner pillars, caps | `crenellation_crown`, corner detail components |
-| Parapet, merlons | Part of crown component |
-
-**Stay family-specific longer:** level bands, defensive rhythm, corner pillar grammar, crown/merlon interplay (tower identity).
-
-**Extract first:** placement merge/grounding (done in WIP), pane axis, possibly foundation + window pane emission patterns shared with rect families.
-
-### `blacksmith_workshop` (today: monolithic `generateBlacksmithWorkshop.ts`)
-
-| Today | Future component |
-|-------|------------------|
-| W×D×H budget, centered | `rectangular_body` |
-| y=0 fill | `foundation` |
-| Perimeter loop + hollow void | `hollow_wall_shell` |
-| Pitched/shed caps | `pitched_gable_roof` / `shed_roof` |
-| Entrance + door | `front_entrance` |
-| Window sets | `sparse_windows` |
-| Chimney column | `chimney` |
-| Forge / bench / storage | `forge_zone`, `workbench_zone`, `storage_zone` |
-
-**Good first internal refactor target:** blacksmith is self-contained, preview-approved, and mostly rectilinear — but it is **already shipped and demo-stable**. Prefer **extracting components from blacksmith logic** without changing external blueprint schema initially.
-
-### Overlap warning
-
-Cottage WIP duplicated ~90% of blacksmith. That duplication is exactly what the component grammar prevents.
+- Public **component blueprint JSON** schema or import/export fields
+- User-authored **arbitrary component graphs**
+- **AI / photo runtime**
+- **Image input**
+- **`floorPlan` / rooms / circulation** schema
+- **`/visualizer` rewrite**
+- **Import/export v2**
+- **New building family** (including `cottage_house`)
+- **All Wave 2** families
+- **Style resolver** or new style IDs
+- **New textures / block definitions**
+- **Connection-aware** blocks or panes
+- **New partial shape kinds**
+- **Minecraft export**
+- **Medieval tower refactor** to component generators (unless explicitly scoped later)
+- **Runtime AI-invented** families or components
 
 ---
 
-## 7. Family recipe model
+## 5. ComponentPlan type design
 
-### Conceptual recipes (not implemented)
+### Design principles (v1)
 
-**`blacksmith_workshop`**
+- **Small** discriminated union; no generic graph executor.
+- **Footprint on plan**, not as a “component” that emits blocks (see below).
+- **Instance id** on each component for tests/debug (`"foundation"`, `"shell"`, `"roof-0"`).
+- **Materials and constraints** on plan context, referenced by generators.
+- **No voxels in plan** — only semantic params.
 
-```text
-rectangular_body
-hollow_wall_shell
-pitched_or_shed_roof   # param from blueprint.roof.style
-front_entrance
-sparse_windows
-chimney
-forge_zone
-workbench_zone
-storage_zone
-```
-
-**`cottage_house` (future, component-based — not one-off generator)**
-
-```text
-rectangular_body
-hollow_wall_shell
-pitched_gable_roof | shed_roof
-front_entrance
-sparse_windows
-chimney
-hearth_zone
-porch_front_step   # optional
-```
-
-**`tavern_inn` (deferred)**
-
-```text
-rectangular_body
-optional_second_story   # later massing component
-pitched_gable_roof
-wide_front_facade
-window_band
-sign_marker
-common_room_zone
-```
-
-**`temple_chapel_shrine` (deferred)**
-
-```text
-hall_volume
-pitched_gable_roof
-centered_front_entrance
-tall_feature_window
-steeple_stub
-altar_zone
-```
-
-### Recipe representation — staged recommendation
-
-| Stage | Representation |
-|-------|----------------|
-| **Now** | Code-only family orchestrators (current generators) |
-| **Stage 2** | Internal TypeScript `ComponentPlan` + `compileFamilyRecipe(familyId, resolvedBlueprint)` |
-| **Stage 3+** | Optional `componentPlan` field on blueprints **only if** validation story is clear |
-| **AI era** | AI outputs **family + component params + style**, never voxels |
-
-Recipes should remain **curated and validated**, not free-form graphs at first.
-
----
-
-## 8. Blueprint strategy under component grammar
-
-| Option | Description | Verdict |
-|--------|-------------|---------|
-| **A** | Keep family-specific blueprint types; map internally to `ComponentPlan` | **Recommended near-term** |
-| **B** | Introduce generic `ComponentPlanBlueprint` immediately | Too abrupt; weakens family semantics |
-| **C** | Optional `componentPlan` on all blueprints | Defer until A is stable |
-| **D** | Replace family blueprints with component graph now | Over-generalizes; breaks presets/import |
-
-**Recommendation: A**
-
-- Preserve `MedievalTowerBlueprint`, `BlacksmithWorkshopBlueprint`, etc. as **authoring and preset surfaces**.
-- Add **internal** compilation: `ResolvedBlacksmithWorkshop` → `ComponentPlan` → generators.
-- Validators stay per-family but gain shared sub-validators (footprint, openings, roof enums).
-- AI later targets semantic fields; compiler fills component params.
-
-**Guards**
-
-- Do not expose raw voxel lists in blueprints.
-- Do not expose unconstrained component DAGs to users/AI at v1.
-- Keep `maxBlockCount`, grounding, and material resolution centralized.
-
----
-
-## 9. Component plan internal representation
-
-**Internal-only at first** (not public JSON schema).
+### Proposed types (illustrative)
 
 ```ts
-// Conceptual — names illustrative
+/** Stable id for ordering tests and debug summaries. */
+export type ComponentInstanceId = string;
 
-type ComponentId = string; // stable instance id within plan
+export type ComponentFootprint = {
+  readonly width: number;
+  readonly depth: number;
+  readonly bodyLayers: number;
+  readonly roofLayers: number;
+  readonly wallThickness: number;
+  readonly hollowInterior: boolean;
+};
 
-type ArchitecturalComponent =
-  | { kind: "rectangular_body"; width: number; depth: number; bodyLayers: number }
-  | { kind: "hollow_wall_shell"; wallThickness: number; hollow: boolean }
-  | { kind: "pitched_gable_roof"; layers: number; overhang: number }
-  | { kind: "shed_roof"; layers: number }
-  | { kind: "front_entrance"; side: EntranceSide; width: number; height: number }
-  | { kind: "sparse_windows"; placement: "none" | "front_only" | "front_and_sides"; count: number }
-  | { kind: "chimney"; side: "left" | "right" }
-  | { kind: "forge_zone" }
-  | { kind: "hearth_zone" }
-  // ...
+export type ComponentPlanContext = {
+  readonly familyId: "blacksmith_workshop"; // widen later
+  readonly origin: { readonly ox: number; readonly oz: number };
+  readonly materials: ResolvedBlacksmithWorkshop["materials"]; // family-specific resolved materials in v1
+  readonly constraints: ResolvedBlacksmithWorkshop["constraints"];
+  readonly footprint: ComponentFootprint;
+};
 
-type ComponentPlan = {
-  familyId: BuildingFamilyId;
-  footprint: { width: number; depth: number; bodyLayers: number; roofLayers: number };
-  origin: { ox: number; oz: number }; // from centerOrigin
-  materials: ResolvedMaterials;
-  constraints: BlueprintConstraints;
-  components: readonly ArchitecturalComponent[];
+export type ArchitecturalComponent =
+  | { readonly id: ComponentInstanceId; readonly kind: "foundation" }
+  | {
+      readonly id: ComponentInstanceId;
+      readonly kind: "hollow_wall_shell";
+      readonly aperture: WallApertureMask; // see §7 — shared mask from openings compile
+    }
+  | {
+      readonly id: ComponentInstanceId;
+      readonly kind: "front_entrance"; // generalized: entrance on EntranceSide
+      readonly side: EntranceSide;
+      readonly width: number;
+      readonly height: number;
+    }
+  | {
+      readonly id: ComponentInstanceId;
+      readonly kind: "sparse_windows";
+      readonly placement: "none" | "front_only" | "front_and_sides";
+      readonly count: number;
+      readonly bodyY: number; // resolved window band y
+    }
+  | {
+      readonly id: ComponentInstanceId;
+      readonly kind: "pitched_gable_roof";
+      readonly layers: number;
+    }
+  | {
+      readonly id: ComponentInstanceId;
+      readonly kind: "shed_roof";
+      readonly layers: number;
+    }
+  | {
+      readonly id: ComponentInstanceId;
+      readonly kind: "chimney";
+      readonly side: "left" | "right";
+    }
+  | { readonly id: ComponentInstanceId; readonly kind: "forge_zone" }
+  | { readonly id: ComponentInstanceId; readonly kind: "workbench_zone" }
+  | { readonly id: ComponentInstanceId; readonly kind: "storage_zone" };
+
+export type ComponentPlan = {
+  readonly context: ComponentPlanContext;
+  /** Canonical emission order (see §7). */
+  readonly components: readonly ArchitecturalComponent[];
 };
 ```
 
-**Ordering:** Recipe defines **canonical order** (foundation → shell → openings → roof → details → interior zones). Generators run in that order; all emit into one `Placement[]`.
+### `rectangular_body` — plan metadata, not a v1 component
 
-**Conflict resolution:** Reuse existing **`mergePlacements`** — higher `p` wins; tie-break by insertion index `i`.
+**Decision:** Footprint and body budget live on **`ComponentPlan.context.footprint`** (from `resolved.grid` + `massing`). Generators read `W, D, H, T, ox, oz` from context.
 
-**Priorities:** Per-component priority bands (e.g. zones < walls < windows < doors) aligned with current `PRI` constants.
+**Rationale:** No blocks are emitted by “being rectangular”; foundation/shell/roof components consume the footprint.
 
-**`maxBlockCount`:** Applied at validation (estimate) and/or post-merge trim policy (today: validator reduces roof layers — keep policy at plan compile time).
+### v1 component kinds — include vs defer
 
-**Placement validation:** Final `VoxelBlock[]` still passes `validateVoxelStructurePlacements` and generator hard invariants.
-
----
-
-## 10. Generator architecture under the pivot
-
-| Stage | Work |
-|-------|------|
-| **0** | Revert interrupted cottage WIP (§3) |
-| **1** | Extract neutral helpers only: `placementUtils`, `paneAxis`; prove tower/blacksmith unchanged via existing tests |
-| **2** | Define `ArchitecturalComponent` union + `ComponentPlan` + `compileXToPlan` per family (internal); component generator modules that return `GeneratorPlacement[]` |
-| **3** | **Either** wire `generateBlacksmithWorkshop` through plan (behavior-neutral refactor) **or** implement `cottage_house` as first plan-native family |
-| **4** | Ship `cottage_house` as recipe + presets + preview + tests |
-
-### Stage 3 choice
-
-| Path | Pros | Cons |
-|------|------|------|
-| **Adapt blacksmith first** | Exercises grammar on shipped family; no new public family | Regression risk on demo-ready family |
-| **Cottage first on new plan** | No regression to blacksmith output; proves new family path | New presets/tests; cottage recipe must be right |
-
-**Safest path:** **Stage 2 + blacksmith internal compile behind feature flag or parity test** comparing old vs plan output (block multiset or hash), then **Stage 4 cottage** as first **new** family using the grammar. If parity testing is too heavy for v1, **cottage as first plan-native family** with blacksmith still monolithic until parity exists — acceptable if cottage tests are strict and blacksmith untouched.
-
-**Recommendation:** Stage 1 → Stage 2 → **cottage as first consumer-facing new family (Stage 4)** while **blacksmith refactors internally (Stage 3)** only when component generators have unit tests and parity checks.
+| Kind | v1 | Notes |
+|------|----|-------|
+| `foundation` | **Yes** | y=0 floor grid |
+| `hollow_wall_shell` | **Yes** | Perimeter + interior floor y=1; respects aperture mask |
+| `front_entrance` | **Yes** | Generalize to any `EntranceSide` (blacksmith already supports all sides) |
+| `sparse_windows` | **Yes** | Pane-aware via `paneAxis` + material meta |
+| `pitched_gable_roof` | **Yes** | Blacksmith pitched path |
+| `shed_roof` | **Yes** | Blacksmith shed path |
+| `chimney` | **Yes** | Wall stack |
+| `forge_zone` / `workbench_zone` / `storage_zone` | **Yes** | Blacksmith interior placeholders |
+| `rectangular_body` | **No** (metadata) | On `context.footprint` |
+| `hearth_zone`, `porch` | **Defer** | Next family (cottage) after grammar proven |
+| `window_band`, `tall_feature_window` | **Defer** | Tavern/chapel |
+| `tower_volume`, `crenellation_crown` | **Defer** | Tower-specific |
+| `stairs`, `floorPlan`, connected panes | **Defer** | Backlog |
 
 ---
 
-## 11. Preview strategy after pivot
+## 6. Component generator contract
 
-**Keep**
+### Recommendations
 
-- **Partial block showcase** separate (static structure, no generator).
-- **Family dropdown + preset dropdown** for generator families (re-introduce cleanly post-revert without cottage until shipped).
+| Question | Answer |
+|----------|--------|
+| Return type | **`GeneratorPlacement[]`** per component (not `VoxelBlock[]`). |
+| Shared buffer | Orchestrator appends to one array; assigns monotonic **`i`** via shared `push` helper. |
+| Priority | Each placement sets **`p`** from a **shared `ComponentPriority` enum** (mirror blacksmith `PRI` bands). Components do not sort. |
+| Plan context | **`ComponentPlanContext`** passed to every generator (footprint, materials, constraints, origin). |
+| Purity | **Deterministic** pure functions of `(context, component, pushState)`; no I/O, no randomness. |
+| Validation | Components **assume validated plan**; no duplicate blueprint validation inside generators. |
+| Merge | **Once** at end: `mergePlacements(pl)` then `filterGrounded` if required. |
+| `shapeKind` / `state` | Allowed on placements from `sparse_windows` (pane) only in v1; same rules as today. |
 
-**Default:** `medieval_tower` / `northwatch`.
+### Orchestrator sketch (blacksmith)
 
-**Minimal post-pivot preview additions**
+```ts
+function generateBlacksmithFromPlan(plan: ComponentPlan): VoxelBlock[] {
+  const pl: GeneratorPlacement[] = [];
+  let i = 0;
+  const push = createPlanPush(plan.context, pl, () => i++);
+  for (const comp of plan.components) {
+    emitComponent(plan.context, comp, push);
+  }
+  let blocks = mergePlacements(pl);
+  if (needsGrounding(plan.context.constraints)) {
+    blocks = filterGrounded(blocks, plan.context.constraints.allowFloatingBlocks);
+  }
+  return blocks;
+}
+```
 
-| Feature | Priority |
-|---------|----------|
-| Family + preset dropdowns | High (product scaling) |
-| Validation notes | Keep |
-| Family label + `structureType` + preset description | Keep |
-| Read-only **component list** (compiled plan summary) | Medium — helps debug grammar |
-| Per-component block counts | Low |
-| Visualizer editing | **Out of scope** |
+### `createPlanPush`
 
-Do not block preview on component UI — optional debug panel later.
+- Converts local `(lx, y, lz)` → world `(ox+lx, y, oz+lz)`.
+- Centralizes coordinate transform so components stay footprint-local.
+
+---
+
+## 7. Component ordering and conflict resolution
+
+### Canonical emission order (blacksmith v1)
+
+1. `foundation`
+2. `hollow_wall_shell` (includes interior y=1 floor in void)
+3. `sparse_windows` (may overlap shell cells — higher PRI)
+4. `front_entrance` / door placements
+5. `pitched_gable_roof` **or** `shed_roof`
+6. `chimney`
+7. `forge_zone` → `workbench_zone` → `storage_zone`
+
+**Note:** Today blacksmith interleaves shell/windows in one loop; refactor can either (a) keep shell emitting walls only and let windows/doors override, or (b) precompute aperture mask for shell. **Recommend (b):** compile openings into a mask used by `hollow_wall_shell` to skip door/window cells, then emit windows/doors with higher PRI.
+
+### Priority bands (align with current blacksmith)
+
+| Band | Value (existing) | Typical kinds |
+|------|------------------|---------------|
+| Foundation | 10 | `foundation` |
+| Interior floor | 20 | shell (void floor) |
+| Wall | 30 | shell |
+| Zones | 42–44 | forge, workbench, storage |
+| Roof | 50 | roof components |
+| Window | 52 | `sparse_windows` |
+| Door | 55 | entrance |
+| Chimney | 60 | `chimney` |
+
+**Merge semantics (unchanged):** sort `desc p`, then `desc i`; first wins per `(x,y,z)`; preserve `shapeKind`/`state`.
+
+### Responsibilities
+
+| Concern | Owner |
+|---------|--------|
+| One block per coordinate | `mergePlacements` |
+| Door/window vs wall | PRI + aperture skip in shell |
+| Roof vs chimney | Chimney PRI 60 > roof 50 |
+| Zones vs floor | Zones 42–44 > interior floor 20 |
+| `maxBlockCount` | **Validator** (pre-generation estimate); plan does not trim in v1 |
+| Grounding | `filterGrounded` post-merge when `requireGroundedStructure` |
+
+---
+
+## 8. First component vocabulary and scope
+
+| Component | Purpose | Key params | Families | Blocks | Tests |
+|-----------|---------|------------|----------|--------|-------|
+| `foundation` | y=0 slab | — | rect low-rise | floor material | unit: footprint size |
+| `hollow_wall_shell` | Perimeter walls + void interior floor | `wallThickness`, mask | blacksmith, future cottage | wall, floor | unit + integration |
+| `front_entrance` | Door row | `side`, `width`, `height` | most rect | door | unit |
+| `sparse_windows` | Façade panes/cubes | `placement`, `count`, `bodyY` | blacksmith, cottage later | window, pane | unit + pane axis |
+| `pitched_gable_roof` | Perimeter-ring layers | `layers` | blacksmith, cottage | roof | unit |
+| `shed_roof` | Shed layers | `layers` | blacksmith, cottage | roof | unit |
+| `chimney` | Wall-adjacent stack | `side` | blacksmith, cottage | accent | unit |
+| `forge_zone` | Hearth placeholder | — | blacksmith | accent, wall | unit |
+| `workbench_zone` | Bench placeholder | — | blacksmith | door | unit |
+| `storage_zone` | Corner stacks | — | blacksmith | door | unit |
+
+### Explicitly deferred
+
+`floorPlan`, rooms, stairs, partial doors, fences, connection-aware panes, awnings, signs, steeples, buttresses, barn doors, window bands, attached bays, tower crown/crenellation modules.
+
+---
+
+## 9. How blacksmith maps to the v1 plan
+
+### Compile recipe (`compileBlacksmithComponentPlan(resolved)`)
+
+| Step | Source field | Component(s) |
+|------|--------------|----------------|
+| Footprint | `grid`, `massing` | `context.footprint` |
+| Base | always | `foundation` |
+| Shell | `massing.hollowInterior`, openings | `hollow_wall_shell` + mask from entrance/windows |
+| Opening | `openings.*` | `front_entrance` (any side), `sparse_windows` |
+| Roof | `roof.style`, `grid.roofLayers` | `pitched_gable_roof` **or** `shed_roof` |
+| Detail | `features.chimney` | `chimney` if enabled |
+| Zones | `features.forge/workbench/storage` | respective zone components if enabled |
+
+### Logic that does not fit cleanly
+
+| Logic | Handling |
+|-------|----------|
+| `entranceSpanRange`, `onFace`, `inDoorAperture` | Shared **openings compile** helper → mask + `front_entrance` params |
+| `windowPositionsAlong` | Inside `sparse_windows` generator |
+| Side windows on left/right walls | `sparse_windows` with `front_and_sides` |
+| Shed vs gable inset math | Stay inside roof component generators (copy from current loops) |
+
+### First implementation strategy — **recommend B, then C**
+
+| Option | Description | Verdict |
+|--------|-------------|---------|
+| **A** | Types only, generators unchanged | Too thin |
+| **B** | Types + `compileBlacksmithComponentPlan` + tests; **output still from monolithic generator** | **First slice ✓** |
+| **C** | B + refactor `generateBlacksmithWorkshop` to plan path with **parity checks** | **Second slice ✓** |
+| **D** | Cottage as first plan-native family | **Too early** |
+| **E** | One-off cottage | **Rejected** |
+
+**Why B then C**
+
+- Blacksmith is **preview-stable** and structurally similar to the aborted cottage generator; regression cost is real.
+- **B** proves the IR and compile mapping without touching placement output.
+- **C** is feasible: ~290-line generator, clear phases, **79 existing tests** + optional **parity** (multiset of `(x,y,z, blockTypeId, shapeKind, state)` per preset).
+- **D** waits until C passes and contract stabilizes (hearth/porch become new components later).
+
+**Do not recommend D** until v1 components and blacksmith parity are done.
+
+---
+
+## 10. How medieval_tower maps, or does not map
+
+### Can share (utilities / future components)
+
+| Piece | Share how |
+|-------|-----------|
+| `mergePlacements`, `filterGrounded`, `centerOrigin` | Already shared |
+| `paneAxisForWindowCell` | Already shared for pane windows |
+| Foundation / single floor layer | Possible future `foundation` variant |
+| Window pane emission | Partial overlap with `sparse_windows`; tower uses **columns** and `windowsFloors` — **different component** later |
+
+### Stay family-specific (v1)
+
+| Piece | Reason |
+|-------|--------|
+| Level stack (`levels`, square footprint) | Not rect `grid` recipe |
+| Corner pillars, capstones, facade trim | Tower identity |
+| Crenellations, merlons, parapet | Defensive crown grammar |
+| Stepped/pyramid roof crown | Not gable/shed |
+| Window column seeds, `windowsFloors` | Vertical rhythm |
+
+### Recommendation
+
+**Leave tower monolithic for component-plan v1.** Optionally add `compileMedievalTowerComponentPlan` stub that throws or returns `null` — **not required**. Revisit after blacksmith plan path ships.
+
+---
+
+## 11. File/module layout
+
+Keep v1 compact — **one folder**, split only where files exceed ~200 lines.
+
+```text
+src/lib/generation/components/
+  types.ts                 # ComponentPlan, ArchitecturalComponent, context, priority enum
+  priorities.ts            # ComponentPriority constants (from blacksmith PRI)
+  compileBlacksmithPlan.ts # ResolvedBlacksmithWorkshop → ComponentPlan
+  emitPlacements.ts        # orchestrator: plan → merge → filter
+  openingsMask.ts          # shared mask helpers for shell + windows + door
+  generators/
+    foundation.ts
+    hollowWallShell.ts
+    sparseWindows.ts
+    entrance.ts
+    roofs.ts
+    chimney.ts
+    interiorZones.ts
+  index.ts                 # re-exports for generators/tests
+```
+
+**Tests:** `src/lib/generation/__tests__/components/` (or `components/__tests__/` co-located).
+
+**Do not** create per-component files for one-liners initially; **group** `forge_zone`/`workbench_zone`/`storage_zone` in `interiorZones.ts`.
+
+**Existing** `placement/placementUtils.ts` and `facade/paneAxis.ts` stay as-is.
 
 ---
 
 ## 12. Test strategy
 
-| Layer | Tests |
-|-------|-------|
-| **Component unit** | Each component generator: non-empty where applicable, valid block IDs, no duplicate coords in isolation |
-| **Merge** | `mergePlacements` priority / tie-break (existing + `placementUtils.test`) |
-| **Plan compile** | Family blueprint → plan shape snapshots (structural, not voxel counts) |
-| **Family smoke** | Preset invariants: connected 26, grounded, `maxBlockCount`, placement semantics |
-| **Parity** | Blacksmith old vs plan output (optional multiset compare) when refactoring |
-| **Regression** | Tower presets unchanged when only helpers move |
+| Layer | What to test |
+|-------|----------------|
+| **Types** | TypeScript compile; optional `satisfies` fixtures for plan shape |
+| **Compile** | Each blacksmith preset + edge fixture → plan: component kinds, order, enabled flags match blueprint |
+| **Component unit** | Each generator: small footprint fixture → placement count bounds, no duplicate local coords before merge, valid PRI |
+| **Merge** | Reuse `placementUtils.test.ts`; integration test plan → emit → merge |
+| **Parity (slice C)** | For each blacksmith preset/edge: `multiset(monolithic)` === `multiset(plan path)` |
+| **Regression** | Existing `generatorBlacksmithPresetInvariants`, edge, panes — must pass unchanged in B; unchanged output in C |
+| **Tower** | No new tower tests in v1 |
 
-**Avoid** exact total block-count snapshots unless locking a bug fix.
+**Avoid** exact total block-count snapshots.
 
-**Behavior-neutral helper extraction:** Rely on existing tower/blacksmith preset + edge + pane suites.
+**Parity feasibility:** Yes — compare stable serialized keys per block:  
+`"${x},${y},${z}|${blockTypeId}|${shapeKind ?? ""}|${JSON.stringify(state)}"`  
+Multiset equality is insensitive to merge order.
 
 ---
 
-## 13. Documentation strategy
+## 13. Preview/debug strategy
+
+| Option | Description | Verdict |
+|--------|-------------|---------|
+| **A** | No preview changes | **Default for slice B** |
+| **B** | Read-only component list for blacksmith | **Optional slice C+** |
+| **C** | Dev-only debug panel | Defer |
+
+**Recommend A** for B and C unless parity debugging needs visibility — then **B** as dev-only text under inspection panel (component ids + kinds, no editing).
+
+**No `/visualizer` changes.**
+
+---
+
+## 14. Documentation strategy
 
 **Not in this planning task.** After implementation:
 
 | Doc | Update |
 |-----|--------|
-| `docs/generation/GENERATION_DESIGN_PRINCIPLES.md` | Component grammar, families as recipes, AI targets semantics |
-| `docs/generation/GENERATOR_RELIABILITY.md` | Per-family + per-component coverage |
-| `docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md` | Align features with component vocabulary |
-| **New** `docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md` | Canonical component list, merge rules, recipe examples |
-
-Clarify everywhere: **components ≠ voxel dumps**; **families = recipes**; **styles = overlays**; **AI ≠ block placer**.
+| **New** `docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md` | Component list, merge rules, recipe examples |
+| `GENERATION_DESIGN_PRINCIPLES.md` | Families as recipes; AI targets semantics |
+| `GENERATOR_RELIABILITY.md` | Component unit + parity coverage |
+| `BLUEPRINT_FEATURE_CATALOG.md` | Map features → components |
 
 ---
 
-## 14. Recommended next implementation slice
+## 15. Recommended first implementation slice
 
-| Option | Description |
-|--------|-------------|
-| A | Revert cottage WIP only |
-| B | Revert cottage WIP + redo neutral helpers cleanly |
-| C | Revert + internal component types only |
-| D | Revert + grammar + cottage |
-| E | Continue cottage one-off | **Rejected** |
+| Option | Summary |
+|--------|---------|
+| A | Types only |
+| B | Types + blacksmith compile-to-plan; monolithic output |
+| C | B + component generators + blacksmith refactor + parity |
+| D | Cottage first on plan |
+| E | One-off cottage |
 
-### **Chosen: B**
+### **Recommendation: B (this implementation prompt)**
 
-**Rationale from actual WIP**
+Deliver:
 
-- Cottage generator/validator/tests/catalog are **complete-looking but wrong direction** (duplicate blacksmith).
-- Preview refactor is **coupled** to cottage registry; incomplete product verification (`CHANGE.md` stale, `buildingFamilies.test` not updated).
-- Helper extraction in WIP is **likely correct** but should land in a **behavior-neutral PR** with `pnpm test:generator` + `tsc` proof, not bundled with cottage.
+1. `components/types.ts`, `priorities.ts`, `compileBlacksmithPlan.ts`
+2. Compile tests for all `BLACKSMITH_PRESETS` + `BLACKSMITH_EDGE_CASE_FIXTURES`
+3. **No change** to `generateBlacksmithWorkshop` output path
+4. No preview/docs changes
 
-**Then (after review): C → blacksmith plan compile (Stage 3) → D′ cottage as first component-recipe family (Stage 4)** — not D as originally stated (no cottage until plan exists).
+### **Follow-up: C (separate prompt after B review)**
 
----
+Deliver:
 
-## 15. Non-goals
+1. Component generators + `emitPlacements`
+2. `generateBlacksmithWorkshop` delegates to plan path
+3. Parity tests per preset/edge
+4. Existing invariant suites green
 
-- Continuing interrupted **cottage_house** one-off implementation
-- Implementing **all Wave 2** families (barn, market, tavern, chapel, warehouse, …)
-- Implementing **all ~30** taxonomy families as isolated generators
-- **AI / photo runtime**
-- **Public component blueprint JSON** schema
-- **`floorPlan` / rooms / circulation** schema
-- **Import/export v2**
-- **`/visualizer` rewrite** or cottage editing there
-- **Style resolver** implementation
-- **New textures, assets, or block definitions**
-- **Connection-aware** partial blocks
-- **New partial shape kinds**
-- **Minecraft export**
-- **Runtime AI-invented families**
-- **Raw voxel blueprint output from AI**
+**Not recommended now:** D (cottage), E, A alone, tower refactor.
 
 ---
 
@@ -566,24 +543,26 @@ Clarify everywhere: **components ≠ voxel dumps**; **families = recipes**; **st
 
 | Risk | Mitigation |
 |------|------------|
-| **Over-abstraction** | Start with 8–12 components; no arbitrary DAG |
-| **Under-abstraction** | Map blacksmith + cottage overlap explicitly; forbid copy-paste third generator |
-| **Retrofit blacksmith vs cottage proof** | Parity tests or cottage-only on new plan; see §10 |
-| **Code modules vs data records** | TypeScript discriminated unions first; data-driven recipes later |
-| **Blueprint vs internal plan** | Family blueprints stay authoritative for presets; plan is compile target |
-| **Component conflicts** | Documented `PRI` bands + single merge pass |
-| **Still generic boxes** | Recipes must enforce asymmetry (chimney side, zones, window counts) |
-| **Preview without component visibility** | Add read-only plan summary when debugging |
-| **Tower behavior regression** | Helper-only PRs gated on full tower tests |
-| **WIP salvage** | Revert all cottage paths; re-extract helpers in clean commit |
+| **Over-abstraction** | v1 union ≤ 10 kinds; blacksmith-only compile |
+| **Under-abstraction** | Shared `openingsMask`; one rect shell component |
+| **Ordering conflicts** | Documented canonical order + PRI table |
+| **Hidden PRI behavior** | `priorities.ts` named constants; tests assert door beats wall |
+| **`maxBlockCount`** | Keep validator estimate; no plan-time trim v1 |
+| **Blacksmith output drift** | Parity multiset in slice C |
+| **Parity cost** | One test helper; 5 presets + 3 edges |
+| **`rectangular_body` as component** | Rejected — footprint on context |
+| **Styles later** | Compile step applies material overrides before plan |
+| **AI targeting components** | Future: AI fills blueprint fields; compiler builds plan — not raw components JSON |
+| **Plans becoming voxel dumps** | Lint/review: no `VoxelBlock` in plan types |
+| **Shell/window interleaving** | Aperture mask vs dual emission — decide in C refactor |
 
 **Open questions**
 
-1. Should `medieval_tower` ever share `hollow_wall_shell`, or stay a separate vertical grammar with shared utilities only?
-2. When should `BUILDING_FAMILIES` list a family as `shipped` — generator only, or generator + preview + tests?
-3. Is blacksmith multiset parity required before merging Stage 3, or is cottage-first acceptable?
-4. Do interior zones remain y=1 placeholders until floor-plan schema exists?
-5. Should preview family dropdown ship before or with the first component-native family?
+1. Should `hollow_wall_shell` own interior y=1 floor, or should `foundation` + a tiny `interior_floor` component split it?
+2. Is one `entrance` component enough for all sides, or rename to `entrance_on_side`?
+3. Should compile tests snapshot plan JSON or structural assertions only? (**Prefer structural assertions.**)
+4. When to add preview component list — only if parity debugging is slow?
+5. After C, is **cottage** the first new family via recipe, or next rect variant (warehouse)?
 
 ---
 
