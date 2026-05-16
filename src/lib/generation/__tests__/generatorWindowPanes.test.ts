@@ -10,6 +10,7 @@ import { generateStructureFromResolved } from "@/src/lib/generation/generateStru
 import { paneAxisForWindowCell } from "@/src/lib/generation/generators/generateMedievalTower";
 import { EDGE_CASE_BLUEPRINT_FIXTURES } from "@/src/lib/generation/__tests__/fixtures/edgeCaseBlueprints";
 import { isShapeAllowedForBlockType } from "@/src/lib/voxel/blocks/materialMetaHelpers";
+import { analyzeVoxelStructure } from "@/src/lib/voxel/structureAnalysis";
 import { validateVoxelStructurePlacements } from "@/src/lib/voxel/voxelBlockPlacement";
 
 import { assertGeneratedStructurePlacementSemantics } from "./testUtils";
@@ -34,6 +35,53 @@ describe("paneAxisForWindowCell", () => {
     const D = 9;
     expect(paneAxisForWindowCell(0, 0, W, D)).toBeUndefined();
     expect(paneAxisForWindowCell(W - 1, D - 1, W, D)).toBeUndefined();
+  });
+});
+
+describe("medieval tower window-adjacent façade trim (cubes)", () => {
+  test("default preset uses full-cube trim near pane windows (no slab shapeKind)", () => {
+    const preset = getMedievalTowerPreset(DEFAULT_MEDIEVAL_PRESET_ID);
+    expect(preset).toBeDefined();
+    const validation = validateBlueprint(structuredClone(preset!.blueprint));
+    expect(validation.ok).toBe(true);
+    const blocks = generateStructureFromResolved(validation.resolved!);
+
+    assertGeneratedStructurePlacementSemantics({
+      id: preset!.id,
+      label: preset!.label,
+      blocks,
+    });
+    expect(blocks.every((b) => b.shapeKind !== "slab")).toBe(true);
+
+    const analysis = analyzeVoxelStructure(blocks);
+    expect(analysis.duplicateCoordinateCount).toBe(0);
+
+    const panes = blocks.filter((b) => b.shapeKind === "pane");
+    expect(panes.length).toBeGreaterThan(0);
+  });
+
+  test("slab-incompatible accent keeps cube trim (no slab shapeKind)", () => {
+    const base = EDGE_CASE_BLUEPRINT_FIXTURES.find(
+      (f) => f.id === "height_budget_body_clamp",
+    )!.blueprint;
+    const cloned = structuredClone(base) as MedievalTowerBlueprint;
+    const blueprint: MedievalTowerBlueprint = {
+      ...cloned,
+      materials: {
+        ...cloned.materials,
+        accent: "oak_log",
+      },
+    };
+    const validation = validateBlueprint(blueprint);
+    expect(validation.ok).toBe(true);
+    const blocks = generateStructureFromResolved(validation.resolved!);
+    expect(blocks.every((b) => b.shapeKind !== "slab")).toBe(true);
+    assertGeneratedStructurePlacementSemantics({
+      id: "accent_oak_log_trim_fallback",
+      label: "cloned fixture — oak_log accent",
+      blocks,
+    });
+    expect(validateVoxelStructurePlacements({ blocks }).ok).toBe(true);
   });
 });
 

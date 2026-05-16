@@ -686,6 +686,8 @@ export function generateMedievalTower(
     const lx = parts[0]!;
     const yy = parts[1]!;
     const lz = parts[2]!;
+    // Window sill/lintel trim stays **full cube** (same cells as before). Half slabs here
+    // read as awkward gaps next to thin pane glass in the viewer.
     if (
       yy > 1 &&
       shellCell(r, W, D, T, lx, lz) &&

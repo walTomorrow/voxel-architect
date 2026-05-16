@@ -62,4 +62,33 @@ export const CLASSIC_MATERIAL_META: Readonly<
     tags: ["roof"],
     minecraftCompatibility: { status: "unsupported", notes: "VA slate roofing vocabulary" },
   },
+  /** Preset accents (`northwatch`, `gothic_stone`, …) — façade trim may use bottom/top slabs. */
+  limestone: {
+    materialFamily: "limestone",
+    materialGroup: "stone_masonry",
+    textureRole: "raw",
+    allowedShapeKinds: ["cube", "slab"],
+    tags: ["masonry", "accent", "facade_trim"],
+  },
+  mudstone: {
+    materialFamily: "mudstone",
+    materialGroup: "stone_masonry",
+    textureRole: "raw",
+    allowedShapeKinds: ["cube", "slab"],
+    tags: ["masonry", "accent", "facade_trim"],
+  },
+  andesite: {
+    materialFamily: "andesite",
+    materialGroup: "stone_masonry",
+    textureRole: "raw",
+    allowedShapeKinds: ["cube", "slab"],
+    tags: ["masonry", "accent", "facade_trim"],
+  },
+  schist: {
+    materialFamily: "schist",
+    materialGroup: "stone_masonry",
+    textureRole: "raw",
+    allowedShapeKinds: ["cube", "slab"],
+    tags: ["masonry", "accent", "facade_trim"],
+  },
 };

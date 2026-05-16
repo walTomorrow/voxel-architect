@@ -13,6 +13,7 @@ const OAK_LOG = blockTypeId("classic", "oak_log");
 const GLASS = blockTypeId("classic", "glass");
 const SLATE_TILES = blockTypeId("classic", "slate_tiles");
 const ANDESITE = blockTypeId("classic", "andesite");
+const GRAVEL = blockTypeId("classic", "gravel");
 const UNKNOWN = "classic/__nonexistent_block__" as BlockTypeId;
 
 describe("material meta helpers", () => {
@@ -44,11 +45,18 @@ describe("material meta helpers", () => {
     expect(isShapeAllowedForBlockType(SLATE_TILES, "pane")).toBe(false);
   });
 
-  test("unannotated classic block allows cube only for partial shapes", () => {
+  test("andesite allows cube and slab (classic stone masonry metadata)", () => {
     expect(isShapeAllowedForBlockType(ANDESITE, "cube")).toBe(true);
-    expect(isShapeAllowedForBlockType(ANDESITE, "slab")).toBe(false);
+    expect(isShapeAllowedForBlockType(ANDESITE, "slab")).toBe(true);
     expect(isShapeAllowedForBlockType(ANDESITE, "post")).toBe(false);
     expect(isShapeAllowedForBlockType(ANDESITE, "pane")).toBe(false);
+  });
+
+  test("unannotated classic block allows cube only for partial shapes", () => {
+    expect(isShapeAllowedForBlockType(GRAVEL, "cube")).toBe(true);
+    expect(isShapeAllowedForBlockType(GRAVEL, "slab")).toBe(false);
+    expect(isShapeAllowedForBlockType(GRAVEL, "post")).toBe(false);
+    expect(isShapeAllowedForBlockType(GRAVEL, "pane")).toBe(false);
   });
 
   test("unknown blockTypeId does not allow shapes (including cube)", () => {
@@ -73,7 +81,7 @@ describe("material meta helpers", () => {
       x: 0,
       y: 0,
       z: 0,
-      blockTypeId: ANDESITE,
+      blockTypeId: GRAVEL,
       shapeKind: "slab",
       state: { half: "bottom" },
     });
