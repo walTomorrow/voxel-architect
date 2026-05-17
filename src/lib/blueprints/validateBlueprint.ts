@@ -3,11 +3,13 @@ import { blockTypeId } from "@/src/lib/voxel/blocks/registry";
 import type { BlockTypeId } from "@/src/lib/voxel/blocks/registry-types";
 import type {
   MedievalTowerBlueprint,
+  GenericBuildingBlueprint,
   StructureBlueprint,
   ResolvedMedievalTower,
   ResolvedStructure,
   BlueprintMassing,
 } from "./types";
+import { validateGenericBuildingBlueprint } from "./validateGenericBuilding";
 export interface BlueprintValidationResult {
   readonly ok: boolean;
   readonly errors: readonly string[];
@@ -237,6 +239,10 @@ export function validateBlueprint(
   switch (blueprint.structureType) {
     case "medieval_tower":
       return validateMedievalTowerBlueprint(blueprint);
+    case "generic_building":
+      return validateGenericBuildingBlueprint(
+        blueprint as GenericBuildingBlueprint,
+      );
     default: {
       const unknown = blueprint as { structureType?: string };
       return {

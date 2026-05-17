@@ -3,7 +3,7 @@
  * Styles live in `buildingStyles.ts`; presets are curated blueprint snapshots.
  */
 
-export const BUILDING_FAMILY_IDS = ["medieval_tower"] as const;
+export const BUILDING_FAMILY_IDS = ["medieval_tower", "generic_building"] as const;
 
 export type BuildingFamilyId = (typeof BUILDING_FAMILY_IDS)[number];
 
@@ -25,6 +25,13 @@ export const BUILDING_FAMILIES: Record<
     displayName: "Medieval tower",
     description:
       "Vertical shell tower with roof crown, crenellations, and symmetric window columns.",
+    status: "shipped",
+  },
+  generic_building: {
+    familyId: "generic_building",
+    displayName: "Generic building",
+    description:
+      "Low-rise rectangular building assembled from reusable exterior components.",
     status: "shipped",
   },
 };

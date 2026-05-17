@@ -3,6 +3,7 @@ import type {
   StructureBlueprint,
 } from "@/src/lib/blueprints/types";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
+import { generateGenericBuilding } from "@/src/lib/generation/generators/generateGenericBuilding";
 import { generateMedievalTower } from "@/src/lib/generation/generators/generateMedievalTower";
 import type { VoxelBlock } from "@/src/lib/voxel/types";
 
@@ -28,5 +29,11 @@ export function generateStructureFromResolved(
   switch (resolved.structureType) {
     case "medieval_tower":
       return generateMedievalTower(resolved);
+    case "generic_building":
+      return generateGenericBuilding(resolved);
+    default: {
+      const _exhaust: never = resolved;
+      return _exhaust;
+    }
   }
 }

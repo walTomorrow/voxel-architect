@@ -10,7 +10,10 @@ export type StructureInspectionPresetOption = {
   readonly label: string;
 };
 
-export type PreviewLabSource = "preset_towers" | "partial_showcase";
+export type PreviewLabSource =
+  | "preset_towers"
+  | "preset_generic"
+  | "partial_showcase";
 
 type Props = {
   readonly title?: string;
@@ -138,6 +141,14 @@ function InspectionPanelBody(p: Props) {
             </button>
             <button
               type="button"
+              aria-pressed={p.previewSource === "preset_generic"}
+              className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${p.previewSource === "preset_generic" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
+              onClick={() => p.onPreviewSourceChange!("preset_generic")}
+            >
+              Generic
+            </button>
+            <button
+              type="button"
               aria-pressed={p.previewSource === "partial_showcase"}
               className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${p.previewSource === "partial_showcase" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
               onClick={() => p.onPreviewSourceChange!("partial_showcase")}
@@ -154,8 +165,9 @@ function InspectionPanelBody(p: Props) {
         </label>
         {p.previewSource === "partial_showcase" ? (
           <p className="rounded-md border border-zinc-700/80 bg-zinc-900/50 px-2 py-2 text-[11px] leading-snug text-zinc-400">
-            Preset lists apply to <span className="text-zinc-300">Towers</span> only.
-            This mode uses a static developer showcase (partial shapes).
+            Preset lists apply to <span className="text-zinc-300">Towers</span> and{" "}
+            <span className="text-zinc-300">Generic</span>. This mode uses a static
+            developer showcase (partial shapes).
           </p>
         ) : (
           <select

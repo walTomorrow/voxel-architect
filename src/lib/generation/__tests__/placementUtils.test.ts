@@ -3,6 +3,7 @@ import { blockTypeId } from "@/src/lib/voxel/blocks/registry";
 import {
   centerOrigin,
   filterGrounded,
+  filterGroundedConnected26,
   mergePlacements,
   type GeneratorPlacement,
 } from "@/src/lib/generation/placement/placementUtils";
@@ -74,5 +75,18 @@ describe("placementUtils", () => {
     );
     expect(blocks).toHaveLength(1);
     expect(blocks[0]!.x).toBe(0);
+  });
+
+  test("filterGroundedConnected26 keeps roof connected via walls (26-neighbor)", () => {
+    const blocks = filterGroundedConnected26(
+      [
+        { x: 0, y: 0, z: 0, blockTypeId: STONE },
+        { x: 0, y: 1, z: 0, blockTypeId: STONE },
+        { x: 1, y: 2, z: 0, blockTypeId: GLASS },
+        { x: 0, y: 2, z: 0, blockTypeId: GLASS },
+      ],
+      false,
+    );
+    expect(blocks.some((b) => b.y === 2 && b.x === 1)).toBe(true);
   });
 });

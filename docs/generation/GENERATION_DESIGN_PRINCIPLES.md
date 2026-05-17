@@ -57,9 +57,9 @@ A future blueprint extension might describe floors, rooms, zones, purposes (forg
 
 **Why it matters for product demos:** Explorable interiors require intentional voids, rooms, openings, and circulation—floor-plan-aware blueprints are how buildings become **usable spaces**, not only exterior shells.
 
-### 1.5 Current medieval tower scope
+### 1.5 Current generator scope
 
-The active pipeline is **`StructureBlueprint` → `validateBlueprint()` → `generateStructureFromResolved()` → family generator → `VoxelBlock[]`**. Shipped families: **`medieval_tower`** (vertical shell, crown, crenellations) and **`blacksmith_workshop`** (low rectangular workshop, pitched/shed roof, chimney, forge/workbench/storage placeholders—library/tests only, no lab UI yet). Hollow interiors remain **limited**; there is **no full interior layout or room graph** yet. Partial shapes today: **cube / slab / pane / post**; window materials may emit **pane** when metadata allows.
+The active pipeline is **`StructureBlueprint` → `validateBlueprint()` → `generateStructureFromResolved()` → family generator → `VoxelBlock[]`**. Shipped families: **`medieval_tower`** (vertical shell, crown, crenellations) and **`generic_building`** (rectangular footprint, foundation at **y=0**, hollow wall shell from **y=1**, component plan with entrance trim, windows, roof). Hollow interiors remain **limited**; there is **no full interior layout or room graph** yet. Partial shapes today: **cube / slab / pane / post**; window materials may emit **pane** when metadata allows.
 
 ### 1.6 Building style catalog (metadata only)
 
@@ -131,6 +131,27 @@ For any facade with an entrance:
 - make the entrance readable from the default camera
 
 The front facade should be composed around the entrance, not treated as a generic wall face.
+
+### 2.3.1 Generic building doorways (Minecraft clearance)
+
+For **`generic_building`**, treat the entrance as three vertical bands on the facade plane:
+
+| Band | Local **y** | Generator behavior |
+|------|-------------|-------------------|
+| Threshold | **0** | **Always** emit foundation / floor material (`materials.floor`) across the full footprint, **including** doorway cells. The threshold is walkable ground, not part of the wall aperture. |
+| Walkable opening | **1 … `openings.entrance.height`** | **No** wall shell blocks and **no** door fill in this band — clear passage for the player. |
+| Lintel / trim | **`height + 1`** | Optional accent (`materials.accent`) on the first wall row **above** the opening; jambs only when **`height ≥ 3`**. |
+
+**`openings.entrance.height` semantics**
+
+- **`height: 2`** — standard Minecraft door: two blocks of clearance **above the floor** (y=1 and y=2). This is the default for presets and normal buildings.
+- **`height: 3` or `4`** — intentionally **big door** / tall portal; validation may note that this exceeds standard door proportions.
+
+**Shell skip mask** must carve the hollow wall at **y ≥ 1** only for entrance cells. Skipping **y = 0** in the shell mask but **still** emitting floor there was a common bug: it produced a visible void at the threshold while the misplaced “step” block sat outside the footprint.
+
+**Exterior `frontStep`** (when enabled) places a single floor block **outside** the wall plane (`outsideCellOffset`), centered on the entrance span. It must **not** replace or steal the in-footprint threshold block.
+
+**Readability check:** From the default camera, the entrance should read as a **two-block-tall** opening sitting on a solid sill; a three-block-tall void from ground to lintel usually means the aperture was carved through the floor band or `height` was set too high without big-door intent.
 
 ---
 

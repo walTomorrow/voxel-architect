@@ -7,6 +7,11 @@ import {
   MEDIEVAL_TOWER_PRESETS,
   getMedievalTowerPreset,
 } from "@/src/lib/blueprints/sampleBlueprints";
+import {
+  DEFAULT_GENERIC_PRESET_ID,
+  GENERIC_BUILDING_PRESETS,
+  getGenericBuildingPreset,
+} from "@/src/lib/blueprints/sampleGenericBuildingBlueprints";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
 import {
@@ -32,15 +37,24 @@ const TOWER_PRESET_OPTIONS: readonly StructureInspectionPresetOption[] =
     label: p.label,
   }));
 
+const GENERIC_PRESET_OPTIONS: readonly StructureInspectionPresetOption[] =
+  GENERIC_BUILDING_PRESETS.map((p) => ({
+    id: p.id,
+    label: p.label,
+  }));
+
 /**
- * Read-only inspection for `/preview` — tower presets or static partial-block
- * showcase; no blueprint editing.
+ * Read-only inspection for `/preview` — tower presets, generic presets, or
+ * static partial-block showcase; no blueprint editing.
  */
 export function PreviewInspectionClient() {
   const [previewSource, setPreviewSource] =
     useState<PreviewLabSource>("preset_towers");
   const [selectedTowerPresetId, setSelectedTowerPresetId] = useState<string>(
     DEFAULT_MEDIEVAL_PRESET_ID,
+  );
+  const [selectedGenericPresetId, setSelectedGenericPresetId] = useState<string>(
+    DEFAULT_GENERIC_PRESET_ID,
   );
   const [cameraResetNonce, setCameraResetNonce] = useState(0);
   const [layerViewMode, setLayerViewMode] = useState<LayerViewMode>("full");
@@ -57,12 +71,29 @@ export function PreviewInspectionClient() {
     }
   }, []);
 
+  const presetOptions = useMemo(() => {
+    if (previewSource === "preset_generic") return GENERIC_PRESET_OPTIONS;
+    return TOWER_PRESET_OPTIONS;
+  }, [previewSource]);
+
+  const selectedPresetId =
+    previewSource === "preset_generic"
+      ? selectedGenericPresetId
+      : selectedTowerPresetId;
+
   const activePresetMeta = useMemo(() => {
-    if (previewSource !== "preset_towers") return null;
-    const preset = getMedievalTowerPreset(selectedTowerPresetId);
-    const fallback = getMedievalTowerPreset(DEFAULT_MEDIEVAL_PRESET_ID);
-    return preset ?? fallback!;
-  }, [previewSource, selectedTowerPresetId]);
+    if (previewSource === "preset_towers") {
+      const preset = getMedievalTowerPreset(selectedTowerPresetId);
+      const fallback = getMedievalTowerPreset(DEFAULT_MEDIEVAL_PRESET_ID);
+      return preset ?? fallback!;
+    }
+    if (previewSource === "preset_generic") {
+      const preset = getGenericBuildingPreset(selectedGenericPresetId);
+      const fallback = getGenericBuildingPreset(DEFAULT_GENERIC_PRESET_ID);
+      return preset ?? fallback!;
+    }
+    return null;
+  }, [previewSource, selectedTowerPresetId, selectedGenericPresetId]);
 
   const blueprint = useMemo((): StructureBlueprint | null => {
     if (previewSource === "partial_showcase" || !activePresetMeta) {
@@ -136,9 +167,15 @@ export function PreviewInspectionClient() {
   };
 
   const handlePresetIdChange = (id: string) => {
-    if (previewSource !== "preset_towers") return;
-    if (!getMedievalTowerPreset(id)) return;
-    setSelectedTowerPresetId(id);
+    if (previewSource === "preset_towers") {
+      if (!getMedievalTowerPreset(id)) return;
+      setSelectedTowerPresetId(id);
+    } else if (previewSource === "preset_generic") {
+      if (!getGenericBuildingPreset(id)) return;
+      setSelectedGenericPresetId(id);
+    } else {
+      return;
+    }
     setLayerViewMode("full");
   };
 
@@ -157,6 +194,9 @@ export function PreviewInspectionClient() {
   const panelDescription = useMemo(() => {
     if (previewSource === "partial_showcase") {
       return "Developer inspection: static slabs, panes, and posts using classic textures only — not preset generator output. Layer modes filter the canvas; breakdown reflects this showcase.";
+    }
+    if (previewSource === "preset_generic") {
+      return "Preset loads a hand-authored generic building (component pipeline). Layer modes filter the canvas only; the block breakdown below always reflects the full generated structure.";
     }
     return undefined;
   }, [previewSource]);
@@ -196,8 +236,8 @@ export function PreviewInspectionClient() {
         validationNotes={validationNotes}
         previewSource={previewSource}
         onPreviewSourceChange={handlePreviewSourceChange}
-        presetOptions={TOWER_PRESET_OPTIONS}
-        selectedPresetId={selectedTowerPresetId}
+        presetOptions={presetOptions}
+        selectedPresetId={selectedPresetId}
         onPresetIdChange={handlePresetIdChange}
         hasStructure={hasStructure}
         layerViewMode={layerViewMode}
