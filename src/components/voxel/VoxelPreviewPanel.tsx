@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { VoxelViewer } from "@/src/components/voxel/VoxelViewer";
 
 const canvasAreaClasses = {
@@ -18,11 +18,11 @@ export function VoxelPreviewPanel({
   /** `immersive` — borderless canvas filling the parent (use with h-full flex-1) */
   mode?: "panel" | "immersive";
 }) {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
   const areaClass = canvasAreaClasses[size];
 

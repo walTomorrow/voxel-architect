@@ -35,7 +35,7 @@ describe("opening mask derivation", () => {
     const openings = deriveOpeningsForGenericBuilding(resolved);
     const D = resolved.grid.depth;
     const frontRow = [...openings.entranceMask].filter((k) => {
-      const [, y, lz] = k.split(",").map(Number);
+      const [, , lz] = k.split(",").map(Number);
       return lz === D - 1;
     });
     expect(frontRow.length).toBeGreaterThan(0);

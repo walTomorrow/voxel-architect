@@ -244,3 +244,38 @@ Historical screenshot PNGs under `docs/project-history/screenshots/` were **not*
 | `docs/project-history/*` | Historical routes/screenshots (past tense) |
 | `docs/**` retired/historical sections | `medieval_tower`, `blueprintExchange` v1 documented as retired |
 | `PLAN.md` | Implementation plan for this branch |
+
+---
+
+## Addendum — Full-repo lint fixes
+
+**Branch:** `cleanup/remove-legacy-visualizer`  
+**Scope:** ESLint violations only; no product or generator behavior changes.
+
+### Files changed
+
+| Path | Fix |
+|------|-----|
+| [`src/components/voxel/VoxelPreviewPanel.tsx`](src/components/voxel/VoxelPreviewPanel.tsx) | Replaced `useEffect` + `setMounted(true)` with `useSyncExternalStore` for client-only canvas mount (`react-hooks/set-state-in-effect`) |
+| [`src/components/voxel/VoxelViewer.tsx`](src/components/voxel/VoxelViewer.tsx) | `LabOrbitRig` reads `controls` / `camera` via `useStore().getState()` inside `useLayoutEffect` instead of mutating `useThree` hook return values (`react-hooks/immutability`); `sceneBounds` `useMemo` deps → `[boundsStructure]` (`react-hooks/exhaustive-deps`); removed unused `voxelStructureLayoutKey` helper |
+| [`src/lib/voxel/structureAnalysis.ts`](src/lib/voxel/structureAnalysis.ts) | `connectedComponentCount26` / `largestComponentSize26`: `let` → `const` (`prefer-const`) |
+| [`src/lib/generation/components/__tests__/openingMask.test.ts`](src/lib/generation/components/__tests__/openingMask.test.ts) | Dropped unused `y` in destructuring (`@typescript-eslint/no-unused-vars`) |
+
+### Lint issues resolved
+
+| Rule | File | Resolution |
+|------|------|------------|
+| `react-hooks/set-state-in-effect` | `VoxelPreviewPanel.tsx` | `useSyncExternalStore` SSR/client gate |
+| `react-hooks/immutability` | `VoxelViewer.tsx` | Imperative orbit/camera updates via R3F store `getState()` |
+| `react-hooks/exhaustive-deps` | `VoxelViewer.tsx` | `useMemo` depends on `boundsStructure` |
+| `prefer-const` | `structureAnalysis.ts` | Two component-size locals |
+| `@typescript-eslint/no-unused-vars` | `openingMask.test.ts` | Omit unused coordinate |
+
+### Checks
+
+| Command | Result |
+|---------|--------|
+| `pnpm lint` | **Pass** (0 errors, 0 warnings) |
+| `pnpm test:generator` | **76** passed, 15 files |
+| `pnpm exec tsc --noEmit` | Pass |
+| `pnpm run build` | Pass |

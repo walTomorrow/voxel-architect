@@ -1,6 +1,6 @@
 "use client";
 
-import { Canvas, useThree } from "@react-three/fiber";
+import { Canvas, useStore } from "@react-three/fiber";
 import { OrbitControls, useTexture } from "@react-three/drei";
 import { Suspense, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
@@ -44,28 +44,6 @@ function computeSceneBounds(structure: VoxelStructure): SceneBounds | null {
   return { center, maxDim };
 }
 
-/** Cheap fingerprint so camera refit does not run on every new `blocks` array reference. */
-function voxelStructureLayoutKey(structure: VoxelStructure): string {
-  const { blocks } = structure;
-  const n = blocks.length;
-  if (n === 0) return "0";
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  let minZ = Infinity;
-  let maxZ = -Infinity;
-  for (const b of blocks) {
-    minX = Math.min(minX, b.x);
-    maxX = Math.max(maxX, b.x);
-    minY = Math.min(minY, b.y);
-    maxY = Math.max(maxY, b.y);
-    minZ = Math.min(minZ, b.z);
-    maxZ = Math.max(maxZ, b.z);
-  }
-  return `${n}:${minX}:${maxX}:${minY}:${maxY}:${minZ}:${maxZ}`;
-}
-
 type OrbitControlsLike = {
   target: THREE.Vector3;
   minDistance: number;
@@ -83,11 +61,14 @@ function LabOrbitRig({
   bounds: SceneBounds | null;
   resetNonce: number;
 }) {
-  const controls = useThree((s) => s.controls) as OrbitControlsLike | null;
-  const camera = useThree((s) => s.camera);
+  const store = useStore();
 
   useLayoutEffect(() => {
-    if (!bounds || !controls || !camera) return;
+    if (!bounds) return;
+
+    const { controls: controlsRef, camera } = store.getState();
+    const controls = controlsRef as OrbitControlsLike | null;
+    if (!controls || !camera) return;
 
     controls.target.copy(bounds.center);
     const m = bounds.maxDim;
@@ -105,7 +86,7 @@ function LabOrbitRig({
     camera.lookAt(bounds.center);
 
     controls.update();
-  }, [bounds, controls, camera, resetNonce]);
+  }, [bounds, resetNonce, store]);
 
   return null;
 }
@@ -378,10 +359,9 @@ function TexturedScene({
     [sortedTypeIds],
   );
 
-  const boundsLayoutKey = voxelStructureLayoutKey(boundsStructure);
   const sceneBounds = useMemo(
     () => computeSceneBounds(boundsStructure),
-    [boundsLayoutKey],
+    [boundsStructure],
   );
 
   const controlsAndBounds = (
