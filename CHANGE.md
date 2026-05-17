@@ -140,3 +140,107 @@ Added `/generic-lab` to edit generic presets, validate/generate live through the
 
 - Added [`docs/project-history/screenshots/12-generic-lab-blueprint-editor-81e6a4b.png`](docs/project-history/screenshots/12-generic-lab-blueprint-editor-81e6a4b.png) from user capture of `/generic-lab`.
 - Updated [`docs/project-history/DEVELOPMENT_TIMELINE.md`](docs/project-history/DEVELOPMENT_TIMELINE.md) (§11) and [`docs/project-history/screenshots/README.md`](docs/project-history/screenshots/README.md) inventory.
+
+---
+
+## Addendum — Retire tower-era product path (`cleanup/remove-legacy-visualizer`)
+
+**Branch:** `cleanup/remove-legacy-visualizer`  
+**Scope:** Remove active `medieval_tower` generator, `/visualizer` UI, tower presets/exchange, and preview Towers tab. Pivot product to **`generic_building`** only (`/preview` Generic | Partials, `/generic-lab`).
+
+### Summary
+
+Tower-era code paths are deleted or retired. `/visualizer` permanently redirects to `/generic-lab`. Preview defaults to **Generic**; partial block showcase unchanged. Historical screenshots and project-history docs kept with past-tense wording.
+
+### Files deleted
+
+| Path | Purpose (removed) |
+|------|-------------------|
+| `src/app/visualizer/page.tsx` | Tower lab route |
+| `src/app/visualizer/VisualizerClient.tsx` | Tower blueprint editor, import/export |
+| `src/lib/blueprints/sampleBlueprints.ts` | `MEDIEVAL_TOWER_PRESETS`, tower samples |
+| `src/lib/blueprints/blueprintExchange.ts` | Tower-only v1 JSON envelope |
+| `src/lib/blueprints/blueprintImportStructure.ts` | Import shape guard |
+| `src/lib/blueprints/blueprintSource.ts` | Visualizer UI source labels |
+| `src/lib/generation/generators/generateMedievalTower.ts` | Tower family generator |
+| `src/lib/generation/styles/buildingStyles.ts` | Tower style metadata catalog |
+| `src/lib/generation/__tests__/generatorPresetInvariants.test.ts` | Tower preset invariants |
+| `src/lib/generation/__tests__/generatorEdgeCaseInvariants.test.ts` | Tower edge-case invariants |
+| `src/lib/generation/__tests__/fixtures/edgeCaseBlueprints.ts` | Tower edge-case fixtures |
+| `src/lib/generation/__tests__/buildingStyles.test.ts` | Building styles tests |
+
+### Files changed (product)
+
+| Path | Changes |
+|------|---------|
+| [`next.config.ts`](next.config.ts) | Permanent redirect `/visualizer` → `/generic-lab` |
+| [`src/lib/blueprints/types.ts`](src/lib/blueprints/types.ts) | `StructureType` = `generic_building` only; tower types removed |
+| [`src/lib/blueprints/validateBlueprint.ts`](src/lib/blueprints/validateBlueprint.ts) | Thin wrapper → `validateGenericBuildingBlueprint` |
+| [`src/lib/blueprints/validateGenericBuilding.ts`](src/lib/blueprints/validateGenericBuilding.ts) | `BlueprintValidationResult` defined here (breaks circular import) |
+| [`src/lib/generation/generateStructure.ts`](src/lib/generation/generateStructure.ts) | `generic_building` dispatch only |
+| [`src/lib/generation/families/buildingFamilies.ts`](src/lib/generation/families/buildingFamilies.ts) | Single shipped family |
+| [`src/app/preview/PreviewInspectionClient.tsx`](src/app/preview/PreviewInspectionClient.tsx) | Default `preset_generic`; no tower presets |
+| [`src/app/preview/page.tsx`](src/app/preview/page.tsx) | Copy: Generic \| Partials |
+| [`src/app/page.tsx`](src/app/page.tsx) | Landing copy aligned with generic pivot |
+| [`src/components/voxel/StructureInspectionPanel.tsx`](src/components/voxel/StructureInspectionPanel.tsx) | `PreviewLabSource` = generic \| partials; **Towers** tab removed |
+| [`src/components/voxel/VoxelViewer.tsx`](src/components/voxel/VoxelViewer.tsx) | Default `EMPTY_STRUCTURE` instead of tower sample |
+| [`src/lib/voxel/sampleStructure.ts`](src/lib/voxel/sampleStructure.ts) | Removed `buildSampleTower` / `SAMPLE_STRUCTURE`; kept partial showcase |
+| [`README.md`](README.md) | Generator tests describe `generic_building` pipeline |
+
+### Tests rewritten / removed
+
+| Action | File |
+|--------|------|
+| **Rewrite** | `generatorPipeline.smoke.test.ts` — generic default preset |
+| **Rewrite** | `buildingFamilies.test.ts` — one family; `medieval_tower` undefined |
+| **Rewrite** | `generatorWindowPanes.test.ts` — `paneAxisForWindowCell` only (3 tests) |
+| **Delete** | Tower preset/edge-case/style tests (see deleted files) |
+
+**Test count:** **76** tests, **15** files (was ~100 across 18 files).
+
+### Docs updated
+
+| Path | Changes |
+|------|---------|
+| [`docs/generation/GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md) | Generic-only pipeline; retired tower note; 76-test reference |
+| [`docs/generation/GENERATION_DESIGN_PRINCIPLES.md`](docs/generation/GENERATION_DESIGN_PRINCIPLES.md) | §1.5–1.6 generic-only; retired tower; example blueprint |
+| [`docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md`](docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md) | Tower family retired; grounding/deferred notes |
+| [`docs/blueprints/BLUEPRINT_JSON_FORMAT.md`](docs/blueprints/BLUEPRINT_JSON_FORMAT.md) | Active generic path; historical v1 exchange |
+| [`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`](docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md) | Active table generic-only; §4.1 retired |
+| [`docs/project-history/DEVELOPMENT_TIMELINE.md`](docs/project-history/DEVELOPMENT_TIMELINE.md) | Past tense for tower era; current product summary |
+| [`docs/project-history/screenshots/README.md`](docs/project-history/screenshots/README.md) | Historical `/visualizer` rows; `/generic-lab` as replacement |
+
+Historical screenshot PNGs under `docs/project-history/screenshots/` were **not** deleted.
+
+### Checks
+
+| Command | Result |
+|---------|--------|
+| `pnpm test:generator` | **76** passed, 15 files |
+| `pnpm exec tsc --noEmit` | Pass |
+| `pnpm run build` | Pass — routes: `/`, `/preview`, `/generic-lab` (no `/visualizer` page) |
+| `pnpm exec eslint src/app/preview src/app/generic-lab src/lib/blueprints src/lib/generation next.config.ts` | Pass (1 pre-existing warning in `openingMask.test.ts`) |
+| `pnpm lint` (full repo) | **Fails** — pre-existing issues in `VoxelPreviewPanel.tsx`, `VoxelViewer.tsx`, `structureAnalysis.ts` (not introduced by this branch) |
+
+### Manual verification (expected)
+
+| Check | Expected |
+|-------|----------|
+| `/preview` | Defaults to **Generic** |
+| `/preview` Generic | Preset generates and inspects |
+| `/preview` Partials | Static partial showcase |
+| `/generic-lab` | Edit/validate/generate generic blueprints |
+| `/visualizer` | **308** redirect → `/generic-lab` |
+| Towers tab | **Absent** |
+| Active tower generator | **None** |
+
+### Remaining references (intentional)
+
+| Location | Why |
+|----------|-----|
+| `next.config.ts` | `/visualizer` redirect |
+| `buildingFamilies.test.ts` | Asserts `medieval_tower` not registered |
+| `GenericLabClient.tsx` | UI copy: “Not blueprintExchange” |
+| `docs/project-history/*` | Historical routes/screenshots (past tense) |
+| `docs/**` retired/historical sections | `medieval_tower`, `blueprintExchange` v1 documented as retired |
+| `PLAN.md` | Implementation plan for this branch |

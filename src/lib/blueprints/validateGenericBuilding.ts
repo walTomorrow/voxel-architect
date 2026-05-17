@@ -5,8 +5,15 @@ import type {
   GenericBuildingBlueprint,
   GenericWindowHeightBand,
   ResolvedGenericBuilding,
+  ResolvedStructure,
 } from "./types";
-import type { BlueprintValidationResult } from "./validateBlueprint";
+
+export interface BlueprintValidationResult {
+  readonly ok: boolean;
+  readonly errors: readonly string[];
+  readonly notes: readonly string[];
+  readonly resolved?: ResolvedStructure;
+}
 
 function isClassicKey(k: string): k is keyof typeof CLASSIC_BLOCK_PACK {
   return Object.prototype.hasOwnProperty.call(CLASSIC_BLOCK_PACK, k);
@@ -57,9 +64,9 @@ export function validateGenericBuildingBlueprint(
     errors.push('schemaVersion must be 1.');
   }
 
-  let W = blueprint.body.width;
-  let D = blueprint.body.depth;
-  let bodyLayers = blueprint.body.height;
+  const W = blueprint.body.width;
+  const D = blueprint.body.depth;
+  const bodyLayers = blueprint.body.height;
   const T = blueprint.body.wallThickness;
 
   if (!Number.isInteger(W) || W < 5 || W > 17) {

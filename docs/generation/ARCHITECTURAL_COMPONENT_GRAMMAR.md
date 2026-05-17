@@ -34,7 +34,7 @@ authoring intent (blueprint)
 - shared entrance trim and window emitters
 - shared roof emitters and merge priorities
 
-`medieval_tower` remains a **legacy vertical family** with its own generator until (if ever) it is expressed as components or shares more helpers.
+**`medieval_tower`** was a **retired** vertical family generator (tower era). The active product uses **`generic_building`** components only; see [`../project-history/DEVELOPMENT_TIMELINE.md`](../project-history/DEVELOPMENT_TIMELINE.md).
 
 ---
 
@@ -186,7 +186,7 @@ After merge, `generateFromComponentPlan()` applies:
 
 This keeps one **26-neighbor-connected** component reachable from all seeds at **`y === minY`** (structure-relative floor). It allows roof decks over **hollow interiors** (unlike legacy strict `filterGrounded` “block directly below”).
 
-`medieval_tower` may still use legacy grounding where appropriate; generic buildings use the 26-connected rule in `emitFromComponentPlan.ts`.
+**`generic_building`** uses the 26-connected rule in `emitFromComponentPlan.ts` (see [`GENERATOR_RELIABILITY.md`](./GENERATOR_RELIABILITY.md)).
 
 Analysis parity: `analyzeVoxelStructure()` in tests (`pnpm test:generator`).
 
@@ -218,7 +218,7 @@ Do **not** assume these exist in `ComponentPlan` or public blueprint JSON yet:
 - **Style resolver** — `buildingStyles.ts` is metadata-only today
 - **Selected-region editing** — no spatial blueprint patches
 - **AI image interpretation** — no vision → blueprint pipeline
-- **import/export v2** — no generic building envelope in `blueprintExchange`
+- **import/export v2** — no generic building exchange envelope yet (tower `blueprintExchange` v1 retired)
 - **blacksmith_workshop** — removed; not a target for revival as a family
 
 ---

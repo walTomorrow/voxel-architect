@@ -55,7 +55,7 @@ export default function Home() {
             <div className="mx-auto w-full max-w-3xl space-y-4 border-t border-zinc-800/80 pt-10 sm:max-w-4xl lg:max-w-5xl lg:space-y-5 lg:pt-12">
               <p className="text-sm leading-relaxed text-zinc-400 sm:text-base lg:text-lg">
                 Open the interactive voxel demo: orbit, zoom, and inspect a
-                hardcoded sample tower in full view.
+                generated voxel structures in full view.
               </p>
               <Link
                 href="/preview"

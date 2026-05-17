@@ -26,7 +26,7 @@ The public **landing page** when the project was first deployed to **Cloudflare*
 
 <img src="screenshots/03-visualizer-blueprint-template-6969ede.png" alt="Developer lab with tower blueprint templates" width="900" />
 
-The **developer lab** (`/visualizer`): blueprint-driven **tower templates**—the surface meant for **parameterizing buildings** (including future model-driven edits), not only hand-tweaking by developers.
+The **tower-era developer lab** (`/visualizer`, **later retired**): blueprint-driven **tower templates**—an early surface for parameterizing vertical structures before the generic component pipeline.
 
 ---
 
@@ -90,7 +90,7 @@ Developer lab on the **Dark Wizard Tower** preset; the blueprint sidebar adds **
 
 <img src="screenshots/12-generic-lab-blueprint-editor-81e6a4b.png" alt="Generic blueprint developer lab" width="900" />
 
-Preview’s **Developer lab →** link now opens **`/generic-lab`** for editing **generic building** blueprints; **`/visualizer`** remains the tower lab.
+Preview’s **Developer lab →** link now opens **`/generic-lab`** for editing **generic building** blueprints (replacing the retired tower-era **`/visualizer`** lab).
 
 ---
 
@@ -98,12 +98,12 @@ Preview’s **Developer lab →** link now opens **`/generic-lab`** for editing 
 
 Short context for changes not tied to a single UI capture:
 
-- **Medieval tower generator** — `MedievalTowerBlueprint` → deterministic `VoxelBlock[]`; still active on `/preview` → Towers and `/visualizer`.
+- **Medieval tower generator** — early `MedievalTowerBlueprint` → `VoxelBlock[]` path; **retired** after the generic component pivot (see §11).
 - **Generator reliability** — Vitest hard invariants (26-connectivity, grounding, `maxBlockCount`, valid partial shapes).
 - **Blacksmith workshop** — one-off low-rise experiment; **removed**; lessons folded into **generic_building**.
 - **Generic component pipeline** — `GenericBuildingBlueprint` → internal `ComponentPlan` → component emitters; see screenshots **9–10** and the grammar doc.
 
-**Current product:** `/preview` → Towers | Generic | Partials; **`/generic-lab`** for manual generic blueprint editing; `/visualizer` for towers (blueprint JSON copy/import); no AI runtime or InteriorPlan yet.
+**Current product:** `/preview` → Generic | Partials; **`/generic-lab`** for manual `GenericBuildingBlueprint` editing; `/visualizer` redirects to `/generic-lab` (tower lab retired); no AI runtime or InteriorPlan yet.
 
 ---
 

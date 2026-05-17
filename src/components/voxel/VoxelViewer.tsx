@@ -11,7 +11,7 @@ import {
   sortBlockTypesForRender,
 } from "@/src/lib/voxel/blocks/registry";
 import { textureUrl } from "@/src/lib/voxel/blocks/textureUrls";
-import { SAMPLE_STRUCTURE } from "@/src/lib/voxel/sampleStructure";
+const EMPTY_STRUCTURE: VoxelStructure = { blocks: [] };
 import type { VoxelBlock, VoxelStructure } from "@/src/lib/voxel/types";
 import {
   getVoxelBlockRenderBucketKey,
@@ -491,7 +491,7 @@ function TexturedSceneWithTextures({
 
 export function VoxelViewer({
   className,
-  structure = SAMPLE_STRUCTURE,
+  structure = EMPTY_STRUCTURE,
   boundsStructure,
   cameraResetNonce = 0,
 }: {

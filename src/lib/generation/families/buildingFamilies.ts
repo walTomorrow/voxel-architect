@@ -1,9 +1,9 @@
 /**
  * Product-supported building families (generator grammars).
- * Styles live in `buildingStyles.ts`; presets are curated blueprint snapshots.
+ * Presets are curated blueprint snapshots in `sampleGenericBuildingBlueprints.ts`.
  */
 
-export const BUILDING_FAMILY_IDS = ["medieval_tower", "generic_building"] as const;
+export const BUILDING_FAMILY_IDS = ["generic_building"] as const;
 
 export type BuildingFamilyId = (typeof BUILDING_FAMILY_IDS)[number];
 
@@ -20,13 +20,6 @@ export const BUILDING_FAMILIES: Record<
   BuildingFamilyId,
   BuildingFamilyDefinition
 > = {
-  medieval_tower: {
-    familyId: "medieval_tower",
-    displayName: "Medieval tower",
-    description:
-      "Vertical shell tower with roof crown, crenellations, and symmetric window columns.",
-    status: "shipped",
-  },
   generic_building: {
     familyId: "generic_building",
     displayName: "Generic building",

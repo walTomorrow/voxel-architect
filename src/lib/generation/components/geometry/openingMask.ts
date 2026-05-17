@@ -190,7 +190,7 @@ export function deriveOpeningsForGenericBuilding(
   let remainder = win.count - perFacade * facades.length;
 
   for (const side of facades) {
-    let n = perFacade + (remainder > 0 ? 1 : 0);
+    const n = perFacade + (remainder > 0 ? 1 : 0);
     if (remainder > 0) remainder -= 1;
     const forbidden = entranceForbidden.get(side) ?? new Set<number>();
     addWindowsForFacade(
