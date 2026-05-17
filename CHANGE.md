@@ -1,170 +1,72 @@
-# CHANGE.md — Add generic building component pipeline
+# CHANGE.md — Documentation: project history and component grammar
+
+**Branch:** `docs/project-history-and-component-grammar`  
+**Scope:** Documentation only — no product code, generators, tests, routes, schemas, or UI changes.
 
 ## Summary
 
-Slice 2 adds `generic_building` as the first component-based generator path on `milestone/generator-expansion`. Authoring flows through `GenericBuildingBlueprint` → validation → internal `ComponentPlan` → component generators → `VoxelBlock[]`. `medieval_tower` is unchanged. `blacksmith_workshop` was not resurrected.
+Documented the architecture pivot after **`generic_building`** merged to `main`: semantic compiler model, component pipeline, removed **`blacksmith_workshop`**, y-level/opening conventions, and project evolution timeline with screenshot inventory placeholders.
 
-## Files added
+## Files created
 
-### Blueprints
+| Path | Purpose |
+|------|---------|
+| [`docs/project-history/DEVELOPMENT_TIMELINE.md`](docs/project-history/DEVELOPMENT_TIMELINE.md) | Visual product timeline with embedded screenshots (see addendum) |
+| [`docs/project-history/screenshots/README.md`](docs/project-history/screenshots/README.md) | Screenshot naming, inventory table, capture checklist |
+| [`docs/project-history/screenshots/`](docs/project-history/screenshots/) | Eleven deployment captures (`01`–`11`, `.png`); see addendum |
+| [`docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md`](docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md) | Component IR, vocabulary, ordering, merge priorities, aperture masks, coordinates, deferred features |
 
-- `src/lib/blueprints/validateGenericBuilding.ts`
-- `src/lib/blueprints/sampleGenericBuildingBlueprints.ts`
-- `src/lib/blueprints/__tests__/validateGenericBuilding.test.ts`
+## Files updated
 
-### Component pipeline (internal)
+| Path | Changes |
+|------|---------|
+| [`docs/generation/GENERATION_DESIGN_PRINCIPLES.md`](docs/generation/GENERATION_DESIGN_PRINCIPLES.md) | Semantic compiler framing; AI edits blueprints not voxels; `ComponentPlan` internal; `blacksmith_workshop` removed; generic path + opening/absence model; link to grammar doc |
+| [`docs/generation/GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md) | Dual pipelines; generic/component tests; blacksmith removed; visual-fix policy; 100-test reference |
+| [`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`](docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md) | Active types table; generic authoring sections; §4.2 generic building; blacksmith historical; roadmap tweaks |
+| [`docs/blueprints/BLUEPRINT_JSON_FORMAT.md`](docs/blueprints/BLUEPRINT_JSON_FORMAT.md) | Tower-only v1 exchange; generic internal path; `ComponentPlan` not public; future v2 note |
 
-- `src/lib/generation/components/types.ts`
-- `src/lib/generation/components/priorities.ts`
-- `src/lib/generation/components/planContext.ts`
-- `src/lib/generation/components/compileGenericBuildingPlan.ts`
-- `src/lib/generation/components/emitFromComponentPlan.ts`
-- `src/lib/generation/components/geometry/localKeys.ts`
-- `src/lib/generation/components/geometry/facadeSides.ts`
-- `src/lib/generation/components/geometry/openingMask.ts`
-- `src/lib/generation/components/generators/rectangularBody.ts`
-- `src/lib/generation/components/generators/foundation.ts`
-- `src/lib/generation/components/generators/hollowWallShell.ts`
-- `src/lib/generation/components/generators/entranceOnSide.ts`
-- `src/lib/generation/components/generators/sparseWindows.ts`
-- `src/lib/generation/components/generators/roofs.ts`
-- `src/lib/generation/components/generators/chimney.ts`
-- `src/lib/generation/components/generators/frontStep.ts`
-- `src/lib/generation/components/__tests__/compileGenericBuildingPlan.test.ts`
-- `src/lib/generation/components/__tests__/openingMask.test.ts`
-- `src/lib/generation/components/__tests__/componentGenerators.test.ts`
+## Assumptions and notes
 
-### Generation
+- **Screenshot PNGs** — see **Addendum** below for the committed capture set and visual timeline layout.
+- **`docs/GENERATION_DESIGN_PRINCIPLES.md`** at repo root was not present; canonical path is **`docs/generation/GENERATION_DESIGN_PRINCIPLES.md`** (workspace rules reference `AGENTS.md` only).
+- **Docs lint:** `package.json` has no `docs:lint` or markdownlint script — not run.
+- **Tests:** Not run (docs-only per task). Last merged generator slice reported **100** tests / **tsc** / **build** pass.
 
-- `src/lib/generation/generators/generateGenericBuilding.ts`
-- `src/lib/generation/__tests__/generatorGenericPresetInvariants.test.ts`
+## Related implementation reference (unchanged in this PR)
 
-## Files edited
+Generic pipeline entry: `validateBlueprint()` → `validateGenericBuildingBlueprint()` → `compileGenericBuildingToComponentPlan()` → `generateFromComponentPlan()` — see merged slice in prior `CHANGE.md` entries on `milestone/generator-expansion`.
 
-- `src/lib/blueprints/types.ts` — `generic_building` types; union extensions
-- `src/lib/blueprints/validateBlueprint.ts` — generic dispatch
-- `src/lib/generation/generateStructure.ts` — generic dispatch + exhaustive `default`
-- `src/lib/generation/families/buildingFamilies.ts` — `generic_building` shipped
-- `src/lib/generation/__tests__/buildingFamilies.test.ts` — two families
-- `src/app/preview/PreviewInspectionClient.tsx` — Towers | Generic | Partials
-- `src/components/voxel/StructureInspectionPanel.tsx` — `preset_generic` source
-- `vitest.config.ts` — include blueprint + component test paths
+---
 
-## GenericBuildingBlueprint (v1)
+## Addendum — Project history screenshots and visual timeline
 
-- `structureType: "generic_building"`, `schemaVersion: 1`
-- `body`: width 5–17, depth 5–13, height 4–9 (walls only, excludes roof), `wallThickness` 1–2, `hollowInterior`
-- `roof`: `pitched_gable` | `shed` | `none`, optional layers/overhang (overhang clamped 0–1)
-- `openings`: entrance side + width 1–3 + height 2–4; windows mode + count 0–12 + optional height band
-- `features`: optional chimney, optional front step
-- `materials` / `constraints`: same classic-key pattern as tower
+**Scope:** Documentation only (screenshots + timeline/README edits).
 
-## Internal ComponentPlan (v1)
+### What was added
 
-- Lives under `src/lib/generation/components/` only
-- Discriminated `PlannedComponent` unions (no loose `Record` params)
-- `openings` on plan: `shellSkipMask`, `windowMask`, `entranceMask` (derived at compile time, not on authoring blueprint)
-- Exactly one `rectangular_body` (`body_main`, zero placements in v1)
-- Canonical emit order: body → foundation → shell → entrance → windows → roof → chimney → front_step
+Eleven **Cloudflare deployment captures** under `docs/project-history/screenshots/`, named `{nn}-{subject}-{short-sha}.png` so each file records the build it came from:
 
-## Aperture mask / shell-skip
+| File | Subject |
+|------|---------|
+| `01-landing-page-6969ede.png` | Landing page, first deployment |
+| `02-preview-3d-visualization-6969ede.png` | Preview 3D rendering smoke test |
+| `03-visualizer-blueprint-template-6969ede.png` | Developer lab / tower blueprint templates |
+| `04-preview-onion-layers-be8de1d.png` | Preview tower presets + onion layers |
+| `05-visualizer-onion-layers-be8de1d.png` | Developer lab onion layers (archival; not in timeline) |
+| `06-preview-block-breakdown-f9d4137.png` | Block breakdown side panel |
+| `07-preview-collapsible-sidepanel-65a28f6.png` | Collapsible preview panel |
+| `08-visualizer-collapsed-sidepanel-65a28f6.png` | Collapsed lab + Guard Tower preset |
+| `09-visualizer-blueprint-options-a5b3dce.png` | Copy / import blueprint JSON |
+| `10-preview-partial-blocks-05fbfe8.png` | Partial blocks (posts, panes, slabs) |
+| `11-preview-new-generic-preset-05fbfe8.png` | Generic building component pivot on preview |
 
-No air block type. Compiler derives entrance and window cells; `hollow_wall_shell` skips them; `sparse_windows` fills window cells with pane/cube; `entrance_on_side` places sparse door/accent trim only (open void in doorway).
+Files were normalized to **lowercase `.png`** for GitHub and Markdown preview compatibility.
 
-## Generic presets
+### Timeline and README updates
 
-| Id | Purpose |
-|----|---------|
-| `simple_rustic_cabin` | Gable cabin, chimney, front step, front windows (default generic) |
-| `shed_roof_workshop` | Wide shed roof, side windows, no chimney/step |
+- [`docs/project-history/DEVELOPMENT_TIMELINE.md`](docs/project-history/DEVELOPMENT_TIMELINE.md) — Rewritten as a **visual-first** chronology: ten embedded images (`<img src="screenshots/…" width="900" />`) with short captions. Commit tables and Part A/B structure removed in favor of readable screenshots; brief architecture notes kept at the end. **`05-visualizer-onion-layers-be8de1d.png`** is omitted from the timeline (redundant with screenshot 04 at the same deployment).
+- [`docs/project-history/screenshots/README.md`](docs/project-history/screenshots/README.md) — Inventory table aligned with the captures: route, commit message context from git where available, formal descriptions of what each image shows and why it matters.
 
-Materials use only existing classic keys: `cobblestone`, `oak_planks`, `limestone_bricks`, `limestone`, `glass`, `slate_tiles`.
+### Viewing the timeline
 
-## Preview
-
-- **Towers | Generic | Partials**; default remains **Towers / northwatch**
-- Generic: preset dropdown only; no ComponentPlan UI
-
-## Confirmations
-
-| Item | Status |
-|------|--------|
-| `medieval_tower` | Unchanged |
-| `blacksmith_workshop` | Not resurrected |
-| `ComponentPlan` | Internal-only |
-| `blueprintExchange` | Unchanged, tower-only v1 |
-| `/visualizer` | Unchanged |
-| AI / image / interior / region-selection | Not added |
-| New textures / block definitions | None |
-| `cottage_house` | Not added |
-
-## Tests added/updated
-
-- Validator, compiler, opening mask, component generator unit tests
-- `generatorGenericPresetInvariants.test.ts` (hard + placement semantics)
-- `buildingFamilies.test.ts` — 2 shipped families
-- Tower tests unchanged
-
-## Residue grep (`src/`)
-
-| Pattern | Matches |
-|---------|---------|
-| `blacksmith_workshop` | 1 — `buildingFamilies.test.ts` (intentional negative) |
-| `BlacksmithWorkshop` | 0 |
-| `validateBlacksmith` | 0 |
-| `generateBlacksmith` | 0 |
-| `BLACKSMITH` | 0 |
-| `preset_blacksmith` | 0 |
-
-## Visual cleanup before commit
-
-Preview feedback: generic bases looked two blocks thick; shed workshop roof read flat.
-
-**Foundation / floor (single y=0 slab):**
-- `foundation.ts` — full footprint at y=0 uses `materials.floor` (foundation/floor layer).
-- `hollowWallShell.ts` — removed interior floor placements at y=1; hollow interior starts above the y=0 slab; walls remain y=1..body.height.
-
-**Shed roof:**
-- `sampleGenericBuildingBlueprints.ts` — `shed_roof_workshop` `roof.layers` 1 → 2.
-- `roofs.ts` — `emitShedRoof` builds a back-to-front stepped slope (more layers toward front / `lz === D - 1`) instead of flat stacked slabs.
-
-**Tests:** `componentGenerators.test.ts` — foundation uses floor material; shell does not emit `INTERIOR_FLOOR` at y=1.
-
-## Addendum — shed roof workshop coverage fix
-
-**Why the roof looked missing:** Two bugs stacked.
-
-1. **Slope math:** `riseStartLz = D - layers` meant only the last two depth rows (front edge) got any roof blocks; the back ~7 rows had `rise < 1` and were skipped — matching the small corner cluster in preview.
-
-2. **filterGrounded:** Roof blocks need a voxel directly below (`y-1`). Hollow interiors have no blocks under the inner ceiling, so almost all interior roof voxels were dropped after merge, leaving only a sliver still connected to perimeter walls.
-
-**Fixes:**
-- `roofs.ts` — `shedRiseForLocalLz`: every depth column gets at least one roof layer at `lz=0`, up to `layers` at `lz=D-1` (the old `riseStartLz = D - layers` formula skipped the back rows entirely).
-- `placementUtils.ts` — `filterGroundedConnected26`: component pipeline now uses 26-neighbor grounding from `minY` seeds (same rule as `analyzeVoxelStructure` / generator invariants). The legacy `filterGrounded` (strict block directly below) remains for `medieval_tower`; it was deleting almost all roof voxels over hollow interiors.
-- `emitFromComponentPlan.ts` — calls `filterGroundedConnected26` instead of `filterGrounded`.
-
-**Tests:** `shedRoof.test.ts` — rise helper, back-row placements, workshop keeps ≥ footprint roof count after full generate + filterGrounded.
-
-## Addendum — doorway threshold floor and standard door height
-
-**What users saw:** Missing floor block in the doorway (black void at y=0) and/or a misplaced exterior step; openings taller than two blocks above the floor read as “big doors” instead of standard Minecraft clearance.
-
-**Why it happened:** A prior fix carved the entrance through **y=0** in the shell skip mask and skipped foundation placement there, which removed the threshold floor while `front_step` could still place a block outside the footprint.
-
-**Fix:**
-- `openingMask.ts` — wall aperture only at **y=1..entrance.height**; y=0 stays floored.
-- `foundation.ts` — full footprint floor at y=0, including doorway cells.
-- `entranceOnSide.ts` — lintel at **y = height + 1**; trim never in the walk band y=1..height; jambs when height ≥ 3.
-- Presets — `entrance.height: 2` on cabin and workshop (standard two-block clearance above floor).
-- `validateGenericBuilding.ts` — note when height > 2 (big door).
-- `docs/generation/GENERATION_DESIGN_PRINCIPLES.md` — §2.3.1 generic doorway bands.
-
-**Tests:** `entranceDoorway.test.ts`, `openingMask.test.ts`, `componentGenerators.test.ts`.
-
-## Verification
-
-| Command | Result |
-|---------|--------|
-| `pnpm test:generator` | **100 passed** (18 files) |
-| `pnpm exec tsc --noEmit` | **Pass** |
-| `pnpm run build` | **Pass** |
+Open [`DEVELOPMENT_TIMELINE.md`](docs/project-history/DEVELOPMENT_TIMELINE.md) in Markdown preview. Images resolve relative to `docs/project-history/screenshots/`. If preview is blank locally, allow workspace content in **Markdown › Preview: Security Level** (Cursor/VS Code), then re-open preview after `git add docs/project-history/`.

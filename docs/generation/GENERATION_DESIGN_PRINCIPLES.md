@@ -12,9 +12,13 @@ The goal is to prevent the project from becoming a collection of random toggles 
 
 [`GENERATOR_RELIABILITY.md`](./GENERATOR_RELIABILITY.md) documents **automated structural checks** on the current deterministic generator output (Vitest). That complements this document: readability and composition principles here are **not** the same as “passes geometric invariant tests.”
 
+[`ARCHITECTURAL_COMPONENT_GRAMMAR.md`](./ARCHITECTURAL_COMPONENT_GRAMMAR.md) documents the **generic_building** component compiler IR, merge priorities, and aperture masks.
+
 ---
 
 # 1. Core Philosophy
+
+Voxel Architect is a **semantic architecture compiler**, not a chatbot that places blocks. Users and future AI describe **buildings**; deterministic code owns **geometry, validation, merge policy, and placement**.
 
 Voxel Architect should generate buildings through this chain:
 
@@ -31,9 +35,11 @@ The AI should eventually operate at the level of **architectural intent**, not r
 
 The generator should remain responsible for exact voxel geometry.
 
+**Future AI (and human authoring tools) should edit semantic blueprints**—`MedievalTowerBlueprint`, `GenericBuildingBlueprint`, and later interior/floor-plan fields—not raw **`VoxelBlock[]`** streams. **`ComponentPlan`** is **internal compiler IR** only; it must **not** be treated as a public JSON authoring format (see [`ARCHITECTURAL_COMPONENT_GRAMMAR.md`](./ARCHITECTURAL_COMPONENT_GRAMMAR.md)).
+
 ### 1.1 Blueprint responsibility
 
-A **blueprint** describes **what** to build in structured form: building family (today **`medieval_tower`**), dimensions, semantic materials, massing, levels, openings (entrance, windows), roof, ornamental features, and constraints. It may someday include **floor-plan / interior layout intent** (rooms, zones, circulation)—**that layer is not in the schema yet** (§1.4).
+A **blueprint** describes **what** to build in structured form: building family (today **`medieval_tower`** or **`generic_building`**), dimensions, semantic materials, massing, levels, openings (entrance, windows), roof, ornamental features, and constraints. It may someday include **floor-plan / interior layout intent** (rooms, zones, circulation)—**that layer is not in the schema yet** (§1.4).
 
 Blueprints are **not** **`VoxelBlock[]`** placement lists and **not** the right interchange format for exhaustive block dumps. See also [`../blueprints/BLUEPRINT_FEATURE_CATALOG.md`](../blueprints/BLUEPRINT_FEATURE_CATALOG.md) (responsibility split).
 
@@ -59,7 +65,18 @@ A future blueprint extension might describe floors, rooms, zones, purposes (forg
 
 ### 1.5 Current generator scope
 
-The active pipeline is **`StructureBlueprint` → `validateBlueprint()` → `generateStructureFromResolved()` → family generator → `VoxelBlock[]`**. Shipped families: **`medieval_tower`** (vertical shell, crown, crenellations) and **`generic_building`** (rectangular footprint, foundation at **y=0**, hollow wall shell from **y=1**, component plan with entrance trim, windows, roof). Hollow interiors remain **limited**; there is **no full interior layout or room graph** yet. Partial shapes today: **cube / slab / pane / post**; window materials may emit **pane** when metadata allows.
+The active pipeline is **`StructureBlueprint` → `validateBlueprint()` → `generateStructureFromResolved()` → family or component generator → `VoxelBlock[]`**.
+
+| Path | Role |
+|------|------|
+| **`medieval_tower`** | Legacy **vertical** family generator (`generateMedievalTower`). Still the focus of **`/visualizer`** and tower **`blueprintExchange` v1**. |
+| **`generic_building`** | First **component-based** low-rise path: `GenericBuildingBlueprint` → internal **`ComponentPlan`** → component emitters → merge → preview on **`/preview` → Generic**. |
+
+**Removed from the active product path:** **`blacksmith_workshop`** (one-off family experiment; lessons absorbed into generic components—see [`../project-history/DEVELOPMENT_TIMELINE.md`](../project-history/DEVELOPMENT_TIMELINE.md)).
+
+**Geometry conventions (generic_building):** **y = 0** is the single foundation/floor slab; **walls start at y = 1**; **`body.height`** is wall height above foundation **excluding roof**; roof layers sit above the body. Hollow interiors remain **limited**; there is **no full interior layout or room graph** yet. Partial shapes today: **cube / slab / pane / post**; window materials may emit **pane** when metadata allows.
+
+**Openings:** there is **no air block**. Door and window “holes” are modeled as **absence of shell blocks** via derived **aperture masks** at compile time; windows and trim **fill selected mask cells** only.
 
 ### 1.6 Building style catalog (metadata only)
 
@@ -209,6 +226,8 @@ For example, a front facade with a central entrance should reserve a larger vert
 ## 2.6 Openings must respect structure and rhythm
 
 Windows, doors, arches, and gates should not be placed just because a cell is available.
+
+For **`generic_building`**, openings are **derived during compile** (`entranceMask`, `windowMask`, `shellSkipMask`). The hollow shell **skips** masked cells; generators **do not** flood doorways with solid “door” blocks. Walkable door volume is **empty voxels** in the aperture band (see §2.3.1). Windows occupy **sparse** cells from `windowMask` only.
 
 Openings should respect:
 
