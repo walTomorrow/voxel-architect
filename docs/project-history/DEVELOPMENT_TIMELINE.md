@@ -86,6 +86,14 @@ Developer lab on the **Dark Wizard Tower** preset; the blueprint sidebar adds **
 
 ---
 
+## 11 — Developer lab: generic blueprint
+
+<img src="screenshots/12-generic-lab-blueprint-editor-81e6a4b.png" alt="Generic blueprint developer lab" width="900" />
+
+Preview’s **Developer lab →** link now opens **`/generic-lab`** for editing **generic building** blueprints; **`/visualizer`** remains the tower lab.
+
+---
+
 ## Architecture milestones (no screenshots)
 
 Short context for changes not tied to a single UI capture:
@@ -95,7 +103,7 @@ Short context for changes not tied to a single UI capture:
 - **Blacksmith workshop** — one-off low-rise experiment; **removed**; lessons folded into **generic_building**.
 - **Generic component pipeline** — `GenericBuildingBlueprint` → internal `ComponentPlan` → component emitters; see screenshots **9–10** and the grammar doc.
 
-**Current product:** `/preview` → Towers | Generic | Partials; tower-only blueprint JSON exchange in the lab; no AI runtime or InteriorPlan yet.
+**Current product:** `/preview` → Towers | Generic | Partials; **`/generic-lab`** for manual generic blueprint editing; `/visualizer` for towers (blueprint JSON copy/import); no AI runtime or InteriorPlan yet.
 
 ---
 

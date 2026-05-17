@@ -135,3 +135,8 @@ Added `/generic-lab` to edit generic presets, validate/generate live through the
 - Viewer + inspection wrapper: `h-full min-h-0` so it fills space below the header beside the editor.
 - `<main>`: `h-full` + `min-h-[min(52vh,26rem)]` (preview-aligned minimum on small screens).
 - `VoxelViewer`: `className="h-full w-full"`.
+
+### Addendum — Project history screenshot (`12-generic-lab`)
+
+- Added [`docs/project-history/screenshots/12-generic-lab-blueprint-editor-81e6a4b.png`](docs/project-history/screenshots/12-generic-lab-blueprint-editor-81e6a4b.png) from user capture of `/generic-lab`.
+- Updated [`docs/project-history/DEVELOPMENT_TIMELINE.md`](docs/project-history/DEVELOPMENT_TIMELINE.md) (§11) and [`docs/project-history/screenshots/README.md`](docs/project-history/screenshots/README.md) inventory.
