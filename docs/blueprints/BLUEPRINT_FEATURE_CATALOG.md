@@ -31,6 +31,37 @@ This is **not** intended to be an exhaustive encyclopedia of architecture. It is
 
 ---
 
+## Active structure types (current product)
+
+| `structureType` | Status | Generator path | Primary UI |
+|-----------------|--------|----------------|------------|
+| **`medieval_tower`** | **Active** | `generateMedievalTower()` — legacy vertical family | `/preview` → Towers; `/visualizer` blueprint lab |
+| **`generic_building`** | **Active** | `compileGenericBuildingToComponentPlan()` → component emitters | `/preview` → Generic |
+| **`blacksmith_workshop`** | **Removed** | Was a one-off family; **not** in `generateStructure` or building families | Historical only — see [`../project-history/DEVELOPMENT_TIMELINE.md`](../project-history/DEVELOPMENT_TIMELINE.md) |
+
+Authoring types live in `src/lib/blueprints/types.ts`. **`ComponentPlan`** is **internal compiler IR** — not a public blueprint surface ([`../generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md`](../generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md)).
+
+---
+
+## Generic building (`generic_building`) — supported authoring sections
+
+The **public** schema is **`GenericBuildingBlueprint`** (`structureType: "generic_building"`, `schemaVersion: 1`). Presets: `src/lib/blueprints/sampleGenericBuildingBlueprints.ts`.
+
+| Section | Fields (conceptual) | Generator use |
+|---------|---------------------|-----------------|
+| **`body`** | `width`, `depth`, `height` (walls above foundation), `wallThickness`, `hollowInterior` | Footprint grid, shell thickness, body layer count |
+| **`roof`** | `kind`: `pitched_gable` \| `shed` \| `none`; `layers`, `overhang` | Roof components after shell |
+| **`openings.entrance`** | `side`, `width`, `height` (walk band above floor; **2** = standard door) | Aperture mask + `entrance_on_side` trim |
+| **`openings.windows`** | `mode`, `count`, `heightBand` | `sparse_windows` on derived `windowMask` |
+| **`features`** | `chimney.enabled`, `chimney.side`, `frontStep.enabled` | Optional chimney / exterior step |
+| **`materials`** | `wall`, `floor`, `roof`, `window`, `door`, `accent` | Resolved to registry ids before emit |
+| **`constraints`** | `maxBlockCount`, `allowFloatingBlocks`, `requireGroundedStructure`, `enforceSymmetry` | Post-merge grounding and budgets |
+| **`metadata`** | `name`, `description` | Labels only |
+
+**y conventions:** **y = 0** foundation/floor (including doorway threshold); walls **y ≥ 1**; roof above **`body.height`**. Openings are **absence of shell** in masked cells, not an “air” block type.
+
+---
+
 ## Core Principle
 
 The blueprint should describe **architectural intent and constraints**.
@@ -107,7 +138,14 @@ Explorable interiors need intentional **voids**, **rooms**, **openings**, **circ
 
 ### Current pipeline reality
 
-The shipped **medieval tower** path is still primarily **exterior mass, shell, openings, roof/crown, and detail generation**. Hollow shells and thin interior floors exist in limited form; there is **no full interior layout or room system** yet. Partial blocks today include **cube / slab / pane / post**; the medieval generator emits **pane** windows when the resolved window material allows **pane**.
+Two **active** generator paths exist:
+
+- **`medieval_tower`** — vertical family; primarily exterior mass, shell, openings, roof/crown, crenellations. Still the focus of **`/visualizer`** and **blueprintExchange v1**.
+- **`generic_building`** — rectangular low-rise via **component plan**; foundation at **y = 0**, hollow shell from **y = 1**, derived aperture masks, sparse windows and entrance trim.
+
+Hollow interiors remain **limited** on both paths; there is **no full interior layout or room system** yet. Partial blocks today include **cube / slab / pane / post**; generators emit **pane** windows when the resolved window material allows **pane**.
+
+**`blacksmith_workshop`** was a learning-step family and is **not** an active catalog target.
 
 ---
 
@@ -174,8 +212,9 @@ Describes what kind of building is being generated.
 
 Examples:
 
-- Medieval tower
-- Small house
+- Medieval tower (**active**)
+- Generic rectangular building / cabin / workshop (**active** via `generic_building`)
+- Small house (future — compose via generic components, not a separate type yet)
 - Castle gatehouse
 - Bridge
 - Chapel
@@ -195,11 +234,13 @@ Potential schema area:
 
 ```ts
 structure: {
-  type: "medieval_tower" | "small_house" | "gatehouse" | "bridge" | "chapel";
+  type: "medieval_tower" | "generic_building" | /* future */ "small_house" | "gatehouse";
   style?: "medieval" | "gothic" | "rustic" | "fantasy" | "fortress" | "modern";
   scale?: "small" | "medium" | "large" | "monumental";
 }
 ```
+
+**Removed from product (historical):** `blacksmith_workshop` — do not document as a supported `structureType`.
 
 ---
 
@@ -1306,10 +1347,12 @@ These are not exhaustive. They define practical subsets for generator modules.
 
 ---
 
-## 4.1 Medieval Tower
+## 4.1 Medieval Tower (`medieval_tower`)
 
 Purpose:
 A vertical fortified structure with readable medieval/fantasy identity.
+
+**Status:** **Active** — legacy family generator; tower-only **blueprintExchange v1**.
 
 Core systems:
 
@@ -1378,10 +1421,42 @@ medievalTower: {
 
 ---
 
-## 4.2 Small Medieval House
+## 4.2 Generic building (`generic_building`)
+
+Purpose:
+Low-rise rectangular buildings (cabins, workshops, simple houses) via the **component pipeline**—not a separate generator per building archetype.
+
+Core systems (v1):
+
+- Rectangular footprint (`body.width` × `body.depth`)
+- **y = 0** foundation slab (`materials.floor`)
+- Hollow wall shell from **y = 1** (`hollow_wall_shell`)
+- Entrance aperture + sparse trim (`entrance_on_side`)
+- Symmetric window slots (`sparse_windows`)
+- `pitched_gable` or `shed` roof
+- Optional chimney and exterior `frontStep`
+
+Near-term features:
+
+| Feature | Priority | Notes |
+|---|---|---|
+| Standard 2-high doorway | High | Preset `entrance.height: 2`; threshold always floored |
+| Shed roof slope | High | `shed_roof_workshop` preset |
+| Gable roof | High | `simple_rustic_cabin` preset |
+| Pane windows | High | When window material allows |
+| Interior rooms | Later | Requires InteriorPlan / floor-plan schema |
+| Second body / wing | Later | Single rectangle only today |
+
+**Status:** **Active** — presets in `sampleGenericBuildingBlueprints.ts`; preview **Generic** tab. **Not** in blueprintExchange v1 import/export.
+
+---
+
+## 4.3 Small Medieval House (future)
 
 Purpose:
 A compact domestic building with pitched roof and simple openings.
+
+**Status:** **Later** — likely modeled as **`generic_building`** presets + components, not a new monolithic family.
 
 Core systems:
 
@@ -1418,7 +1493,7 @@ Potential generator notes:
 
 ---
 
-## 4.3 Castle Gatehouse
+## 4.4 Castle Gatehouse
 
 Purpose:
 A defensive entrance structure, often with twin towers and central gate.
@@ -1454,7 +1529,7 @@ Potential generator notes:
 
 ---
 
-## 4.4 Stone Bridge
+## 4.5 Stone Bridge
 
 Purpose:
 A span connecting two sides across empty space or terrain.
@@ -1488,7 +1563,7 @@ Potential generator notes:
 
 ---
 
-## 4.5 Chapel / Small Church
+## 4.6 Chapel / Small Church
 
 Purpose:
 A small religious building with recognizable roof, windows, and front emphasis.
@@ -1523,7 +1598,7 @@ Potential generator notes:
 
 ---
 
-## 4.6 Cathedral
+## 4.7 Cathedral
 
 Purpose:
 A large, complex sacred structure with monumental scale.
@@ -1779,7 +1854,7 @@ Current weaknesses:
 - Facade articulation is basic
 - No circulation system
 - No room/interior semantics
-- No second structure type yet
+- **`generic_building`** is the second **active** structure type (component path); tower visualizer has not caught up
 
 Recommended next improvements for medieval tower:
 
@@ -1885,9 +1960,9 @@ Recommended pre-AI sequence:
 4. Add blueprint JSON import/export.
 5. Add snapshot tests for validation and generation.
 6. Create a polished non-AI `/demo` page separate from `/visualizer`.
-7. Add a second structure type:
-   - Recommended: `small_medieval_house`
-   - Alternative: `castle_gatehouse`
+7. Extend **`generic_building`** (components + presets) rather than new one-off families:
+   - e.g. house/gatehouse **presets** and new components when needed
+   - Avoid reviving **`blacksmith_workshop`** as a separate type
 8. Add local rule-based prompt-to-blueprint prototype.
 9. Add real LLM prompt-to-blueprint generation only after deterministic generation is strong.
 

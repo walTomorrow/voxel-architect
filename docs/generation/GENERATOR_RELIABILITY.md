@@ -2,7 +2,7 @@
 
 Developer-facing overview of **what generator reliability means today**, **what Vitest enforces**, and **what is out of scope**. This is **maintainer infrastructure**, not an end-user feature.
 
-Passing these checks means outputs are **mechanically sane** for the current **deterministic generator** paths (**`medieval_tower`** and **`blacksmith_workshop`**)—they do **not** prove beauty, architectural taste, or design correctness in an aesthetic sense (see also [`GENERATION_DESIGN_PRINCIPLES.md`](./GENERATION_DESIGN_PRINCIPLES.md), §2.2).
+Passing these checks means outputs are **mechanically sane** for the current **deterministic generator** paths (**`medieval_tower`** and **`generic_building`**)—they do **not** prove beauty, architectural taste, or design correctness in an aesthetic sense (see also [`GENERATION_DESIGN_PRINCIPLES.md`](./GENERATION_DESIGN_PRINCIPLES.md), §2.2).
 
 Preset and edge-case suites also assert **`validateVoxelStructurePlacements`** (structural shape/state **plus** material/shape semantics for partial blocks — e.g. window **panes** — where the generator emits them) via **`assertGeneratedStructurePlacementSemantics`**—orthogonal to 26-connectivity but required for safe partial-block emission.
 
@@ -12,20 +12,36 @@ Preset and edge-case suites also assert **`validateVoxelStructurePlacements`** (
 
 - Catch **structural regressions** early (empty output, bad IDs, duplicate lattice cells, disconnected mass, over budget).
 - Document **objective rules** the suite relies on so contributors know how to extend or split tests when generators evolve.
+- Enforce that **visual fixes are solved through generator semantics**, not by weakening invariants.
 
 ---
 
-## Current deterministic pipeline
+## Current deterministic pipelines
+
+### Medieval tower (legacy family)
 
 ```text
-StructureBlueprint (medieval_tower | blacksmith_workshop)
+MedievalTowerBlueprint
   → validateBlueprint()
-  → generateStructureFromResolved(resolved)
+  → ResolvedMedievalTower
+  → generateMedievalTower()
   → VoxelBlock[]
-  → analyzeVoxelStructure(blocks)
+```
+
+### Generic building (component plan)
+
+```text
+GenericBuildingBlueprint
+  → validateBlueprint()  →  validateGenericBuildingBlueprint()
+  → ResolvedGenericBuilding
+  → compileGenericBuildingToComponentPlan()  →  ComponentPlan (internal IR)
+  → generateFromComponentPlan()
+  → VoxelBlock[]
 ```
 
 Production UI flows may call `generateStructure()` (validate + generate); tests often validate once then call `generateStructureFromResolved` to mirror the post-validation path without double validation.
+
+**Not active:** **`blacksmith_workshop`** — removed from the generator registry; `buildingFamilies.test.ts` expects no family entry.
 
 ---
 
@@ -35,21 +51,29 @@ Production UI flows may call `generateStructure()` (validate + generate); tests 
 |------|----------|
 | **Generator smoke** | `src/lib/generation/__tests__/generatorPipeline.smoke.test.ts` — default sample blueprint validates and yields non-empty blocks |
 | **Structure analysis helpers** | `src/lib/voxel/structureAnalysis.ts`, `src/lib/voxel/__tests__/structureAnalysis.test.ts` — coordinate keys, duplicates, invalid IDs, 26-connectivity, grounding |
-| **Curated preset invariants** | `src/lib/generation/__tests__/generatorPresetInvariants.test.ts` — every entry in `MEDIEVAL_TOWER_PRESETS` |
-| **Edge-case blueprint invariants** | `src/lib/generation/__tests__/generatorEdgeCaseInvariants.test.ts`, fixtures in `src/lib/generation/__tests__/fixtures/edgeCaseBlueprints.ts` |
-| **Shared assertions** | `src/lib/generation/__tests__/testUtils.ts` — `formatGeneratorInvariantDiagnostics`, `assertGeneratedStructureHardInvariants`, `assertGeneratedStructurePlacementSemantics` (`validateVoxelStructurePlacements`) |
+| **Tower preset invariants** | `src/lib/generation/__tests__/generatorPresetInvariants.test.ts` — every entry in `MEDIEVAL_TOWER_PRESETS` |
+| **Tower edge-case invariants** | `src/lib/generation/__tests__/generatorEdgeCaseInvariants.test.ts`, `fixtures/edgeCaseBlueprints.ts` |
+| **Generic preset invariants** | `src/lib/generation/__tests__/generatorGenericPresetInvariants.test.ts` — `GENERIC_BUILDING_PRESETS` |
+| **Generic blueprint validation** | `src/lib/blueprints/__tests__/validateGenericBuilding.test.ts` |
+| **Component generators** | `src/lib/generation/components/__tests__/componentGenerators.test.ts` — foundation, shell behavior |
+| **Opening masks / doorway** | `src/lib/generation/components/__tests__/openingMask.test.ts`, `entranceDoorway.test.ts` |
+| **Compile plan** | `src/lib/generation/components/__tests__/compileGenericBuildingPlan.test.ts` |
+| **Shed roof** | `src/lib/generation/components/__tests__/shedRoof.test.ts` |
+| **Shared assertions** | `src/lib/generation/__tests__/testUtils.ts` — `assertGeneratedStructureHardInvariants`, `assertGeneratedStructurePlacementSemantics` |
 | **Window pane regression** | `src/lib/generation/__tests__/generatorWindowPanes.test.ts` — medieval tower panes; façade trim stays **cube** |
-| **Blacksmith preset invariants** | `src/lib/generation/__tests__/generatorBlacksmithPresetInvariants.test.ts` — `BLACKSMITH_PRESETS` |
-| **Blacksmith edge-case invariants** | `src/lib/generation/__tests__/generatorBlacksmithEdgeCaseInvariants.test.ts`, `fixtures/blacksmithEdgeCaseBlueprints.ts` |
-| **Blacksmith pane / smoke** | `src/lib/generation/__tests__/generatorBlacksmithPanes.test.ts` |
-| **Building family catalog** | `src/lib/generation/__tests__/buildingFamilies.test.ts` |
+| **Building family catalog** | `src/lib/generation/__tests__/buildingFamilies.test.ts` — active families only |
+| **Placement utils** | `src/lib/generation/__tests__/placementUtils.test.ts` — merge + `filterGroundedConnected26` |
 
 **Vitest** is configured in `vitest.config.ts` to include:
 
+- `src/lib/blueprints/__tests__/**/*.test.ts`
 - `src/lib/generation/__tests__/**/*.test.ts`
+- `src/lib/generation/components/__tests__/**/*.test.ts`
 - `src/lib/voxel/__tests__/**/*.test.ts`
 
 **Script:** `pnpm test:generator` runs `vitest run` (see `package.json`).
+
+**Merged slice verification (reference):** 100 tests passed across 18 files; `pnpm exec tsc --noEmit` and `pnpm run build` pass.
 
 ---
 
@@ -64,10 +88,11 @@ After validation and generation, tests analyze blocks and assert:
 | `analysis.uniqueBlockCount > 0` | At least one occupied lattice cell |
 | `analysis.invalidBlockTypeIds.length === 0` | Every `blockTypeId` resolves via `getBlockDefinition()` |
 | `analysis.duplicateCoordinateCount === 0` | No duplicate `(x, y, z)` rows |
-| `analysis.connectedComponentCount26 === 1` | **Single** 26-neighbor component on unique cells — **only asserted for current single-building tower presets/fixtures** |
-| `analysis.ungroundedBlockCount26 === 0` | Every unique cell is 26-reachable from structure-relative ground (below) |
+| `analysis.connectedComponentCount26 === 1` | **Single** 26-neighbor component on unique cells — asserted for current **single-building** tower and generic presets |
+| `analysis.ungroundedBlockCount26 === 0` | Every unique cell is 26-reachable from structure-relative ground |
 | `analysis.allBlocksGroundedConnected26 === true` | Convenience flag aligning with non-empty + one component + no ungrounded cells |
 | `blocks.length <= resolved.constraints.maxBlockCount` | Budget from validated blueprint |
+| Placement semantics (where used) | Valid `shapeKind` / `state` for partial blocks (e.g. panes) |
 
 If you add generators that intentionally emit **multiple disconnected masses** or **floating** volumes, **do not** reuse these invariants unchanged—gate them per generator or introduce blueprint-aware policies.
 
@@ -77,23 +102,37 @@ If you add generators that intentionally emit **multiple disconnected masses** o
 
 Structural connectivity uses **26-neighbor** voxel adjacency: offsets `(dx, dy, dz)` with each coordinate in `{-1, 0, 1}`, excluding `(0, 0, 0)`. Two occupied cells are adjacent if the neighbor offset exists and that cell is occupied.
 
-So connections count across **faces, edges, and corners**. Analysis operates on **unique** lattice coordinates; duplicate rows in `blocks` are reported separately (`duplicateCoordinateCount`).
+Analysis operates on **unique** lattice coordinates; duplicate rows in `blocks` are reported separately (`duplicateCoordinateCount`).
+
+**Generic buildings** use **`filterGroundedConnected26`** after component merge so roof decks over hollow interiors stay connected (see [`ARCHITECTURAL_COMPONENT_GRAMMAR.md`](./ARCHITECTURAL_COMPONENT_GRAMMAR.md)).
 
 ---
 
 ## Grounding (structure-relative)
 
-**Ground-touching seeds:** unique occupied cells with **`y === minY`**, where **`minY`** is the minimum `y` over **unique** coordinates (structure-relative “floor layer”). Reachability uses the **same** 26-neighbor graph.
+**Ground-touching seeds:** unique occupied cells with **`y === minY`**, where **`minY`** is the minimum `y` over **unique** coordinates. Reachability uses the **same** 26-neighbor graph.
 
-That matches typical medieval tower output (foundation at the bottom layer). **Future work** might need different policies for **world-space** grounding, **towns / multi-building** layouts, **stacked structures**, or **intentionally floating** builds (`allowFloatingBlocks`, etc.).
+For **`generic_building`**, **y = 0** is the full footprint floor slab (including doorway threshold). For towers, seeds are typically the bottom foundation layer.
+
+**Future work** might need different policies for **world-space** grounding, **towns / multi-building** layouts, or **intentionally floating** builds (`allowFloatingBlocks`).
 
 ---
 
 ## Fixture coverage
 
-- **Curated:** all presets in `MEDIEVAL_TOWER_PRESETS` (`src/lib/blueprints/sampleBlueprints.ts`).
-- **Edge-case IDs** (valid blueprints stressing validator clamps / extremes):  
-  `height_budget_body_clamp`, `wide_entrance_max`, `authoring_overhang_clamp`, `thick_shell_narrow_void`, `window_density_wide`, `tight_max_block_count_roof_trim` — see `src/lib/generation/__tests__/fixtures/edgeCaseBlueprints.ts`.
+- **Towers:** all presets in `MEDIEVAL_TOWER_PRESETS` (`src/lib/blueprints/sampleBlueprints.ts`).
+- **Tower edge-case IDs:** `height_budget_body_clamp`, `wide_entrance_max`, `authoring_overhang_clamp`, `thick_shell_narrow_void`, `window_density_wide`, `tight_max_block_count_roof_trim` — see `edgeCaseBlueprints.ts`.
+- **Generic buildings:** `simple_rustic_cabin`, `shed_roof_workshop` in `sampleGenericBuildingBlueprints.ts`.
+
+---
+
+## Visual fixes vs tests
+
+When preview shows a doorway void, missing roof, or floating trim:
+
+1. **Fix generator semantics** (aperture masks, component emitters, merge priority, grounding filter)—see §2.3.1 in design principles for doorway floor bands.
+2. **Add or tighten focused tests** (`openingMask.test.ts`, `entranceDoorway.test.ts`, preset invariants).
+3. **Do not** relax `connectedComponentCount26`, duplicate-coordinate checks, or `maxBlockCount` assertions to greenwash a screenshot.
 
 ---
 
@@ -116,6 +155,8 @@ pnpm test:generator
 pnpm exec tsc --noEmit
 pnpm run build
 ```
+
+There is **no** dedicated docs lint script in `package.json` today.
 
 ---
 
