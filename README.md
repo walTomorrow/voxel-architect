@@ -27,7 +27,7 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 
 ### Generator reliability tests
 
-Structural/regression checks for the deterministic tower pipeline are documented in [`docs/generation/GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md). Run:
+Structural/regression checks for the deterministic **`generic_building`** pipeline are documented in [`docs/generation/GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md). Run:
 
 ```bash
 pnpm test:generator

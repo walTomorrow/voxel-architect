@@ -35,11 +35,11 @@ The AI should eventually operate at the level of **architectural intent**, not r
 
 The generator should remain responsible for exact voxel geometry.
 
-**Future AI (and human authoring tools) should edit semantic blueprints**—`MedievalTowerBlueprint`, `GenericBuildingBlueprint`, and later interior/floor-plan fields—not raw **`VoxelBlock[]`** streams. **`ComponentPlan`** is **internal compiler IR** only; it must **not** be treated as a public JSON authoring format (see [`ARCHITECTURAL_COMPONENT_GRAMMAR.md`](./ARCHITECTURAL_COMPONENT_GRAMMAR.md)).
+**Future AI (and human authoring tools) should edit semantic blueprints**—today **`GenericBuildingBlueprint`**, and later interior/floor-plan fields—not raw **`VoxelBlock[]`** streams. **`ComponentPlan`** is **internal compiler IR** only; it must **not** be treated as a public JSON authoring format (see [`ARCHITECTURAL_COMPONENT_GRAMMAR.md`](./ARCHITECTURAL_COMPONENT_GRAMMAR.md)).
 
 ### 1.1 Blueprint responsibility
 
-A **blueprint** describes **what** to build in structured form: building family (today **`medieval_tower`** or **`generic_building`**), dimensions, semantic materials, massing, levels, openings (entrance, windows), roof, ornamental features, and constraints. It may someday include **floor-plan / interior layout intent** (rooms, zones, circulation)—**that layer is not in the schema yet** (§1.4).
+A **blueprint** describes **what** to build in structured form: building family (today **`generic_building`** only in the active product), dimensions, semantic materials, massing, levels, openings (entrance, windows), roof, ornamental features, and constraints. It may someday include **floor-plan / interior layout intent** (rooms, zones, circulation)—**that layer is not in the schema yet** (§1.4).
 
 Blueprints are **not** **`VoxelBlock[]`** placement lists and **not** the right interchange format for exhaustive block dumps. See also [`../blueprints/BLUEPRINT_FEATURE_CATALOG.md`](../blueprints/BLUEPRINT_FEATURE_CATALOG.md) (responsibility split).
 
@@ -65,24 +65,21 @@ A future blueprint extension might describe floors, rooms, zones, purposes (forg
 
 ### 1.5 Current generator scope
 
-The active pipeline is **`StructureBlueprint` → `validateBlueprint()` → `generateStructureFromResolved()` → family or component generator → `VoxelBlock[]`**.
+The active pipeline is **`GenericBuildingBlueprint` → `validateBlueprint()` → `ResolvedGenericBuilding` → `compileGenericBuildingToComponentPlan()` → `generateFromComponentPlan()` → `VoxelBlock[]`**.
 
 | Path | Role |
 |------|------|
-| **`medieval_tower`** | Legacy **vertical** family generator (`generateMedievalTower`). Still the focus of **`/visualizer`** and tower **`blueprintExchange` v1**. |
-| **`generic_building`** | First **component-based** low-rise path: `GenericBuildingBlueprint` → internal **`ComponentPlan`** → component emitters → merge → preview on **`/preview` → Generic**. |
+| **`generic_building`** | **Only active family:** component-based low-rise path — preview **`/preview` → Generic | Partials**, manual authoring **`/generic-lab`**. |
 
-**Removed from the active product path:** **`blacksmith_workshop`** (one-off family experiment; lessons absorbed into generic components—see [`../project-history/DEVELOPMENT_TIMELINE.md`](../project-history/DEVELOPMENT_TIMELINE.md)).
+**Retired from the active product path:** **`medieval_tower`** (tower-era generator, presets, **`/visualizer`** lab, blueprintExchange v1 — historical: [`../project-history/DEVELOPMENT_TIMELINE.md`](../project-history/DEVELOPMENT_TIMELINE.md)). **`blacksmith_workshop`** (one-off family experiment; never shipped).
 
 **Geometry conventions (generic_building):** **y = 0** is the single foundation/floor slab; **walls start at y = 1**; **`body.height`** is wall height above foundation **excluding roof**; roof layers sit above the body. Hollow interiors remain **limited**; there is **no full interior layout or room graph** yet. Partial shapes today: **cube / slab / pane / post**; window materials may emit **pane** when metadata allows.
 
 **Openings:** there is **no air block**. Door and window “holes” are modeled as **absence of shell blocks** via derived **aperture masks** at compile time; windows and trim **fill selected mask cells** only.
 
-### 1.6 Building style catalog (metadata only)
+### 1.6 Building style catalog (deferred)
 
-[`src/lib/generation/styles/buildingStyles.ts`](../../src/lib/generation/styles/buildingStyles.ts) defines **building styles** as reusable aesthetic vocabulary (material palettes, opening/roof/feature hints, tags, mood). Curated **`MEDIEVAL_TOWER_PRESETS`** may reference a **`styleId`** on the **preset wrapper** only.
-
-This catalog is **metadata for future AI and style resolution** — it is **not** a blueprint schema field, does **not** change blueprint import/export, and is **not** consumed by generators yet. Authoritative generation input remains the validated **`MedievalTowerBlueprint`** snapshot on each preset.
+A future **building style** catalog (material palettes, opening/roof hints, tags, mood) may support AI and preset authoring. It is **not** in the active codebase after the tower-era retirement; authoritative generation input is the validated **`GenericBuildingBlueprint`** snapshot on each preset.
 
 ---
 
@@ -340,18 +337,13 @@ Blueprints should describe architectural decisions:
 
 ```ts
 {
-  structureType: "medieval_tower",
-  massing: {
-    verticalEmphasis: "tall",
-    wallThickness: 2
-  },
+  structureType: "generic_building",
+  body: { width: 7, depth: 5, height: 4, wallThickness: 1 },
   openings: {
-    entranceStyle: "arched",
-    windowsPlacement: "symmetric"
+    entrance: { side: "front", width: 2, height: 2 },
+    windows: { mode: "symmetric", count: 2 }
   },
-  roof: {
-    style: "stepped_pyramid"
-  }
+  roof: { kind: "pitched_gable", layers: 2, overhang: 1 }
 }
 ```
 

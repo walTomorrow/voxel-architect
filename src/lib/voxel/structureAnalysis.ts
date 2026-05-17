@@ -181,8 +181,8 @@ export function analyzeVoxelStructure(
 
   const componentSizes = findComponentSizes26(occupied);
 
-  let connectedComponentCount26 = componentSizes.length;
-  let largestComponentSize26 =
+  const connectedComponentCount26 = componentSizes.length;
+  const largestComponentSize26 =
     connectedComponentCount26 === 0
       ? 0
       : Math.max(...componentSizes);

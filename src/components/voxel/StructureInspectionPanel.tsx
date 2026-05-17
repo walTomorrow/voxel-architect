@@ -10,10 +10,7 @@ export type StructureInspectionPresetOption = {
   readonly label: string;
 };
 
-export type PreviewLabSource =
-  | "preset_towers"
-  | "preset_generic"
-  | "partial_showcase";
+export type PreviewLabSource = "preset_generic" | "partial_showcase";
 
 type Props = {
   readonly title?: string;
@@ -114,7 +111,7 @@ function InspectionPanelBody(p: Props) {
 
   const description =
     p.panelDescription ??
-    "Preset loads a hand-authored tower. Layer modes filter the canvas only; the block breakdown below always reflects the full generated structure.";
+    "Preset loads a hand-authored generic building. Layer modes filter the canvas only; the block breakdown below always reflects the full generated structure.";
 
   return (
     <>
@@ -131,14 +128,6 @@ function InspectionPanelBody(p: Props) {
             Source
           </span>
           <div className="flex rounded-lg border border-zinc-700 bg-zinc-900/80 p-0.5">
-            <button
-              type="button"
-              aria-pressed={p.previewSource === "preset_towers"}
-              className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${p.previewSource === "preset_towers" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
-              onClick={() => p.onPreviewSourceChange!("preset_towers")}
-            >
-              Towers
-            </button>
             <button
               type="button"
               aria-pressed={p.previewSource === "preset_generic"}
@@ -165,9 +154,8 @@ function InspectionPanelBody(p: Props) {
         </label>
         {p.previewSource === "partial_showcase" ? (
           <p className="rounded-md border border-zinc-700/80 bg-zinc-900/50 px-2 py-2 text-[11px] leading-snug text-zinc-400">
-            Preset lists apply to <span className="text-zinc-300">Towers</span> and{" "}
-            <span className="text-zinc-300">Generic</span>. This mode uses a static
-            developer showcase (partial shapes).
+            This mode uses a static developer showcase of partial block shapes (not
+            preset generator output).
           </p>
         ) : (
           <select

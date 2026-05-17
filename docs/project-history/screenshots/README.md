@@ -35,7 +35,7 @@ Rules:
 | 09 | `09-visualizer-blueprint-options-a5b3dce.png` | `/visualizer` | `a5b3dce` | Developer lab on the **Dark Wizard Tower** preset; blueprint sidebar adds **copy JSON** and **import JSON** for tower blueprints. | First **round-trip blueprint exchange** workflow in the lab (tower-only v1 envelope). |
 | 10 | `10-preview-partial-blocks-05fbfe8.png` | `/preview` | `05fbfe8` — generic building component pipeline | Preview demonstrating **partial blocks**: fence **posts**, glass **panes**, and **half slabs**. | Validated the **partial-block model** in a full-structure viewer context. |
 | 11 | `11-preview-new-generic-preset-05fbfe8.png` | `/preview` | `05fbfe8` | Preview after the pivot to a **component-based generic building** path (alongside towers), replacing the strategy of many **fixed archetype templates** for low-rise structures. | Marks the shift toward **`generic_building`** and composable components as the scalable low-rise architecture. |
-| 12 | `12-generic-lab-blueprint-editor-81e6a4b.png` | `/generic-lab` | `81e6a4b` — generic blueprint developer lab | **Generic blueprint lab**: three-column layout with **`GenericBuildingBlueprint`** form (preset, body, roof, openings, materials), live **3D preview**, and **structure inspection** (layer modes, block breakdown). Preview’s developer-lab link points here. | First **manual authoring surface** for generic buildings—the same semantic object future AI will target; tower lab remains at `/visualizer`. |
+| 12 | `12-generic-lab-blueprint-editor-81e6a4b.png` | `/generic-lab` | `81e6a4b` — generic blueprint developer lab | **Generic blueprint lab**: three-column layout with **`GenericBuildingBlueprint`** form (preset, body, roof, openings, materials), live **3D preview**, and **structure inspection** (layer modes, block breakdown). Preview’s developer-lab link points here. | First **manual authoring surface** for generic buildings—the same semantic object future AI will target; replaces the retired **`/visualizer`** tower lab. |
 
 **Omitted from the timeline:** `05-visualizer-onion-layers-be8de1d.png` — redundant with preview onion-layer work at the same commit; kept in the folder only as an archival duplicate.
 
@@ -43,7 +43,7 @@ Rules:
 
 ## Capture checklist (for future screenshots)
 
-1. **Route** — `/`, `/preview`, `/visualizer`, or `/generic-lab`.
+1. **Route** — `/`, `/preview`, or `/generic-lab` (historical captures may show retired `/visualizer`).
 2. **Preset / mode** — tower preset name or Generic / Partials tab.
 3. **Deployment** — Cloudflare URL and short commit SHA.
 4. **Filename** — next sequence number, subject slug, commit suffix.

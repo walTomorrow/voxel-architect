@@ -35,9 +35,9 @@ This is **not** intended to be an exhaustive encyclopedia of architecture. It is
 
 | `structureType` | Status | Generator path | Primary UI |
 |-----------------|--------|----------------|------------|
-| **`medieval_tower`** | **Active** | `generateMedievalTower()` — legacy vertical family | `/preview` → Towers; `/visualizer` blueprint lab |
-| **`generic_building`** | **Active** | `compileGenericBuildingToComponentPlan()` → component emitters | `/preview` → Generic |
-| **`blacksmith_workshop`** | **Removed** | Was a one-off family; **not** in `generateStructure` or building families | Historical only — see [`../project-history/DEVELOPMENT_TIMELINE.md`](../project-history/DEVELOPMENT_TIMELINE.md) |
+| **`generic_building`** | **Active** | `compileGenericBuildingToComponentPlan()` → component emitters | `/preview` → Generic \| Partials; `/generic-lab` |
+| **`medieval_tower`** | **Retired** | Tower-era `generateMedievalTower()` (removed) | Historical — `/visualizer` screenshots; redirects to `/generic-lab` |
+| **`blacksmith_workshop`** | **Removed** | Was a one-off family; never shipped | Historical only — see [`../project-history/DEVELOPMENT_TIMELINE.md`](../project-history/DEVELOPMENT_TIMELINE.md) |
 
 Authoring types live in `src/lib/blueprints/types.ts`. **`ComponentPlan`** is **internal compiler IR** — not a public blueprint surface ([`../generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md`](../generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md)).
 
@@ -138,12 +138,13 @@ Explorable interiors need intentional **voids**, **rooms**, **openings**, **circ
 
 ### Current pipeline reality
 
-Two **active** generator paths exist:
+One **active** generator path exists:
 
-- **`medieval_tower`** — vertical family; primarily exterior mass, shell, openings, roof/crown, crenellations. Still the focus of **`/visualizer`** and **blueprintExchange v1**.
 - **`generic_building`** — rectangular low-rise via **component plan**; foundation at **y = 0**, hollow shell from **y = 1**, derived aperture masks, sparse windows and entrance trim.
 
-Hollow interiors remain **limited** on both paths; there is **no full interior layout or room system** yet. Partial blocks today include **cube / slab / pane / post**; generators emit **pane** windows when the resolved window material allows **pane**.
+**Retired:** **`medieval_tower`** (tower-era vertical family, **`/visualizer`**, blueprintExchange v1 — see project history).
+
+Hollow interiors remain **limited**; there is **no full interior layout or room system** yet. Partial blocks today include **cube / slab / pane / post**; generators emit **pane** windows when the resolved window material allows **pane**.
 
 **`blacksmith_workshop`** was a learning-step family and is **not** an active catalog target.
 
@@ -1347,12 +1348,12 @@ These are not exhaustive. They define practical subsets for generator modules.
 
 ---
 
-## 4.1 Medieval Tower (`medieval_tower`)
+## 4.1 Medieval Tower (`medieval_tower`) — retired
 
 Purpose:
-A vertical fortified structure with readable medieval/fantasy identity.
+A vertical fortified structure with readable medieval/fantasy identity (tower era).
 
-**Status:** **Active** — legacy family generator; tower-only **blueprintExchange v1**.
+**Status:** **Retired** — generator, presets, **`/visualizer`**, and **blueprintExchange v1** removed from the active codebase. Preserved in [`../project-history/`](../project-history/) for screenshots and timeline. Catalog content below remains a **reference taxonomy**, not a shipping target.
 
 Core systems:
 
@@ -1447,7 +1448,7 @@ Near-term features:
 | Interior rooms | Later | Requires InteriorPlan / floor-plan schema |
 | Second body / wing | Later | Single rectangle only today |
 
-**Status:** **Active** — presets in `sampleGenericBuildingBlueprints.ts`; preview **Generic** tab. **Not** in blueprintExchange v1 import/export.
+**Status:** **Active** — presets in `sampleGenericBuildingBlueprints.ts`; preview **Generic** tab; **`/generic-lab`** for manual edit. **No** public import/export envelope yet (v2 deferred).
 
 ---
 
@@ -1833,7 +1834,7 @@ The current medieval tower blueprint is a good first generator because it exerci
 - Grounded filtering
 - Merge priority
 
-However, the current tower schema and generator should be viewed as `medieval_tower_v1`, not as the final architecture model.
+The retired tower schema and generator were viewed as `medieval_tower_v1`, not as the final architecture model; **`generic_building`** supersedes that path.
 
 Current strengths:
 
@@ -1959,7 +1960,7 @@ Recommended pre-AI sequence:
 3. Add curated medieval tower presets.
 4. Add blueprint JSON import/export.
 5. Add snapshot tests for validation and generation.
-6. Create a polished non-AI `/demo` page separate from `/visualizer`.
+6. Create a polished non-AI `/demo` page separate from `/preview` and `/generic-lab`.
 7. Extend **`generic_building`** (components + presets) rather than new one-off families:
    - e.g. house/gatehouse **presets** and new components when needed
    - Avoid reviving **`blacksmith_workshop`** as a separate type

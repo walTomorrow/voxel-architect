@@ -3,11 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { StructureBlueprint } from "@/src/lib/blueprints/types";
 import {
-  DEFAULT_MEDIEVAL_PRESET_ID,
-  MEDIEVAL_TOWER_PRESETS,
-  getMedievalTowerPreset,
-} from "@/src/lib/blueprints/sampleBlueprints";
-import {
   DEFAULT_GENERIC_PRESET_ID,
   GENERIC_BUILDING_PRESETS,
   getGenericBuildingPreset,
@@ -31,12 +26,6 @@ import {
 import { PARTIAL_BLOCK_SHOWCASE_STRUCTURE } from "@/src/lib/voxel/sampleStructure";
 import { validateVoxelStructurePlacements } from "@/src/lib/voxel/voxelBlockPlacement";
 
-const TOWER_PRESET_OPTIONS: readonly StructureInspectionPresetOption[] =
-  MEDIEVAL_TOWER_PRESETS.map((p) => ({
-    id: p.id,
-    label: p.label,
-  }));
-
 const GENERIC_PRESET_OPTIONS: readonly StructureInspectionPresetOption[] =
   GENERIC_BUILDING_PRESETS.map((p) => ({
     id: p.id,
@@ -44,15 +33,11 @@ const GENERIC_PRESET_OPTIONS: readonly StructureInspectionPresetOption[] =
   }));
 
 /**
- * Read-only inspection for `/preview` — tower presets, generic presets, or
- * static partial-block showcase; no blueprint editing.
+ * Read-only inspection for `/preview` — generic presets or static partial-block showcase.
  */
 export function PreviewInspectionClient() {
   const [previewSource, setPreviewSource] =
-    useState<PreviewLabSource>("preset_towers");
-  const [selectedTowerPresetId, setSelectedTowerPresetId] = useState<string>(
-    DEFAULT_MEDIEVAL_PRESET_ID,
-  );
+    useState<PreviewLabSource>("preset_generic");
   const [selectedGenericPresetId, setSelectedGenericPresetId] = useState<string>(
     DEFAULT_GENERIC_PRESET_ID,
   );
@@ -71,29 +56,12 @@ export function PreviewInspectionClient() {
     }
   }, []);
 
-  const presetOptions = useMemo(() => {
-    if (previewSource === "preset_generic") return GENERIC_PRESET_OPTIONS;
-    return TOWER_PRESET_OPTIONS;
-  }, [previewSource]);
-
-  const selectedPresetId =
-    previewSource === "preset_generic"
-      ? selectedGenericPresetId
-      : selectedTowerPresetId;
-
   const activePresetMeta = useMemo(() => {
-    if (previewSource === "preset_towers") {
-      const preset = getMedievalTowerPreset(selectedTowerPresetId);
-      const fallback = getMedievalTowerPreset(DEFAULT_MEDIEVAL_PRESET_ID);
-      return preset ?? fallback!;
-    }
-    if (previewSource === "preset_generic") {
-      const preset = getGenericBuildingPreset(selectedGenericPresetId);
-      const fallback = getGenericBuildingPreset(DEFAULT_GENERIC_PRESET_ID);
-      return preset ?? fallback!;
-    }
-    return null;
-  }, [previewSource, selectedTowerPresetId, selectedGenericPresetId]);
+    if (previewSource !== "preset_generic") return null;
+    const preset = getGenericBuildingPreset(selectedGenericPresetId);
+    const fallback = getGenericBuildingPreset(DEFAULT_GENERIC_PRESET_ID);
+    return preset ?? fallback!;
+  }, [previewSource, selectedGenericPresetId]);
 
   const blueprint = useMemo((): StructureBlueprint | null => {
     if (previewSource === "partial_showcase" || !activePresetMeta) {
@@ -130,10 +98,10 @@ export function PreviewInspectionClient() {
     [structure.blocks],
   );
 
-  useEffect(() => {
-    if (!layerExtents) return;
-    setSelectedLayer((y) => clampLayerY(y, layerExtents));
-  }, [structure.blocks, layerExtents]);
+  const effectiveLayer = useMemo(() => {
+    if (!layerExtents) return selectedLayer;
+    return clampLayerY(selectedLayer, layerExtents);
+  }, [selectedLayer, layerExtents]);
 
   const visibleStructure: VoxelStructure = useMemo(() => {
     if (structure.blocks.length === 0) {
@@ -146,10 +114,10 @@ export function PreviewInspectionClient() {
       blocks: filterBlocksForLayerView(
         structure.blocks,
         layerViewMode,
-        selectedLayer,
+        effectiveLayer,
       ),
     };
-  }, [structure, layerViewMode, selectedLayer]);
+  }, [structure, layerViewMode, effectiveLayer]);
 
   const visibleCount = visibleStructure.blocks.length;
   const totalCount = structure.blocks.length;
@@ -167,15 +135,9 @@ export function PreviewInspectionClient() {
   };
 
   const handlePresetIdChange = (id: string) => {
-    if (previewSource === "preset_towers") {
-      if (!getMedievalTowerPreset(id)) return;
-      setSelectedTowerPresetId(id);
-    } else if (previewSource === "preset_generic") {
-      if (!getGenericBuildingPreset(id)) return;
-      setSelectedGenericPresetId(id);
-    } else {
-      return;
-    }
+    if (previewSource !== "preset_generic") return;
+    if (!getGenericBuildingPreset(id)) return;
+    setSelectedGenericPresetId(id);
     setLayerViewMode("full");
   };
 
@@ -195,10 +157,7 @@ export function PreviewInspectionClient() {
     if (previewSource === "partial_showcase") {
       return "Developer inspection: static slabs, panes, and posts using classic textures only — not preset generator output. Layer modes filter the canvas; breakdown reflects this showcase.";
     }
-    if (previewSource === "preset_generic") {
-      return "Preset loads a hand-authored generic building (component pipeline). Layer modes filter the canvas only; the block breakdown below always reflects the full generated structure.";
-    }
-    return undefined;
+    return "Preset loads a hand-authored generic building (component pipeline). Layer modes filter the canvas only; the block breakdown below always reflects the full generated structure.";
   }, [previewSource]);
 
   const validationNotes =
@@ -236,14 +195,14 @@ export function PreviewInspectionClient() {
         validationNotes={validationNotes}
         previewSource={previewSource}
         onPreviewSourceChange={handlePreviewSourceChange}
-        presetOptions={presetOptions}
-        selectedPresetId={selectedPresetId}
+        presetOptions={GENERIC_PRESET_OPTIONS}
+        selectedPresetId={selectedGenericPresetId}
         onPresetIdChange={handlePresetIdChange}
         hasStructure={hasStructure}
         layerViewMode={layerViewMode}
         onLayerViewModeChange={handleLayerViewModeChange}
         layerExtents={layerExtents}
-        selectedLayer={selectedLayer}
+        selectedLayer={effectiveLayer}
         onSelectedLayerChange={setSelectedLayer}
         visibleCount={visibleCount}
         totalCount={totalCount}
