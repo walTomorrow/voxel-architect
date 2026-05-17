@@ -1,15 +1,24 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { MedievalTowerBlueprint } from "@/src/lib/blueprints/types";
+import type { StructureBlueprint } from "@/src/lib/blueprints/types";
 import {
   DEFAULT_MEDIEVAL_PRESET_ID,
   MEDIEVAL_TOWER_PRESETS,
   getMedievalTowerPreset,
 } from "@/src/lib/blueprints/sampleBlueprints";
+import {
+  DEFAULT_GENERIC_PRESET_ID,
+  GENERIC_BUILDING_PRESETS,
+  getGenericBuildingPreset,
+} from "@/src/lib/blueprints/sampleGenericBuildingBlueprints";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
-import { StructureInspectionPanel } from "@/src/components/voxel/StructureInspectionPanel";
+import {
+  StructureInspectionPanel,
+  type PreviewLabSource,
+  type StructureInspectionPresetOption,
+} from "@/src/components/voxel/StructureInspectionPanel";
 import { VoxelViewer } from "@/src/components/voxel/VoxelViewer";
 import type { VoxelStructure } from "@/src/lib/voxel/types";
 import { fullStructureBlockBreakdown } from "@/src/lib/voxel/blockBreakdown";
@@ -19,45 +28,102 @@ import {
   computeLayerYExtents,
   filterBlocksForLayerView,
 } from "@/src/lib/voxel/layerView";
+import { PARTIAL_BLOCK_SHOWCASE_STRUCTURE } from "@/src/lib/voxel/sampleStructure";
+import { validateVoxelStructurePlacements } from "@/src/lib/voxel/voxelBlockPlacement";
 
-const PRESET_INSPECTION_OPTIONS = MEDIEVAL_TOWER_PRESETS.map((p) => ({
-  id: p.id,
-  label: p.label,
-}));
+const TOWER_PRESET_OPTIONS: readonly StructureInspectionPresetOption[] =
+  MEDIEVAL_TOWER_PRESETS.map((p) => ({
+    id: p.id,
+    label: p.label,
+  }));
+
+const GENERIC_PRESET_OPTIONS: readonly StructureInspectionPresetOption[] =
+  GENERIC_BUILDING_PRESETS.map((p) => ({
+    id: p.id,
+    label: p.label,
+  }));
 
 /**
- * Read-only preset tower inspection for `/preview` — same layer tools as the
- * visualizer lab, without blueprint editing.
+ * Read-only inspection for `/preview` — tower presets, generic presets, or
+ * static partial-block showcase; no blueprint editing.
  */
 export function PreviewInspectionClient() {
-  const [selectedPresetId, setSelectedPresetId] = useState<string>(
+  const [previewSource, setPreviewSource] =
+    useState<PreviewLabSource>("preset_towers");
+  const [selectedTowerPresetId, setSelectedTowerPresetId] = useState<string>(
     DEFAULT_MEDIEVAL_PRESET_ID,
+  );
+  const [selectedGenericPresetId, setSelectedGenericPresetId] = useState<string>(
+    DEFAULT_GENERIC_PRESET_ID,
   );
   const [cameraResetNonce, setCameraResetNonce] = useState(0);
   const [layerViewMode, setLayerViewMode] = useState<LayerViewMode>("full");
   const [selectedLayer, setSelectedLayer] = useState(0);
 
-  const blueprint = useMemo((): MedievalTowerBlueprint => {
-    const preset = getMedievalTowerPreset(selectedPresetId);
-    if (!preset) {
-      const fallback = getMedievalTowerPreset(DEFAULT_MEDIEVAL_PRESET_ID);
-      return structuredClone(
-        fallback!.blueprint,
-      ) as MedievalTowerBlueprint;
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    const r = validateVoxelStructurePlacements(PARTIAL_BLOCK_SHOWCASE_STRUCTURE);
+    if (!r.ok) {
+      console.error(
+        "[PreviewInspectionClient] PARTIAL_BLOCK_SHOWCASE_STRUCTURE invalid:",
+        r.errors,
+      );
     }
-    return structuredClone(preset.blueprint) as MedievalTowerBlueprint;
-  }, [selectedPresetId]);
+  }, []);
 
-  const validation = useMemo(() => validateBlueprint(blueprint), [blueprint]);
+  const presetOptions = useMemo(() => {
+    if (previewSource === "preset_generic") return GENERIC_PRESET_OPTIONS;
+    return TOWER_PRESET_OPTIONS;
+  }, [previewSource]);
 
-  const structure: VoxelStructure = useMemo(() => {
-    if (!validation.ok || !validation.resolved) {
+  const selectedPresetId =
+    previewSource === "preset_generic"
+      ? selectedGenericPresetId
+      : selectedTowerPresetId;
+
+  const activePresetMeta = useMemo(() => {
+    if (previewSource === "preset_towers") {
+      const preset = getMedievalTowerPreset(selectedTowerPresetId);
+      const fallback = getMedievalTowerPreset(DEFAULT_MEDIEVAL_PRESET_ID);
+      return preset ?? fallback!;
+    }
+    if (previewSource === "preset_generic") {
+      const preset = getGenericBuildingPreset(selectedGenericPresetId);
+      const fallback = getGenericBuildingPreset(DEFAULT_GENERIC_PRESET_ID);
+      return preset ?? fallback!;
+    }
+    return null;
+  }, [previewSource, selectedTowerPresetId, selectedGenericPresetId]);
+
+  const blueprint = useMemo((): StructureBlueprint | null => {
+    if (previewSource === "partial_showcase" || !activePresetMeta) {
+      return null;
+    }
+    return structuredClone(activePresetMeta.blueprint) as StructureBlueprint;
+  }, [previewSource, activePresetMeta]);
+
+  const validation = useMemo(() => {
+    if (!blueprint) {
+      return { ok: false as const, errors: [] as string[], notes: [] as string[] };
+    }
+    return validateBlueprint(blueprint);
+  }, [blueprint]);
+
+  const generatedStructure: VoxelStructure = useMemo(() => {
+    if (previewSource === "partial_showcase" || !validation.ok || !validation.resolved) {
       return { blocks: [] };
     }
     return {
       blocks: generateStructureFromResolved(validation.resolved),
     };
-  }, [validation]);
+  }, [previewSource, validation]);
+
+  const structure: VoxelStructure = useMemo(() => {
+    if (previewSource === "partial_showcase") {
+      return PARTIAL_BLOCK_SHOWCASE_STRUCTURE;
+    }
+    return generatedStructure;
+  }, [previewSource, generatedStructure]);
 
   const layerExtents = useMemo(
     () => computeLayerYExtents(structure.blocks),
@@ -70,7 +136,7 @@ export function PreviewInspectionClient() {
   }, [structure.blocks, layerExtents]);
 
   const visibleStructure: VoxelStructure = useMemo(() => {
-    if (!validation.ok || structure.blocks.length === 0) {
+    if (structure.blocks.length === 0) {
       return { blocks: [] };
     }
     if (layerViewMode === "full") {
@@ -83,15 +149,15 @@ export function PreviewInspectionClient() {
         selectedLayer,
       ),
     };
-  }, [validation.ok, structure, layerViewMode, selectedLayer]);
+  }, [structure, layerViewMode, selectedLayer]);
 
   const visibleCount = visibleStructure.blocks.length;
   const totalCount = structure.blocks.length;
 
   const fullStructureBreakdown = useMemo(() => {
-    if (!validation.ok || structure.blocks.length === 0) return null;
+    if (structure.blocks.length === 0) return null;
     return fullStructureBlockBreakdown(structure.blocks);
-  }, [validation.ok, structure.blocks]);
+  }, [structure.blocks]);
 
   const handleLayerViewModeChange = (next: LayerViewMode) => {
     setLayerViewMode(next);
@@ -101,13 +167,46 @@ export function PreviewInspectionClient() {
   };
 
   const handlePresetIdChange = (id: string) => {
-    const preset = getMedievalTowerPreset(id);
-    if (!preset) return;
-    setSelectedPresetId(id);
+    if (previewSource === "preset_towers") {
+      if (!getMedievalTowerPreset(id)) return;
+      setSelectedTowerPresetId(id);
+    } else if (previewSource === "preset_generic") {
+      if (!getGenericBuildingPreset(id)) return;
+      setSelectedGenericPresetId(id);
+    } else {
+      return;
+    }
     setLayerViewMode("full");
   };
 
-  const hasStructure = validation.ok && totalCount > 0;
+  const handlePreviewSourceChange = (source: PreviewLabSource) => {
+    setPreviewSource(source);
+    setLayerViewMode("full");
+  };
+
+  const hasStructure = totalCount > 0;
+
+  const panelTitle =
+    previewSource === "partial_showcase"
+      ? "Partial block showcase"
+      : "Preset inspection";
+
+  const panelDescription = useMemo(() => {
+    if (previewSource === "partial_showcase") {
+      return "Developer inspection: static slabs, panes, and posts using classic textures only — not preset generator output. Layer modes filter the canvas; breakdown reflects this showcase.";
+    }
+    if (previewSource === "preset_generic") {
+      return "Preset loads a hand-authored generic building (component pipeline). Layer modes filter the canvas only; the block breakdown below always reflects the full generated structure.";
+    }
+    return undefined;
+  }, [previewSource]);
+
+  const validationNotes =
+    previewSource !== "partial_showcase" &&
+    validation.ok &&
+    validation.notes.length > 0
+      ? validation.notes
+      : undefined;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-zinc-950 text-zinc-100 md:flex-row">
@@ -132,8 +231,12 @@ export function PreviewInspectionClient() {
       </div>
 
       <StructureInspectionPanel
-        title="Preset inspection"
-        presetOptions={PRESET_INSPECTION_OPTIONS}
+        title={panelTitle}
+        panelDescription={panelDescription}
+        validationNotes={validationNotes}
+        previewSource={previewSource}
+        onPreviewSourceChange={handlePreviewSourceChange}
+        presetOptions={presetOptions}
         selectedPresetId={selectedPresetId}
         onPresetIdChange={handlePresetIdChange}
         hasStructure={hasStructure}

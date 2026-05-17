@@ -13,6 +13,11 @@ import {
 import { textureUrl } from "@/src/lib/voxel/blocks/textureUrls";
 import { SAMPLE_STRUCTURE } from "@/src/lib/voxel/sampleStructure";
 import type { VoxelBlock, VoxelStructure } from "@/src/lib/voxel/types";
+import {
+  getVoxelBlockRenderBucketKey,
+  getVoxelBlockRenderVariant,
+  type VoxelRenderVariant,
+} from "@/src/lib/voxel/voxelBlockShape";
 
 /** Must match `<group position={[0, -GROUP_Y_SHIFT, 0]}>` wrapping voxels. */
 const GROUP_Y_SHIFT = 1.25;
@@ -105,8 +110,100 @@ function LabOrbitRig({
   return null;
 }
 
-/** Shared unit cube; InstancedMesh only mutates instance matrices. */
+/** Shared unit cube; instance matrices apply scale/offset for partial shapes. */
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
+
+const PANE_THICKNESS = 0.125;
+const POST_XY_SCALE = 0.25;
+
+function applyVoxelRenderVariantToInstance(
+  dummy: THREE.Object3D,
+  b: VoxelBlock,
+  variant: VoxelRenderVariant,
+): void {
+  dummy.rotation.set(0, 0, 0);
+  switch (variant.kind) {
+    case "cube":
+      dummy.position.set(b.x, b.y, b.z);
+      dummy.scale.set(1, 1, 1);
+      break;
+    case "slab":
+      dummy.position.set(
+        b.x,
+        b.y + (variant.half === "bottom" ? -0.25 : 0.25),
+        b.z,
+      );
+      dummy.scale.set(1, 0.5, 1);
+      break;
+    case "pane":
+      dummy.position.set(b.x, b.y, b.z);
+      if (variant.axis === "x") {
+        dummy.scale.set(1, 1, PANE_THICKNESS);
+      } else {
+        dummy.scale.set(PANE_THICKNESS, 1, 1);
+      }
+      break;
+    case "post":
+      dummy.position.set(b.x, b.y, b.z);
+      dummy.scale.set(POST_XY_SCALE, 1, POST_XY_SCALE);
+      break;
+    default: {
+      const _never: never = variant;
+      throw new Error(`Unhandled voxel variant: ${JSON.stringify(_never)}`);
+    }
+  }
+  dummy.updateMatrix();
+}
+
+function groupBlocksByRenderBucket(
+  structure: VoxelStructure,
+): Map<string, VoxelBlock[]> {
+  const map = new Map<string, VoxelBlock[]>();
+  for (const block of structure.blocks) {
+    const key = getVoxelBlockRenderBucketKey(block);
+    if (!key) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn(
+          "[VoxelViewer] Invalid voxel shape/state; skipping block",
+          block,
+        );
+      }
+      continue;
+    }
+    const list = map.get(key);
+    if (list) list.push(block);
+    else map.set(key, [block]);
+  }
+  return map;
+}
+
+/** Transparency sort order from registry, then stable shape buckets per type. */
+function sortedRenderBucketKeys(
+  structure: VoxelStructure,
+  buckets: Map<string, VoxelBlock[]>,
+): string[] {
+  const typeIds = [...new Set(structure.blocks.map((b) => b.blockTypeId))];
+  const sortedTypes = sortBlockTypesForRender(typeIds) as BlockTypeId[];
+  const suffixes = [
+    "|cube",
+    "|slab|bottom",
+    "|slab|top",
+    "|pane|x",
+    "|pane|z",
+    "|post",
+  ] as const;
+  const ordered: string[] = [];
+  for (const tid of sortedTypes) {
+    for (const suf of suffixes) {
+      const key = `${tid}${suf}`;
+      if (buckets.get(key)?.length) ordered.push(key);
+    }
+  }
+  for (const k of buckets.keys()) {
+    if (!ordered.includes(k)) ordered.push(k);
+  }
+  return ordered;
+}
 
 /** Pixel-art: nearest sampling, no mip chain (avoids blur at oblique angles), minimal anisotropy. */
 function configureTerrainTexture(t: THREE.Texture): void {
@@ -118,18 +215,6 @@ function configureTerrainTexture(t: THREE.Texture): void {
   t.wrapS = THREE.ClampToEdgeWrapping;
   t.wrapT = THREE.ClampToEdgeWrapping;
   t.needsUpdate = true;
-}
-
-function groupBlocksByType(
-  structure: VoxelStructure,
-): Map<string, VoxelBlock[]> {
-  const map = new Map<string, VoxelBlock[]>();
-  for (const block of structure.blocks) {
-    const list = map.get(block.blockTypeId);
-    if (list) list.push(block);
-    else map.set(block.blockTypeId, [block]);
-  }
-  return map;
 }
 
 function getPackId(blockTypeId: string): string {
@@ -221,10 +306,12 @@ function buildMaterialsForBlock(
 function TexturedVoxelBatch({
   blockTypeId,
   blocks,
+  variant,
   textureByUrl,
 }: {
   blockTypeId: BlockTypeId;
   blocks: readonly VoxelBlock[];
+  variant: VoxelRenderVariant;
   textureByUrl: Map<string, THREE.Texture>;
 }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
@@ -244,15 +331,12 @@ function TexturedVoxelBatch({
 
     for (let i = 0; i < count; i++) {
       const b = blocks[i]!;
-      dummy.position.set(b.x, b.y, b.z);
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
+      applyVoxelRenderVariantToInstance(dummy, b, variant);
       mesh.setMatrixAt(i, dummy.matrix);
     }
     mesh.instanceMatrix.needsUpdate = true;
     mesh.count = count;
-  }, [blocks, count, dummy]);
+  }, [blocks, count, dummy, variant]);
 
   if (!def || count === 0 || materials.length !== 6) return null;
 
@@ -277,12 +361,17 @@ function TexturedScene({
   boundsStructure: VoxelStructure;
   cameraResetNonce: number;
 }) {
-  const byType = useMemo(() => groupBlocksByType(structure), [structure]);
+  const byBucket = useMemo(() => groupBlocksByRenderBucket(structure), [structure]);
+
+  const sortedBucketKeys = useMemo(
+    () => sortedRenderBucketKeys(structure, byBucket),
+    [structure, byBucket],
+  );
 
   const sortedTypeIds = useMemo(() => {
-    const ids = [...byType.keys()].filter((id) => byType.get(id)?.length);
+    const ids = [...new Set(structure.blocks.map((b) => b.blockTypeId))];
     return sortBlockTypesForRender(ids) as BlockTypeId[];
-  }, [byType]);
+  }, [structure]);
 
   const textureUrls = useMemo(
     () => collectTextureUrlsForBlockTypes(sortedTypeIds),
@@ -314,8 +403,8 @@ function TexturedScene({
 
   return (
     <TexturedSceneWithTextures
-      byType={byType}
-      sortedTypeIds={sortedTypeIds}
+      byBucket={byBucket}
+      sortedBucketKeys={sortedBucketKeys}
       textureUrls={textureUrls}
       controlsAndBounds={controlsAndBounds}
     />
@@ -323,13 +412,13 @@ function TexturedScene({
 }
 
 function TexturedSceneWithTextures({
-  byType,
-  sortedTypeIds,
+  byBucket,
+  sortedBucketKeys,
   textureUrls,
   controlsAndBounds,
 }: {
-  byType: Map<string, VoxelBlock[]>;
-  sortedTypeIds: BlockTypeId[];
+  byBucket: Map<string, VoxelBlock[]>;
+  sortedBucketKeys: string[];
   textureUrls: string[];
   controlsAndBounds: ReactNode;
 }) {
@@ -377,14 +466,18 @@ function TexturedSceneWithTextures({
       />
 
       <group position={[0, -GROUP_Y_SHIFT, 0]}>
-        {sortedTypeIds.map((id) => {
-          const blocks = byType.get(id);
+        {sortedBucketKeys.map((bucketKey) => {
+          const blocks = byBucket.get(bucketKey);
           if (!blocks?.length) return null;
+          const first = blocks[0]!;
+          const variant = getVoxelBlockRenderVariant(first);
+          if (!variant) return null;
           return (
             <TexturedVoxelBatch
-              key={id}
-              blockTypeId={id}
+              key={bucketKey}
+              blockTypeId={first.blockTypeId}
               blocks={blocks}
+              variant={variant}
               textureByUrl={textureByUrl}
             />
           );

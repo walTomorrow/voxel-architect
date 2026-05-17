@@ -1,6 +1,18 @@
 import type { BlockTypeId } from "@/src/lib/voxel/blocks/registry-types";
 import type { ResolvedMedievalTower } from "@/src/lib/blueprints/types";
-import type { VoxelBlock } from "@/src/lib/voxel/types";
+import { paneAxisForWindowCell } from "@/src/lib/generation/facade/paneAxis";
+import {
+  centerOrigin,
+  filterGrounded,
+  mergePlacements,
+  type GeneratorPlacement,
+} from "@/src/lib/generation/placement/placementUtils";
+import { isShapeAllowedForBlockType } from "@/src/lib/voxel/blocks/materialMetaHelpers";
+import type {
+  VoxelBlock,
+  VoxelBlockShapeKind,
+  VoxelBlockState,
+} from "@/src/lib/voxel/types";
 
 /**
  * Deterministic merge: higher priority wins first; first placement kept per voxel.
@@ -22,14 +34,7 @@ const PRI = {
   MERLON: 58,
 } as const;
 
-type Placement = {
-  x: number;
-  y: number;
-  z: number;
-  p: number;
-  id: BlockTypeId;
-  i: number;
-};
+type Placement = GeneratorPlacement;
 
 function key(x: number, y: number, z: number): string {
   return `${x},${y},${z}`;
@@ -41,43 +46,6 @@ function colKey(lx: number, lz: number): string {
 
 function lk(lx: number, y: number, lz: number): string {
   return `${lx},${y},${lz}`;
-}
-
-function centerOrigin(n: number): number {
-  return -Math.floor(n / 2);
-}
-
-function mergePlacements(placements: Placement[]): VoxelBlock[] {
-  placements.sort((a, b) => b.p - a.p || b.i - a.i);
-  const seen = new Set<string>();
-  const out: VoxelBlock[] = [];
-  for (const q of placements) {
-    const k = key(q.x, q.y, q.z);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push({ x: q.x, y: q.y, z: q.z, blockTypeId: q.id });
-  }
-  return out;
-}
-
-function filterGrounded(
-  blocks: readonly VoxelBlock[],
-  allowFloating: boolean,
-): VoxelBlock[] {
-  if (allowFloating) return [...blocks];
-  const sorted = [...blocks].sort(
-    (a, b) => a.y - b.y || a.x - b.x || a.z - b.z,
-  );
-  const grounded = new Set<string>();
-  const out: VoxelBlock[] = [];
-  for (const b of sorted) {
-    const k = key(b.x, b.y, b.z);
-    if (b.y <= 0 || grounded.has(key(b.x, b.y - 1, b.z))) {
-      grounded.add(k);
-      out.push(b);
-    }
-  }
-  return out;
 }
 
 function inInteriorVoid(
@@ -529,15 +497,21 @@ export function generateMedievalTower(
     lz: number,
     p: number,
     id: BlockTypeId,
+    partial?: { shapeKind: VoxelBlockShapeKind; state: VoxelBlockState },
   ) => {
-    pl.push({
+    const row: Placement = {
       x: ox + lx,
       y,
       z: oz + lz,
       p,
       id,
       i: idx++,
-    });
+    };
+    if (partial) {
+      row.shapeKind = partial.shapeKind;
+      row.state = partial.state;
+    }
+    pl.push(row);
   };
 
   const { lo: elx0, hi: elx1 } = entranceSpanRange(W, r.openings.entranceWidth);
@@ -618,7 +592,18 @@ export function generateMedievalTower(
         }
 
         if (windowGlass.has(lk(lx, y, lz))) {
-          push(lx, y, lz, PRI.WINDOW, m.window);
+          const axis = paneAxisForWindowCell(lx, lz, W, D);
+          if (
+            axis !== undefined &&
+            isShapeAllowedForBlockType(m.window, "pane")
+          ) {
+            push(lx, y, lz, PRI.WINDOW, m.window, {
+              shapeKind: "pane",
+              state: { axis },
+            });
+          } else {
+            push(lx, y, lz, PRI.WINDOW, m.window);
+          }
         } else {
           push(lx, y, lz, PRI.WALL, m.wall);
         }
@@ -631,6 +616,8 @@ export function generateMedievalTower(
     const lx = parts[0]!;
     const yy = parts[1]!;
     const lz = parts[2]!;
+    // Window sill/lintel trim stays **full cube** (same cells as before). Half slabs here
+    // read as awkward gaps next to thin pane glass in the viewer.
     if (
       yy > 1 &&
       shellCell(r, W, D, T, lx, lz) &&

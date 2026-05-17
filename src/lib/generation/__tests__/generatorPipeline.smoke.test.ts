@@ -3,6 +3,8 @@ import { SAMPLE_MEDIEVAL_TOWER_BLUEPRINT } from "@/src/lib/blueprints/sampleBlue
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
 
+import { assertGeneratedStructurePlacementSemantics } from "./testUtils";
+
 describe("generator pipeline (smoke)", () => {
   it("validates the default medieval tower preset and produces non-empty voxels", () => {
     const blueprint = structuredClone(SAMPLE_MEDIEVAL_TOWER_BLUEPRINT);
@@ -11,7 +13,13 @@ describe("generator pipeline (smoke)", () => {
     expect(validation.ok).toBe(true);
     expect(validation.resolved).toBeDefined();
 
-    const blocks = generateStructureFromResolved(validation.resolved!);
+    const resolved = validation.resolved!;
+    const blocks = generateStructureFromResolved(resolved);
     expect(blocks.length).toBeGreaterThan(0);
+    assertGeneratedStructurePlacementSemantics({
+      id: "smoke",
+      label: "default sample blueprint",
+      blocks,
+    });
   });
 });

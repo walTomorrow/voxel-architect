@@ -4,13 +4,13 @@
 
 This document defines the guiding design principles for Voxel Architect’s blueprint, generator, viewer, and future AI-agent behavior.
 
-[`blueprints/BLUEPRINT_FEATURE_CATALOG.md`](blueprints/BLUEPRINT_FEATURE_CATALOG.md) describes **what architectural features the system may understand**.
+[`../blueprints/BLUEPRINT_FEATURE_CATALOG.md`](../blueprints/BLUEPRINT_FEATURE_CATALOG.md) describes **what architectural features the system may understand**.
 
 This document describes **how the system should behave when generating, validating, editing, and presenting architecture**.
 
 The goal is to prevent the project from becoming a collection of random toggles or one-off visual fixes. Every new feature should improve architectural readability, deterministic generation, inspectability, or future AI controllability.
 
-[`generation/GENERATOR_RELIABILITY.md`](generation/GENERATOR_RELIABILITY.md) documents **automated structural checks** on the current deterministic generator output (Vitest). That complements this document: readability and composition principles here are **not** the same as “passes geometric invariant tests.”
+[`GENERATOR_RELIABILITY.md`](./GENERATOR_RELIABILITY.md) documents **automated structural checks** on the current deterministic generator output (Vitest). That complements this document: readability and composition principles here are **not** the same as “passes geometric invariant tests.”
 
 ---
 
@@ -30,6 +30,42 @@ user intent
 The AI should eventually operate at the level of **architectural intent**, not raw block placement.
 
 The generator should remain responsible for exact voxel geometry.
+
+### 1.1 Blueprint responsibility
+
+A **blueprint** describes **what** to build in structured form: building family (today **`medieval_tower`**), dimensions, semantic materials, massing, levels, openings (entrance, windows), roof, ornamental features, and constraints. It may someday include **floor-plan / interior layout intent** (rooms, zones, circulation)—**that layer is not in the schema yet** (§1.4).
+
+Blueprints are **not** **`VoxelBlock[]`** placement lists and **not** the right interchange format for exhaustive block dumps. See also [`../blueprints/BLUEPRINT_FEATURE_CATALOG.md`](../blueprints/BLUEPRINT_FEATURE_CATALOG.md) (responsibility split).
+
+### 1.2 Generator responsibility
+
+**Generators** deterministically produce **`VoxelBlock[]`** from validated input: lattice placement, shell and hollow rules, openings, merge/priority handling, roof/crown detail, **partial-block realization** where implemented (e.g. **pane** windows when the resolved window material allows **pane** per material metadata), adherence to **`maxBlockCount`**, and outputs consumed by **`analyzeVoxelStructure`** and placement-semantics tests. Material keys from blueprints are **resolved** to registry ids before generation.
+
+### 1.3 AI boundary
+
+**Good:** Natural language or structured edits that map to **blueprint fields**—style/massing/material/opening briefs; future room or zone intent when a schema exists.
+
+**Avoid as primary path:** Emitting or editing raw **`VoxelBlock[]`** coordinates. The generator owns exact geometry so behavior stays **deterministic** and **testable**.
+
+### 1.4 Future floor plans and interior layouts (forward-looking)
+
+**Floor plans are blueprint-level semantic constraints; their realization is generator-level deterministic geometry.**
+
+A future blueprint extension might describe floors, rooms, zones, purposes (forge, storage, etc.), circulation (stairs, ladders, corridors), door connectivity, opening intent per space, furniture/object zones, and walkable regions. Generators would then produce hollow interiors, partitions, doorways, vertical circulation, objects where supported, collision and reachability checks, and **`maxBlockCount`-safe** voxel output.
+
+**Nothing in this paragraph is implemented as blueprint schema today.** Prototypes might use **deterministic layout templates** before a full editable **`floorPlan`** (or similar) model lands. **AI-produced floor plans should appear only as structured blueprint intent**, never as authoritative voxel streams.
+
+**Why it matters for product demos:** Explorable interiors require intentional voids, rooms, openings, and circulation—floor-plan-aware blueprints are how buildings become **usable spaces**, not only exterior shells.
+
+### 1.5 Current generator scope
+
+The active pipeline is **`StructureBlueprint` → `validateBlueprint()` → `generateStructureFromResolved()` → family generator → `VoxelBlock[]`**. Shipped families: **`medieval_tower`** (vertical shell, crown, crenellations) and **`generic_building`** (rectangular footprint, foundation at **y=0**, hollow wall shell from **y=1**, component plan with entrance trim, windows, roof). Hollow interiors remain **limited**; there is **no full interior layout or room graph** yet. Partial shapes today: **cube / slab / pane / post**; window materials may emit **pane** when metadata allows.
+
+### 1.6 Building style catalog (metadata only)
+
+[`src/lib/generation/styles/buildingStyles.ts`](../../src/lib/generation/styles/buildingStyles.ts) defines **building styles** as reusable aesthetic vocabulary (material palettes, opening/roof/feature hints, tags, mood). Curated **`MEDIEVAL_TOWER_PRESETS`** may reference a **`styleId`** on the **preset wrapper** only.
+
+This catalog is **metadata for future AI and style resolution** — it is **not** a blueprint schema field, does **not** change blueprint import/export, and is **not** consumed by generators yet. Authoritative generation input remains the validated **`MedievalTowerBlueprint`** snapshot on each preset.
 
 ---
 
@@ -95,6 +131,27 @@ For any facade with an entrance:
 - make the entrance readable from the default camera
 
 The front facade should be composed around the entrance, not treated as a generic wall face.
+
+### 2.3.1 Generic building doorways (Minecraft clearance)
+
+For **`generic_building`**, treat the entrance as three vertical bands on the facade plane:
+
+| Band | Local **y** | Generator behavior |
+|------|-------------|-------------------|
+| Threshold | **0** | **Always** emit foundation / floor material (`materials.floor`) across the full footprint, **including** doorway cells. The threshold is walkable ground, not part of the wall aperture. |
+| Walkable opening | **1 … `openings.entrance.height`** | **No** wall shell blocks and **no** door fill in this band — clear passage for the player. |
+| Lintel / trim | **`height + 1`** | Optional accent (`materials.accent`) on the first wall row **above** the opening; jambs only when **`height ≥ 3`**. |
+
+**`openings.entrance.height` semantics**
+
+- **`height: 2`** — standard Minecraft door: two blocks of clearance **above the floor** (y=1 and y=2). This is the default for presets and normal buildings.
+- **`height: 3` or `4`** — intentionally **big door** / tall portal; validation may note that this exceeds standard door proportions.
+
+**Shell skip mask** must carve the hollow wall at **y ≥ 1** only for entrance cells. Skipping **y = 0** in the shell mask but **still** emitting floor there was a common bug: it produced a visible void at the threshold while the misplaced “step” block sat outside the footprint.
+
+**Exterior `frontStep`** (when enabled) places a single floor block **outside** the wall plane (`outsideCellOffset`), centered on the entrance span. It must **not** replace or steal the in-footprint threshold block.
+
+**Readability check:** From the default camera, the entrance should read as a **two-block-tall** opening sitting on a solid sill; a three-block-tall void from ground to lintel usually means the aperture was carved through the floor band or `height` was set too high without big-door intent.
 
 ---
 

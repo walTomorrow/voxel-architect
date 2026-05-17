@@ -10,8 +10,20 @@ export type StructureInspectionPresetOption = {
   readonly label: string;
 };
 
+export type PreviewLabSource =
+  | "preset_towers"
+  | "preset_generic"
+  | "partial_showcase";
+
 type Props = {
   readonly title?: string;
+  /** When set with **`onPreviewSourceChange`**, shows a small source toggle (e.g. `/preview` only). */
+  readonly previewSource?: PreviewLabSource;
+  readonly onPreviewSourceChange?: (source: PreviewLabSource) => void;
+  /** Intro paragraph under the title; defaults to preset-tower copy. */
+  readonly panelDescription?: string;
+  /** Validator notes when inspecting a generated preset (optional). */
+  readonly validationNotes?: readonly string[];
   readonly presetOptions: readonly StructureInspectionPresetOption[];
   readonly selectedPresetId: string;
   readonly onPresetIdChange: (id: string) => void;
@@ -97,32 +109,93 @@ function InspectionPanelBody(p: Props) {
     p.layerExtents &&
     (p.layerViewMode === "build-up" || p.layerViewMode === "slice");
 
+  const showSourceToggle =
+    p.previewSource != null && p.onPreviewSourceChange != null;
+
+  const description =
+    p.panelDescription ??
+    "Preset loads a hand-authored tower. Layer modes filter the canvas only; the block breakdown below always reflects the full generated structure.";
+
   return (
     <>
       <div>
-        <h2 className="text-sm font-semibold text-white">{p.title}</h2>
-        <p className="mt-1 text-[11px] leading-snug text-zinc-500">
-          Preset loads a hand-authored tower. Layer modes filter the canvas only;
-          the block breakdown below always reflects the full generated structure.
-        </p>
+        <h2 className="text-sm font-semibold text-white">
+          {p.title ?? "Lab inspection"}
+        </h2>
+        <p className="mt-1 text-[11px] leading-snug text-zinc-500">{description}</p>
       </div>
+
+      {showSourceToggle ? (
+        <section className="space-y-2">
+          <span className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+            Source
+          </span>
+          <div className="flex rounded-lg border border-zinc-700 bg-zinc-900/80 p-0.5">
+            <button
+              type="button"
+              aria-pressed={p.previewSource === "preset_towers"}
+              className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${p.previewSource === "preset_towers" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
+              onClick={() => p.onPreviewSourceChange!("preset_towers")}
+            >
+              Towers
+            </button>
+            <button
+              type="button"
+              aria-pressed={p.previewSource === "preset_generic"}
+              className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${p.previewSource === "preset_generic" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
+              onClick={() => p.onPreviewSourceChange!("preset_generic")}
+            >
+              Generic
+            </button>
+            <button
+              type="button"
+              aria-pressed={p.previewSource === "partial_showcase"}
+              className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${p.previewSource === "partial_showcase" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
+              onClick={() => p.onPreviewSourceChange!("partial_showcase")}
+            >
+              Partials
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="space-y-2">
         <label className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
           Preset
         </label>
-        <select
-          className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-zinc-100"
-          value={p.selectedPresetId}
-          onChange={(e) => p.onPresetIdChange(e.target.value)}
-        >
-          {p.presetOptions.map((opt) => (
-            <option key={opt.id} value={opt.id}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+        {p.previewSource === "partial_showcase" ? (
+          <p className="rounded-md border border-zinc-700/80 bg-zinc-900/50 px-2 py-2 text-[11px] leading-snug text-zinc-400">
+            Preset lists apply to <span className="text-zinc-300">Towers</span> and{" "}
+            <span className="text-zinc-300">Generic</span>. This mode uses a static
+            developer showcase (partial shapes).
+          </p>
+        ) : (
+          <select
+            className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-zinc-100"
+            value={p.selectedPresetId}
+            onChange={(e) => p.onPresetIdChange(e.target.value)}
+          >
+            {p.presetOptions.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        )}
       </section>
+
+      {p.validationNotes && p.validationNotes.length > 0 ? (
+        <section className="space-y-1.5">
+          <span className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+            Validation notes
+          </span>
+          <ul className="space-y-1 rounded-md border border-zinc-700/80 bg-zinc-900/50 px-2 py-2 text-[10px] leading-snug text-zinc-400">
+            {p.validationNotes.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="space-y-2">
         <span className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">

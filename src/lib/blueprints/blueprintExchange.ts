@@ -119,7 +119,7 @@ export function parseBlueprintExchange(
     return failure("blueprint", structureError);
   }
 
-  const blueprint = rawBp as StructureBlueprint;
+  const blueprint = rawBp as MedievalTowerBlueprint;
   try {
     const validation = validateBlueprint(blueprint);
     if (!validation.ok) {
