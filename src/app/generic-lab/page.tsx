@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { PreviewInspectionClient } from "@/src/app/preview/PreviewInspectionClient";
+import { GenericLabClient } from "@/src/app/generic-lab/GenericLabClient";
 
 export const metadata: Metadata = {
-  title: "3D preview · Voxel Architect",
+  title: "Generic blueprint lab · Voxel Architect",
   description:
-    "Inspect curated medieval tower presets in 3D — orbit, zoom, and layer modes.",
+    "Developer lab for editing GenericBuildingBlueprint presets — validate, generate, and inspect in 3D.",
 };
 
-export default function PreviewPage() {
+export default function GenericLabPage() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-zinc-950 text-zinc-100">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-zinc-800/90 bg-zinc-950 px-4 py-3 sm:px-6">
@@ -26,19 +26,19 @@ export default function PreviewPage() {
         </Link>
         <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500">
           <span className="font-medium uppercase tracking-widest text-zinc-600">
-            Preset inspection
+            Generic blueprint lab
           </span>
           <Link
-            href="/generic-lab"
+            href="/preview"
             className="rounded border border-zinc-700 px-2 py-1 text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
           >
-            Developer lab →
+            ← Preview
           </Link>
         </div>
       </header>
 
       <div className="min-h-0 flex-1">
-        <PreviewInspectionClient />
+        <GenericLabClient />
       </div>
     </div>
   );

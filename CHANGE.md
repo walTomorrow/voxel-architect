@@ -70,3 +70,73 @@ Files were normalized to **lowercase `.png`** for GitHub and Markdown preview co
 ### Viewing the timeline
 
 Open [`DEVELOPMENT_TIMELINE.md`](docs/project-history/DEVELOPMENT_TIMELINE.md) in Markdown preview. Images resolve relative to `docs/project-history/screenshots/`. If preview is blank locally, allow workspace content in **Markdown › Preview: Security Level** (Cursor/VS Code), then re-open preview after `git add docs/project-history/`.
+
+---
+
+## Addendum — Generic Building Blueprint developer lab (`/generic-lab`)
+
+**Branch:** `feature/generic-blueprint-lab`  
+**Scope:** Developer-facing manual authoring surface for `GenericBuildingBlueprint` per [`PLAN.md`](PLAN.md).
+
+### Summary
+
+Added `/generic-lab` to edit generic presets, validate/generate live through the existing component pipeline, inspect in `VoxelViewer`, and copy raw `GenericBuildingBlueprint` JSON for debugging. Preview’s “Developer lab →” link now points here. `/visualizer` is unchanged.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| [`src/app/generic-lab/page.tsx`](src/app/generic-lab/page.tsx) | Route shell, metadata, nav to `/preview` and `/` |
+| [`src/app/generic-lab/GenericLabClient.tsx`](src/app/generic-lab/GenericLabClient.tsx) | Collapsible editor, validation, last-valid render, viewer + debug JSON |
+| [`src/app/generic-lab/genericLabUtils.ts`](src/app/generic-lab/genericLabUtils.ts) | Preset clone, clamps, material keys, JSON helper |
+| [`src/app/generic-lab/GenericLabInspectionPanel.tsx`](src/app/generic-lab/GenericLabInspectionPanel.tsx) | Lab-specific layer modes, counts, breakdown, refit (no duplicate preset picker) |
+
+### Files updated
+
+| Path | Changes |
+|------|---------|
+| [`src/app/preview/page.tsx`](src/app/preview/page.tsx) | Developer lab link: `/visualizer` → `/generic-lab` (label unchanged) |
+
+### Implementation notes
+
+- **Pipeline:** `validateBlueprint` → `generateStructureFromResolved` (not throwing `generateStructure`).
+- **Invalid UX:** Last valid structure stays on canvas; errors/notes in editor; stale banner on canvas and inspection panel.
+- **Last-valid state:** React “adjust state during render” when `currentValid` changes (avoids `useEffect` + `setState` lint on new code).
+- **Layer slider:** `effectiveLayer` derived via `clampLayerY` (no layer `useEffect`).
+- **Hidden constraints:** `enforceSymmetry`, `requireGroundedStructure`, `allowFloatingBlocks` preserved from preset; not exposed in UI.
+- **No:** `ComponentPlan` JSON, `blueprintExchange`, import, AI, images, `InteriorPlan`, new families.
+
+### Deviations from PLAN.md
+
+| PLAN | Actual |
+|------|--------|
+| Optional reuse of `StructureInspectionPanel` | Dedicated `GenericLabInspectionPanel` (avoids tower/generic/partial toggles and duplicate preset UI) |
+| `useEffect` for last-valid snapshot | Render-time sync when `currentValid` changes (eslint `react-hooks/set-state-in-effect` / `refs` rules) |
+| Open question: preview link label | Kept **“Developer lab →”** |
+
+### Checks
+
+| Command | Result |
+|---------|--------|
+| `pnpm test:generator` | **100** tests passed |
+| `pnpm exec tsc --noEmit` | Pass |
+| `pnpm run build` | Pass — `/generic-lab` static route listed |
+| `pnpm exec eslint src/app/generic-lab` | Pass (0 errors) |
+| `pnpm lint` (full repo) | **Fails** on pre-existing `react-hooks/set-state-in-effect` in `PreviewInspectionClient.tsx` and `VisualizerClient.tsx` (unchanged this branch) |
+
+### Addendum — 3D viewport layout fix
+
+**Issue:** On `/generic-lab`, the canvas only occupied the top portion of the center column; most of the viewer area stayed empty.
+
+**Cause:** The viewer row and `<main>` did not participate in the flex height chain, and `VoxelViewer` was missing `className="h-full w-full"` (used on `/preview` and `/visualizer`).
+
+**Fix (`GenericLabClient.tsx`):**
+
+- Viewer + inspection wrapper: `h-full min-h-0` so it fills space below the header beside the editor.
+- `<main>`: `h-full` + `min-h-[min(52vh,26rem)]` (preview-aligned minimum on small screens).
+- `VoxelViewer`: `className="h-full w-full"`.
+
+### Addendum — Project history screenshot (`12-generic-lab`)
+
+- Added [`docs/project-history/screenshots/12-generic-lab-blueprint-editor-81e6a4b.png`](docs/project-history/screenshots/12-generic-lab-blueprint-editor-81e6a4b.png) from user capture of `/generic-lab`.
+- Updated [`docs/project-history/DEVELOPMENT_TIMELINE.md`](docs/project-history/DEVELOPMENT_TIMELINE.md) (§11) and [`docs/project-history/screenshots/README.md`](docs/project-history/screenshots/README.md) inventory.
