@@ -1,128 +1,87 @@
-# Phase 6 implementation report
+# Change report — Generic v2 lab layout refinement
 
 ## Branch
 
 `feature/component-authoring-model`
 
-## Phase implemented
+## Scope
 
-**Phase 6 — /generic-lab V2 component tree + editing**
-
-## Files created
-
-- `src/app/generic-lab/GenericLabShell.tsx` — v1/v2 mode toggle (default v1)
-- `src/app/generic-lab/v2/GenericLabV2Client.tsx` — V2 lab orchestration (preset, validate, generate, stale preview)
-- `src/app/generic-lab/v2/ComponentTreePanel.tsx` — read-only semantic component tree
-- `src/app/generic-lab/v2/ComponentInspectorPanel.tsx` — selected-component field editor + per-component material overrides
-- `src/app/generic-lab/v2/ValidationPanel.tsx` — structured errors / warnings / notes
-- `src/app/generic-lab/v2/DebugPanel.tsx` — read-only authoring JSON, normalized JSON, ComponentPlanV2 summary
-- `src/app/generic-lab/v2/genericLabV2Utils.ts` — clone preset, tree builder, patch, materials, plan summary helpers
-- `src/app/generic-lab/v2/__tests__/genericLabV2Utils.test.ts` — unit tests for tree grouping, patch, surfaces, materials
-- `src/lib/blueprints/formatValidationFeedback.ts` — shared v1/v2 validation message formatting (used by preview)
+Layout and UX refinement for the real `/generic-lab` Generic v2 mode only. No schema, validator, generator, emitter, preset, or blueprint type changes. No changes to `/generic-lab-concepts`, V1 lab mode, or concept exploration.
 
 ## Files updated
 
-- `src/app/generic-lab/page.tsx` — mounts `GenericLabShell` instead of `GenericLabClient` directly
-- `src/app/preview/PreviewInspectionClient.tsx` — imports `formatValidationFeedback` from shared module
-- `vitest.config.ts` — includes `src/app/generic-lab/v2/__tests__/**/*.test.ts`
+- `src/app/generic-lab/v2/GenericLabV2Client.tsx` — viewer-first three-column workbench layout
+- `src/app/generic-lab/v2/ComponentInspectorPanel.tsx` — compact header with face + detail summary at top
+- `src/app/generic-lab/v2/genericLabV2Display.ts` — `buildSelectedComponentPreview` helper for overlay/inspector context
 
-## V2 lab mode behavior
+## Files created
 
-- `/generic-lab` shows a **Lab mode** bar: **Generic v1** (default) | **Generic v2**.
-- **Generic v1** renders the existing `GenericLabClient` unchanged (same editor, validation, generation, inspection panel).
-- **Generic v2** renders `GenericLabV2Client` with:
-  - Preset picker for `simple_cabin_v2`, `stone_workshop_v2`, `porch_house_v2` (reload supported)
-  - Draft cloned from preset on load
-  - `validateBlueprint()` → `generateStructure()` when valid
-  - `VoxelViewer` with layer inspection via existing `GenericLabInspectionPanel`
-  - **Stale preview**: last valid structure kept when draft becomes invalid; banner on canvas and in inspection panel
+- `src/app/generic-lab/v2/SelectedComponentPreviewOverlay.tsx` — compact bottom overlay on the live preview
+- `src/app/generic-lab/v2/__tests__/genericLabV2Display.test.ts` — preview summary test for `porch_house_v2` front windows
 
-## Component tree behavior
+## Layout changes (summary)
 
-- Built from authoring components only (no `room_shell`, `plan_door`, etc.).
-- Root **room** first, then facade surfaces in fixed order: **front → back → left → right** (headers only).
-- Surface children ordered: door → window_group → porch → chimney; stable id labels.
-- **Steps** nested under their `targetDoor` when possible.
-- **Roof** section after surfaces with roof components as children.
-- Selecting room or component nodes drives the inspector.
+- **Top bar:** Preset, reload, and blueprint materials (collapsed `<details>`) moved out of the left column into a compact header so the workbench body is only map · preview · inspector.
+- **Three columns (desktop):** Fixed-width semantic map (~304px), flexible center preview, fixed-width inspector (~352px). Validation/debug sits in a collapsed bottom strip outside the main row.
+- **Mobile:** Preview is ordered first (`order-1`) with a generous minimum height; map and inspector stack below with capped heights so the viewer stays primary.
 
-## Inspector editing behavior
+## VoxelViewer priority
 
-- Edits **existing** components only; component **id is read-only** (no auto-rename).
-- Supported fields per type (room, roof, door, window_group, porch, chimney, step) per Phase 6 spec.
-- `targetSurface` selects use facade surfaces only (no roof).
-- Step `targetDoor` and porch `aroundDoor` use door id lists; porch allows blank `(none)` for `full_facade`.
-- Enum fields use `<select>`, numbers use `<input type="number">`, booleans use checkbox.
+- Center column is `flex-1` with `absolute inset-0` `VoxelViewer` filling the panel (no nested grid sharing horizontal space with the inspector).
+- Removed the previous layout where the inspector sat beside the viewer inside the center column.
+- Stale-structure banner uses a single compact line at the top of the preview.
+- Structure inspection and validation/debug are collapsed by default and live outside the preview’s flex growth path.
 
-## Validation / stale preview behavior
+## Left / right panel simplification
 
-- `ValidationPanel` shows structured `ValidationIssue` entries with **code**, **message**, and optional **path**, **componentId**, **surface**, **anchor**, **suggestion**.
-- Errors, warnings, and notes are visually distinct.
-- Invalid draft: validation lists issues; canvas keeps **last valid** structure; stale banners shown.
+**Left**
 
-## Debug panel behavior
+- Semantic map only (no preset block or materials form above the tree).
+- Map scrolls internally; full height on `lg` breakpoints.
 
-- Read-only **authoring** blueprint JSON (always).
-- Read-only **normalized** JSON when validation passes.
-- Read-only **ComponentPlanV2 summary** (planVersion, rootRoomId, bounds, component kinds + sourceComponentId, mask counts) — not editable public IR.
-- Generated block count when a structure is displayed.
+**Right**
 
-## Materials
+- Inspector is the primary panel; structure inspection is a collapsed `<details>` footer with a reduced max height (`10rem`).
+- Inspector header is tighter: human name, monospace id, face + key details (no separate “type” / palette inheritance line).
+- Material overrides remain collapsed `<details>` (unchanged behavior).
 
-**Fully implemented:**
+## Selected-component preview context
 
-- Root blueprint palette (all six classic slots) in V2 client sidebar.
-- Per-component material overrides in inspector (inherit vs override per slot).
+- `buildSelectedComponentPreview` builds name, id, attachment line (`Attached to Front face`), and a detail string (e.g. `2 windows · symmetric · auto height`).
+- `SelectedComponentPreviewOverlay` renders a small bottom-left card on the `VoxelViewer` (pointer-events none, max width ~md) so tree selection, preview, and inspector refer to the same component.
+- No voxel or mesh highlighting was added.
 
-## Add / remove components
+## Preserved behavior
 
-**Deferred** — no add/remove for window_group, chimney, porch, step, or remove-component actions in this pass.
+- Rich semantic map, visual surface cards, segmented horizontal placement, live generation, stale preview, collapsible validation/debug, V1 lab mode toggle, and all existing edit paths via `patchComponent`.
 
-## V1 lab safety
+## Confirmations
 
-- `GenericLabClient.tsx` was **not** moved, renamed, or rewritten.
-- V1 behavior is preserved behind the shell toggle; default mode remains **Generic v1**.
+- V1 lab mode remains intact (`GenericLabShell` unchanged).
+- `/generic-lab-concepts` untouched.
+- No schema, generation pipeline, AI, image upload, interior, floor plan, multiple-room, freeform coordinate, or region-selection changes.
+- ComponentPlanV2 is not exposed as editable JSON.
 
-## Out of scope (confirmed not added)
+## Tests
 
-- AI runtime, prompt box, LLM operation queue, image upload
-- Floor plans, interiors, multiple rooms, walls-as-components
-- Freeform coordinate editing, region selection
-- Public editable ComponentPlanV2
-- V1 removal, V1 schema changes, V1 preset removal, `applyOperations`
+- **Added:** `genericLabV2Display.test.ts` (window group preview summary for `porch_house_v2`).
+- **Unchanged:** `genericLabV2Utils.test.ts` (no helper behavior changes).
 
-## Tests added / updated
+## Manual verification checklist
 
-- `src/app/generic-lab/v2/__tests__/genericLabV2Utils.test.ts` (8 tests): tree grouping, surface order, step nesting, roof section, `patchComponent` immutability, facade-only target surfaces, material override helper, door id listing.
-
-## Manual verification results
-
-Verified by implementation review and successful production build; interactive UI checks recommended locally:
-
-| Check | Result |
-|-------|--------|
-| `/generic-lab` loads | Pass (static route in build) |
-| Generic v1 mode works as before | Pass — same `GenericLabClient` behind toggle |
-| Generic v2 mode loads | Pass — `GenericLabV2Client` wired |
-| V2 preset picker (3 presets) | Pass — options from `previewPresetCatalog` |
-| Each preset can validate + generate | Pass — existing V2 pipeline + preset invariants tests |
-| Component tree grouping | Pass — unit tests + tree builder |
-| Selection updates inspector | Pass — shared `selectedComponentId` state |
-| Edits revalidate / regenerate | Pass — `useMemo` on draft → validation → generation |
-| Invalid edits → errors + stale canvas | Pass — mirrors V1 snapshot pattern |
-| Material edits | Pass — root + per-component overrides |
-| Debug panels read-only | Pass — `readOnly` textareas / JSON summary |
-| `/preview` still works | Pass — only shared `formatValidationFeedback` extract |
+- [ ] Open `/generic-lab`, switch to **Generic v2** — V1 still works when toggled.
+- [ ] On a laptop-width window, the voxel preview dominates; map and inspector are side columns.
+- [ ] Preset reload and blueprint materials (collapsed) work from the top bar.
+- [ ] Selecting components in the semantic map updates the preview overlay and inspector header.
+- [ ] Invalid draft still shows stale structure with a compact top banner.
+- [ ] Validation & debug strip expands only when opened; structure inspection stays collapsed by default.
+- [ ] Edit a window count / face / placement — live preview updates when valid.
 
 ## Command results
 
-```
-pnpm exec tsc --noEmit   → exit 0
-pnpm lint                → exit 0 (0 errors; unused-import warnings fixed)
-pnpm test:generator      → exit 0 (22 files, 134 tests)
-pnpm run build           → exit 0 (routes: /, /generic-lab, /preview)
-```
-
-## Next recommended phase
-
-**Phase 7** (per PLAN.md): narrow add/remove for facade-attached components (window_group, chimney, porch, step) if desired; optional AI/operations runtime remains later. Continue keeping V1 intact until V2 lab is stable in daily use.
+| Command | Result |
+|---------|--------|
+| `pnpm exec tsc --noEmit` | Pass |
+| `pnpm lint` | Pass |
+| `pnpm test:generator` | Pass (135 tests, including new display test) |
+| `pnpm run build` | Pass |
