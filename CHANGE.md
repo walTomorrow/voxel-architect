@@ -433,3 +433,87 @@ Implemented `validateGenericBuildingBlueprintV2`, wired `validateBlueprint()` di
 
 - Resolver: surface catalog, `ResolvedGenericBuildingV2` (or equivalent internal struct)
 - Lower `GenericBuildingBlueprintV2` → `ComponentPlanV2`
+
+---
+
+## Addendum — GenericBuildingBlueprint v2 Phase 3 — resolver + ComponentPlanV2 lowering
+
+**Branch:** `feature/component-authoring-model`  
+**Phase implemented:** Phase 3 — Resolution + ComponentPlan v2 lowering (per [`PLAN.md`](PLAN.md) §13)
+
+### Summary
+
+Added internal **resolved semantic graph** types, `resolveGenericBuildingV2()`, aperture mask derivation, and `compileGenericBuildingV2Plan()` lowering to **ComponentPlanV2**. Pipeline: validate → normalize → resolve → compile plan. **No voxel emitters**, no `generateStructure` v2 success path, no preview/lab V2 UI.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| [`src/lib/blueprints/types/resolvedGenericBuildingV2.ts`](src/lib/blueprints/types/resolvedGenericBuildingV2.ts) | Internal `ResolvedGenericBuildingV2`, resolved component union, surfaces, anchors, apertures |
+| [`src/lib/blueprints/resolveMaterialPaletteV2.ts`](src/lib/blueprints/resolveMaterialPaletteV2.ts) | Blueprint + override → `ResolvedMaterialPaletteV2` (classic pack keys) |
+| [`src/lib/blueprints/resolveGenericBuildingV2.ts`](src/lib/blueprints/resolveGenericBuildingV2.ts) | `resolveGenericBuildingV2(normalized)` |
+| [`src/lib/generation/components/v2/facadePlacementV2.ts`](src/lib/generation/components/v2/facadePlacementV2.ts) | Horizontal door span + symmetric/even window slot helpers |
+| [`src/lib/generation/components/v2/deriveApertureMasksV2.ts`](src/lib/generation/components/v2/deriveApertureMasksV2.ts) | `deriveApertureMasksV2` → `shellSkipMask` / `windowMask` / `doorMask` |
+| [`src/lib/generation/components/v2/compileGenericBuildingV2Plan.ts`](src/lib/generation/components/v2/compileGenericBuildingV2Plan.ts) | `compileGenericBuildingV2Plan(resolved)` |
+| [`src/lib/blueprints/__tests__/resolveGenericBuildingV2.test.ts`](src/lib/blueprints/__tests__/resolveGenericBuildingV2.test.ts) | Resolver tests (8 cases) |
+| [`src/lib/generation/components/__tests__/compileGenericBuildingV2Plan.test.ts`](src/lib/generation/components/__tests__/compileGenericBuildingV2Plan.test.ts) | Lowering/plan tests (9 cases) |
+
+### Files updated
+
+| Path | Changes |
+|------|---------|
+| [`src/lib/generation/components/v2/types.ts`](src/lib/generation/components/v2/types.ts) | Enriched `PlanDoorV2` / `PlanWindowGroupV2` / porch/chimney/step params; `doorMask` in `DerivedOpeningsV2` |
+| [`src/lib/blueprints/__tests__/v2Schema.fixtures.test.ts`](src/lib/blueprints/__tests__/v2Schema.fixtures.test.ts) | `PlanStepV2` fixture includes `anchor` |
+
+### Resolved types added (internal)
+
+- `ResolvedGenericBuildingV2` — `rootRoomId`, `origin`, `grid`, `materials`, `surfaces`, `anchors`, `openingsByFacade`, `components`
+- `ResolvedRoomSurfaceV2` — five faces per root room (`main-room.{front,back,left,right,roof}`)
+- `ResolvedDoorAnchorV2` / `ResolvedDoorApertureV2` / `ResolvedWindowApertureV2`
+- `ResolvedFacadeOpeningsV2` — doors/windows grouped per `EntranceSide`
+- Typed resolved components: room, roof, door, window_group, porch, chimney, step
+
+### Resolver behavior
+
+- Assumes Phase 2–validated input; throws `ResolveGenericBuildingV2Error` on broken invariants
+- Single root room; compiler origin `{ x: 0, y: 0, z: 0 }`
+- Surface catalog from root room dimensions + wall thickness (reuses `facadeInteriorSpan`)
+- Doors resolved first; then windows (door span excluded from window slots via `pickWindowSlotsFromAllowed`)
+- Material inheritance: component override → blueprint palette → `blockTypeId("classic", …)`
+- Roof `targetRoom`, step `targetDoor`, porch `aroundDoor` resolved to component ids
+- `PlanBoundsV2` grid: room size + porch depth along outward normal + 1 cell for front/back/left/right steps
+
+### Lowering behavior
+
+- `compileGenericBuildingV2Plan` emits component-oriented plan kinds: `room_shell`, `door`, `window_group`, `roof`, `porch`, `chimney`, `step`
+- Each plan component carries `sourceComponentId`; doors/windows include full aperture descriptors
+- `deriveApertureMasksV2` fills plan-level masks (room-local keys, v1-compatible door/window Y rules)
+
+### Aperture / bounds behavior
+
+- Doors: horizontal placement (`left` \| `center` \| `right`) → façade span; mask cells `y = 1..height` on wall plane
+- Windows: `symmetric` \| `even` slots on allowed coordinates; `heightBand` → `wy`; forbidden door span on same façade
+- **simple_cabin_v2** deterministic bounds: `9×8×5` body, `2` roof layers, `0` overhang (depth `+1` for front step)
+
+### Tests added/updated
+
+- **New:** `resolveGenericBuildingV2.test.ts`, `compileGenericBuildingV2Plan.test.ts`
+- **Preserved:** all V1 generator/validation tests pass
+
+### Confirmations
+
+- **V1 runtime unchanged** — v1 validate/resolve/generate/preview/lab paths untouched
+- **No V2 voxel emission / generation / UI / operations** — `generateStructure` still throws for `schemaVersion: 2`; no emitters, no preview v2 presets
+
+### Checks
+
+| Command | Result |
+|---------|--------|
+| `pnpm exec tsc --noEmit` | **Pass** |
+| `pnpm lint` | **Pass** |
+| `pnpm test:generator` | **117** tests passed, **19** files |
+
+### Next steps (Phase 4)
+
+- `emitFromComponentPlanV2`, porch emitter, `generateStructure` v2 dispatch
+- Generator invariant tests (non-empty voxels per v2 preset)

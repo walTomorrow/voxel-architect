@@ -79,7 +79,19 @@ describe("GenericBuildingBlueprint v2 schema fixtures", () => {
         windowMask: new Set(),
         doorMask: new Set(),
       },
-      components: [] as PlanComponentV2[],
+      components: [
+        {
+          kind: "step",
+          sourceComponentId: "front-step",
+          targetDoorId: "front-door",
+          anchor: {
+            side: "front",
+            spanLo: 3,
+            spanHi: 4,
+            surfaceRef: "main-room.front",
+          },
+        },
+      ] as PlanComponentV2[],
     };
     expect(_result.ok).toBe(false);
     expect(_plan.planVersion).toBe(2);

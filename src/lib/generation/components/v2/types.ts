@@ -1,10 +1,19 @@
 /**
  * ComponentPlan v2 — internal compiler IR only. Not public authoring JSON.
- * Lowering and emitters are Phase 3–4.
+ * Lowering is Phase 3; emitters are Phase 4.
  */
 
-import type { BlueprintConstraints } from "@/src/lib/blueprints/types";
-import type { ComponentId } from "@/src/lib/blueprints/types/genericBuildingV2";
+import type { BlueprintConstraints, EntranceSide } from "@/src/lib/blueprints/types";
+import type {
+  ComponentId,
+  HorizontalPlacementV2,
+  PorchWidthModeV2,
+  RoofKindV2,
+  RoomSurfaceRef,
+  ShedOrientationV2,
+  WindowHeightBandV2,
+  WindowLayoutV2,
+} from "@/src/lib/blueprints/types/genericBuildingV2";
 import type { BlockTypeId } from "@/src/lib/voxel/blocks/registry-types";
 
 export type PlanComponentKindV2 =
@@ -41,6 +50,27 @@ export interface ResolvedMaterialPaletteV2 {
   readonly accent: BlockTypeId;
 }
 
+export interface DoorAperturePlanV2 {
+  readonly side: EntranceSide;
+  readonly width: number;
+  readonly height: number;
+  readonly horizontal: HorizontalPlacementV2["horizontal"];
+  readonly spanLo: number;
+  readonly spanHi: number;
+  readonly surfaceRef: RoomSurfaceRef;
+}
+
+export interface WindowAperturePlanV2 {
+  readonly side: EntranceSide;
+  readonly count: number;
+  readonly layout: WindowLayoutV2;
+  readonly heightBand: WindowHeightBandV2;
+  readonly horizontal: HorizontalPlacementV2["horizontal"];
+  readonly slots: readonly number[];
+  readonly wy: number;
+  readonly surfaceRef: RoomSurfaceRef;
+}
+
 export interface PlanRoomShellV2 {
   readonly kind: "room_shell";
   readonly sourceComponentId: ComponentId;
@@ -57,36 +87,59 @@ export interface PlanRoofV2 {
   readonly kind: "roof";
   readonly sourceComponentId: ComponentId;
   readonly params: {
-    readonly kind: "pitched_gable" | "shed" | "none";
+    readonly targetRoomId: ComponentId;
+    readonly kind: RoofKindV2;
     readonly layers: number;
     readonly overhang: number;
+    readonly orientation?: ShedOrientationV2;
   };
 }
 
 export interface PlanDoorV2 {
   readonly kind: "door";
   readonly sourceComponentId: ComponentId;
+  readonly aperture: DoorAperturePlanV2;
 }
 
 export interface PlanWindowGroupV2 {
   readonly kind: "window_group";
   readonly sourceComponentId: ComponentId;
+  readonly aperture: WindowAperturePlanV2;
 }
 
 export interface PlanPorchV2 {
   readonly kind: "porch";
   readonly sourceComponentId: ComponentId;
+  readonly params: {
+    readonly surfaceRef: RoomSurfaceRef;
+    readonly side: EntranceSide;
+    readonly depth: number;
+    readonly widthMode: PorchWidthModeV2;
+    readonly horizontal: HorizontalPlacementV2["horizontal"];
+    readonly aroundDoorId?: ComponentId;
+  };
 }
 
 export interface PlanChimneyV2 {
   readonly kind: "chimney";
   readonly sourceComponentId: ComponentId;
+  readonly params: {
+    readonly surfaceRef: RoomSurfaceRef;
+    readonly side: EntranceSide;
+    readonly horizontal: HorizontalPlacementV2["horizontal"];
+  };
 }
 
 export interface PlanStepV2 {
   readonly kind: "step";
   readonly sourceComponentId: ComponentId;
   readonly targetDoorId: ComponentId;
+  readonly anchor: {
+    readonly side: EntranceSide;
+    readonly spanLo: number;
+    readonly spanHi: number;
+    readonly surfaceRef: RoomSurfaceRef;
+  };
 }
 
 export type PlanComponentV2 =
