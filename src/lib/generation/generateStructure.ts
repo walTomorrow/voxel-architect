@@ -1,10 +1,14 @@
 import type {
   GenericBuildingBlueprint,
+  GenericBuildingBlueprintV2,
   ResolvedStructure,
   StructureBlueprint,
 } from "@/src/lib/blueprints/types";
+import { resolveGenericBuildingV2 } from "@/src/lib/blueprints/resolveGenericBuildingV2";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
+import { validateGenericBuildingBlueprintV2 } from "@/src/lib/blueprints/validateGenericBuildingV2";
 import { generateGenericBuilding } from "@/src/lib/generation/generators/generateGenericBuilding";
+import { generateGenericBuildingV2 } from "@/src/lib/generation/generators/generateGenericBuildingV2";
 import type { VoxelBlock } from "@/src/lib/voxel/types";
 
 /**
@@ -13,9 +17,19 @@ import type { VoxelBlock } from "@/src/lib/voxel/types";
  */
 export function generateStructure(blueprint: StructureBlueprint): VoxelBlock[] {
   if (blueprint.schemaVersion === 2) {
-    throw new Error(
-      "schemaVersion 2 generation is not implemented yet (Phase 4).",
+    const result = validateGenericBuildingBlueprintV2(
+      blueprint as GenericBuildingBlueprintV2,
     );
+    if (!result.ok) {
+      throw new Error(
+        result.errors.map((e) => e.message).join("; "),
+      );
+    }
+    if (!result.normalized) {
+      throw new Error("validateGenericBuildingBlueprintV2 returned no normalized blueprint.");
+    }
+    const resolved = resolveGenericBuildingV2(result.normalized);
+    return generateGenericBuildingV2(resolved);
   }
   const result = validateBlueprint(blueprint as GenericBuildingBlueprint);
   if (!result.ok) {

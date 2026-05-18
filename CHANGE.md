@@ -517,3 +517,83 @@ Added internal **resolved semantic graph** types, `resolveGenericBuildingV2()`, 
 
 - `emitFromComponentPlanV2`, porch emitter, `generateStructure` v2 dispatch
 - Generator invariant tests (non-empty voxels per v2 preset)
+
+---
+
+## Addendum — GenericBuildingBlueprint v2 Phase 4 — emitters + generation
+
+**Branch:** `feature/component-authoring-model`  
+**Phase implemented:** Phase 4 — V2 emitters + generation (per [`PLAN.md`](PLAN.md) §13)
+
+### Summary
+
+Implemented deterministic **voxel emission** from `ComponentPlanV2`, `generateGenericBuildingV2()`, and **`generateStructure` dispatch for `schemaVersion: 2`**. V2 presets now validate → resolve → compile → emit to `VoxelBlock[]`. No preview/lab wiring.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| [`src/lib/generation/generators/generateGenericBuildingV2.ts`](src/lib/generation/generators/generateGenericBuildingV2.ts) | `generateGenericBuildingV2(resolved)` entry |
+| [`src/lib/generation/components/v2/planContextV2.ts`](src/lib/generation/components/v2/planContextV2.ts) | World origin + room shell context for emitters |
+| [`src/lib/generation/components/v2/emitFromComponentPlanV2.ts`](src/lib/generation/components/v2/emitFromComponentPlanV2.ts) | Plan dispatch, merge, grounding filter |
+| [`src/lib/generation/components/v2/emitters/roomShell.ts`](src/lib/generation/components/v2/emitters/roomShell.ts) | Foundation + hollow shell (mask skip) |
+| [`src/lib/generation/components/v2/emitters/door.ts`](src/lib/generation/components/v2/emitters/door.ts) | Door fill from `doorMask` + lintel trim |
+| [`src/lib/generation/components/v2/emitters/windows.ts`](src/lib/generation/components/v2/emitters/windows.ts) | Windows from `windowMask` (pane when allowed) |
+| [`src/lib/generation/components/v2/emitters/roof.ts`](src/lib/generation/components/v2/emitters/roof.ts) | `pitched_gable`, `shed` (+ orientation), `none` |
+| [`src/lib/generation/components/v2/emitters/porch.ts`](src/lib/generation/components/v2/emitters/porch.ts) | Exterior porch deck (`full_facade` / `door_only`) |
+| [`src/lib/generation/components/v2/emitters/chimney.ts`](src/lib/generation/components/v2/emitters/chimney.ts) | Façade chimney stack |
+| [`src/lib/generation/components/v2/emitters/step.ts`](src/lib/generation/components/v2/emitters/step.ts) | Door-anchored exterior step |
+| [`src/lib/generation/__tests__/generatorGenericPresetInvariantsV2.test.ts`](src/lib/generation/__tests__/generatorGenericPresetInvariantsV2.test.ts) | V2 invariant + feature smoke tests |
+
+### Files updated
+
+| Path | Changes |
+|------|---------|
+| [`src/lib/generation/generateStructure.ts`](src/lib/generation/generateStructure.ts) | `schemaVersion: 2` → validate/normalize/resolve/generate V2 |
+| [`src/lib/generation/components/priorities.ts`](src/lib/generation/components/priorities.ts) | Added `PORCH` merge priority |
+
+### V2 generation entry behavior
+
+- `generateGenericBuildingV2(resolved)` → `compileGenericBuildingV2Plan` → `emitFromComponentPlanV2` → `VoxelBlock[]`
+- `generateStructure` for v2: `validateGenericBuildingBlueprintV2` → `resolveGenericBuildingV2` → `generateGenericBuildingV2`
+
+### emitFromComponentPlanV2 behavior
+
+Deterministic order: **room_shell → porch → door(s) → windows (plan mask) → roof → chimney → step**  
+Uses `mergePlacements` + `filterGroundedConnected26` when `allowFloatingBlocks` is false (same as v1).
+
+### Emitter behavior by plan kind
+
+| Kind | Behavior |
+|------|----------|
+| `room_shell` | Full room footprint floor at y=0; exterior walls y≥1; skips `shellSkipMask` |
+| `door` | Fills `doorMask` cells with door material; accent lintel/jambs from aperture span |
+| `window_group` | Emits from plan `windowMask` only (not recomputed) |
+| `roof` | Gable/shed adapted from v1 roof math on **room** W×D; `none` emits nothing |
+| `porch` | y=0 deck slabs outside façade (`full_facade` or door span) |
+| `chimney` | Accent column on resolved façade side/horizontal |
+| `step` | Single floor block outside target door anchor |
+
+### Tests added/updated
+
+- **New:** `generatorGenericPresetInvariantsV2.test.ts` — all 3 v2 presets; hard invariants; placement semantics; `generateStructure` v2 dispatch; door/window/chimney/step/porch smoke
+- **Preserved:** all V1 generator tests pass
+
+### Confirmations
+
+- **V1 runtime unchanged** — v1 `generateStructure` / preview / generic-lab still use schemaVersion 1 presets only
+- **No preview/lab/operations/UI** — v2 presets not wired into `/preview` or `/generic-lab`
+
+### Checks
+
+| Command | Result |
+|---------|--------|
+| `pnpm exec tsc --noEmit` | **Pass** |
+| `pnpm lint` | **Pass** |
+| `pnpm test:generator` | **123** tests passed, **20** files |
+| `pnpm run build` | **Pass** |
+
+### Next steps (Phase 5)
+
+- Ship v2 presets in `/preview` grouped picker
+- Manual inspection of v1 + v2 generated structures
