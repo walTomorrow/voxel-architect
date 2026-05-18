@@ -1082,3 +1082,472 @@ Skip provenance on `VoxelBlock` and full inspection breakdown until later.
 | 10 | Separate `BlueprintValidationResultV2` | **Yes** (types) |
 | 11 | Provenance | **No** (Phase 4/6) |
 | 12 | Phase 1 scope | **N/A** |
+
+---
+
+## 17. Phase 6 — `/generic-lab` V2 component tree + editing (planning)
+
+**Status:** Planning only — **do not implement** until this section is approved.  
+**Branch:** `feature/component-authoring-model` (continues Phases 1–5)  
+**Prerequisite:** Phases 1–5 complete (types, validate, resolve, compile, emit, `generateStructure` v2, `/preview` v2 presets).
+
+### 17.1 Current state survey
+
+#### `/generic-lab` (V1-only today)
+
+| File | Role | V1-specific? | Reusable for V2? |
+|------|------|--------------|------------------|
+| [`src/app/generic-lab/page.tsx`](src/app/generic-lab/page.tsx) | Shell: header, link to `/preview`, mounts `GenericLabClient` | Shell is neutral | **Yes** — add mode toggle in header or delegate to child |
+| [`src/app/generic-lab/GenericLabClient.tsx`](src/app/generic-lab/GenericLabClient.tsx) | ~900 lines: monolithic V1 blueprint editor (body, roof, openings, features, materials, constraints), validation, generation, 3D view | **Fully V1** (`GenericBuildingBlueprint`, `ResolvedGenericBuilding`) | **Patterns only** — see below |
+| [`src/app/generic-lab/genericLabUtils.ts`](src/app/generic-lab/genericLabUtils.ts) | V1 preset list, `clonePresetBlueprint`, `blueprintToDebugJson`, `clampInt`, `CLASSIC_MATERIAL_KEYS` | **V1 presets only** | **Partial** — mirror for v2 in `genericLabV2Utils.ts`; share `CLASSIC_MATERIAL_KEYS` / `clampInt` |
+| [`src/app/generic-lab/GenericLabInspectionPanel.tsx`](src/app/generic-lab/GenericLabInspectionPanel.tsx) | Right rail: layer modes, stale banner, block breakdown, refit camera | **V1 copy** (“blueprint editor”) | **Yes** — pass `showingStaleStructure`; keep API stable |
+
+**V1 lab patterns worth copying (not importing blindly):**
+
+- **Draft + validate on every change:** `useMemo(() => validateBlueprint(blueprint), [blueprint])`.
+- **Last-valid snapshot:** `currentValid` vs `lastValidSnapshot`; canvas shows last good build when draft invalid (`showingStaleStructure`).
+- **Generation path (V1):** `validation.resolved` → `generateStructureFromResolved`. **V2 must use:** `validation.ok` + `generateStructure(draft)` (or `generateGenericBuildingV2` after resolve — prefer single `generateStructure` entry).
+- **Layer view / breakdown:** shared `layerView` + `fullStructureBlockBreakdown` — identical for V2.
+- **JSON debug:** `blueprintToDebugJson` — same idea for v2 draft.
+
+**V1 lab must not be refactored in place into a dual-mode monster.** Keep `GenericLabClient.tsx` as the V1 editor; add a parallel V2 subtree (see §17.9).
+
+#### V2 blueprint + preview infrastructure
+
+| Module | Role |
+|--------|------|
+| [`src/lib/blueprints/sampleGenericBuildingBlueprintsV2.ts`](src/lib/blueprints/sampleGenericBuildingBlueprintsV2.ts) | Presets: `simple_cabin_v2`, `stone_workshop_v2`, `porch_house_v2`; `getGenericBuildingPresetV2`, `DEFAULT_GENERIC_V2_PRESET_ID` |
+| [`src/lib/blueprints/previewPresetCatalog.ts`](src/lib/blueprints/previewPresetCatalog.ts) | `PreviewLabSource`, v1/v2 preset option lists — **reuse v2 list** in lab preset picker |
+| [`src/lib/blueprints/validateGenericBuildingV2.ts`](src/lib/blueprints/validateGenericBuildingV2.ts) | Validator + normalization; exports `GenericBuildingBlueprintV2Draft` for mutable tests |
+| [`src/lib/blueprints/validateBlueprint.ts`](src/lib/blueprints/validateBlueprint.ts) | Dispatches schemaVersion 1 vs 2; overloads for result types |
+| [`src/lib/blueprints/resolveGenericBuildingV2.ts`](src/lib/blueprints/resolveGenericBuildingV2.ts) | Internal resolved graph (for debug panel + tree grouping helpers) |
+| [`src/lib/generation/components/v2/compileGenericBuildingV2Plan.ts`](src/lib/generation/components/v2/compileGenericBuildingV2Plan.ts) | Lowering to `ComponentPlanV2` |
+| [`src/lib/generation/generators/generateGenericBuildingV2.ts`](src/lib/generation/generators/generateGenericBuildingV2.ts) | compile + emit |
+| [`src/lib/generation/generateStructure.ts`](src/lib/generation/generateStructure.ts) | Public generate entry for v2 |
+
+#### `/preview` (Phase 5 — safe reuse)
+
+| File | Reuse in lab |
+|------|----------------|
+| [`src/app/preview/PreviewInspectionClient.tsx`](src/app/preview/PreviewInspectionClient.tsx) | `formatValidationFeedback`, `generateStructure`, stale error display patterns |
+| [`src/components/voxel/StructureInspectionPanel.tsx`](src/components/voxel/StructureInspectionPanel.tsx) | Optional: not a drop-in for lab layout (preview is preset-inspection, lab is editor). Prefer **lab-specific** validation/tree panels |
+
+**Not reusable without adaptation:** V1 `GenericLabClient` form fields (monolithic `body` / `openings` / `features`).
+
+---
+
+### 17.2 Phase 6 scope recommendation
+
+**Recommendation:** One **cohesive Phase 6 PR series** on the same branch, implemented as **sequential internal checkpoints** (not three separate product phases). Ship a usable lab at checkpoint 3; polish through 6–7.
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Single big bang | One review | High regression risk; hard to test incrementally |
+| 6a → 6b → 6c as separate PRs | Clear review boundaries | Integration seams between PRs |
+| **One implementation, checkpoints 6a–6c (recommended)** | Continuous UX; shared utils from day one; V1 untouched in separate files | Requires discipline to not scope-creep 6c |
+
+**Checkpoint map (aligns with §17.12):**
+
+| Checkpoint | Deliverable | User-visible |
+|------------|-------------|--------------|
+| **6a** | V2 mode + preset picker + validate/generate + preview + stale snapshot | Switch to “Generic v2”, pick preset, see voxels |
+| **6b** | Read-only component tree + selection + inspector (read-only) | Navigate semantic structure |
+| **6c** | Inspector **edits** + revalidate/regenerate | Tune fields live |
+| **6d** | Root palette + per-component material overrides | Materials |
+| **6e** | **Optional** add/remove simple components | Only if low risk after 6c |
+| **6f** | Debug JSON + ComponentPlan summary + polish | Developer visibility |
+| **6g** | Tests + `CHANGE.md` | CI green |
+
+**6e (add/remove) risk:** Medium. Conflicts with validation (duplicate ids, step-per-door, porch `aroundDoor`, window capacity) are manageable if adds go through validator and use deterministic ids — but UI for “pick surface” and “pick door” adds complexity. **Defer 6e** if checkpoint 6c slips; not a blocker for a useful lab.
+
+---
+
+### 17.3 Proposed UX
+
+#### Mode separation
+
+Top of lab (header or immediately below): **segmented control**
+
+- **Generic v1** — existing `GenericLabClient` (unchanged behavior).
+- **Generic v2** — new `GenericLabV2Client`.
+
+Default mode: **Generic v1** (matches `/preview` default).
+
+Optional link: “Open in Preview” → `/preview` with query hint for v2 source (nice-to-have, not required for Phase 6).
+
+#### V2 layout (desktop ≥ `lg`)
+
+```text
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Header: Generic v1 | Generic v2  ·  preset ▾  ·  schemaVersion 2        │
+├──────────────┬─────────────────────────────────────┬─────────────────────┤
+│ Component    │  Voxel preview (VoxelViewer)        │ Validation          │
+│ tree         │  [stale banner if invalid draft]    │ Errors              │
+│ (scroll)     │                                     │ Warnings            │
+│              ├─────────────────────────────────────┤ Notes               │
+│              │ Inspector (selected component)      │                     │
+│              │  type-specific form fields          │                     │
+├──────────────┴─────────────────────────────────────┴─────────────────────┤
+│ Collapsible debug strip (tabs or accordions):                              │
+│   [Authoring JSON] [Normalized JSON*] [ComponentPlan summary] [Counts]   │
+│   * normalized only when validation ok; read-only                         │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+Mobile: stack **tree → preview → validation → inspector → debug** (same order as preview’s panel collapse patterns).
+
+Reuse **`GenericLabInspectionPanel`** on the right **or** merge its layer/breakdown into a slim “View” section under preview to avoid three right columns. **Recommendation:** keep **one** right column = Validation + layer/breakdown (extend panel or compose `ValidationPanel` + existing inspection panel).
+
+#### Suggested component tree (semantic, not compiler IR)
+
+Tree is built from **draft** `components[]` + derived grouping (see §17.4). Example for `simple_cabin_v2`:
+
+```text
+main-room (room)                    ← root room; always first
+  ├─ front (surface)
+  │    ├─ front-door (door)
+  │    ├─ front-windows (window_group)
+  │    └─ front-step (step)         ← under door anchor, not under surface sibling order
+  ├─ back (surface)
+  ├─ left (surface)
+  ├─ right (surface)
+  │    └─ chimney (chimney)
+  └─ roof (group)
+       └─ main-roof (roof)          ← targetRoom, not a “surface”
+```
+
+Example for `porch_house_v2`:
+
+```text
+main-room (room)
+  ├─ front (surface)
+  │    ├─ front-door (door)
+  │    ├─ front-windows (window_group)
+  │    ├─ front-porch (porch)
+  │    └─ front-step (step)         ← child of door anchor (front-door)
+  ...
+```
+
+**Grouping rules:**
+
+| Bucket | Members | Sort order |
+|--------|---------|------------|
+| **Root room** | Exactly one `type: "room"` | Top node; auto-select on preset load |
+| **Surfaces** | `front`, `back`, `left`, `right` | Fixed face order |
+| **Surface children** | `door`, `window_group`, `porch`, `chimney` with `attach.targetSurface` on that face | doors first, then windows, porch, chimney (stable tie-break by id) |
+| **Door anchors** | `step` with `attach.targetDoor` | Nested under target door node |
+| **Roof** | `type: "roof"` with `targetRoom` | Sibling section after surfaces (not under a face) |
+
+**Do not show** `ComponentPlanV2` kinds (`room_shell`, etc.) in the tree — only **authoring** component types.
+
+**Selection:** clicking a node sets `selectedComponentId`; inspector binds to that component. Room node shows room fields; surface nodes are **non-selectable group headers** (expand/collapse only) unless we allow “surface” pseudo-selection for future — **Phase 6: group headers only, leaf components selectable**.
+
+---
+
+### 17.4 V2 lab state model
+
+#### Top-level lab mode (page shell)
+
+```ts
+type GenericLabMode = "v1" | "v2";
+```
+
+- `labMode` lives in a thin wrapper (`GenericLabShell.tsx`) or `page.tsx` client child.
+- Switching mode **does not** share blueprint draft state between v1 and v2.
+
+#### V2 state (isolated in `GenericLabV2Client`)
+
+| State | Type | Notes |
+|-------|------|-------|
+| `selectedPresetId` | `string` | v2 preset id; default `DEFAULT_GENERIC_V2_PRESET_ID` |
+| `draft` | `GenericBuildingBlueprintV2Draft` | Mutable authoring copy; `structuredClone` on preset load |
+| `selectedComponentId` | `ComponentId \| null` | Leaf component id |
+| `expandedNodes` | `ReadonlySet<string>` | Tree node keys: `room`, `surface:front`, `roof`, etc. |
+| `debugTab` | `"authoring" \| "normalized" \| "plan" \| "counts"` | Collapsible debug |
+| `blueprintPanelOpen` | `boolean` | Mobile: show/hide left stack |
+| `layerViewMode`, `selectedLayer`, `cameraResetNonce` | same as V1 | Preview interaction |
+| `copyJsonFeedback` | optional | Copy authoring JSON |
+
+#### Derived (useMemo, not stored)
+
+| Derived | Source |
+|---------|--------|
+| `validation` | `validateBlueprint(draft)` → `BlueprintValidationResultV2` |
+| `validationFeedback` | Map errors/warnings/notes to strings (reuse preview helper; extract to `lib/blueprints/formatValidationFeedback.ts` if shared) |
+| `tree` | `buildComponentTree(draft)` |
+| `currentValid` | `validation.ok` → `generateStructure(draft)` |
+| `displayStructure` | `currentValid ?? lastValidSnapshot` |
+| `showingStaleStructure` | `!validation.ok && displayStructure.blocks.length > 0` |
+| `normalizedJson` | `validation.normalized` when ok |
+| `planSummary` | `resolve` + `compile` when ok — **debug only**, memoized |
+
+#### Coexistence with V1
+
+- **No** `useState<StructureBlueprint>` shared across modes.
+- Unmounting V2 client when switching to v1 (or `key={labMode}` on children) clears V2 state cleanly.
+- V1 `GenericLabClient` remains mounted only when `labMode === "v1"` to avoid double validation/generation cost.
+
+#### Selection persistence
+
+- On preset load: select root room id.
+- On delete component (if 6e): select parent surface or room.
+- On invalid selected id (e.g. after remove): fall back to root room.
+
+---
+
+### 17.5 Editing model
+
+Edits are **immutable updates** to `draft.components` and `draft.materials` via small helpers (`patchComponent`, `setMaterialOverride`, `setRootMaterial`) — not raw JSON editing in Phase 6.
+
+**Stable IDs:** never rename `component.id` on field edit. Inspector shows id **read-only**.
+
+#### Field matrix
+
+| Component | Field | Control | Notes |
+|-----------|-------|---------|-------|
+| **room** | `width`, `depth`, `wallHeight` | number (int) | Clamp to validator ranges in UI |
+| | `wallThickness` | select `1` \| `2` | |
+| | `hollowInterior` | checkbox | |
+| **roof** | `kind` | select: `pitched_gable`, `shed`, `none` | Disable layers/orientation when `none` |
+| | `layers` | number 0–3 | Hidden or forced 0 when `none` |
+| | `overhang` | number 0–1 | step 1 |
+| | `orientation` | select: `front_back`, `left_right` | Only when `kind === "shed"` |
+| **door** | `width`, `height` | number (int) | |
+| | `attach.targetSurface` | select of `"{roomId}.{face}"` | Only root room faces: front/back/left/right (not roof) |
+| | `attach.placement.horizontal` | select: left, center, right | |
+| **window_group** | `count` | number 0–12 | |
+| | `layout` | select: symmetric, even | |
+| | `heightBand` | select: auto, mid, upper | |
+| | `attach.targetSurface` | select (facade faces) | |
+| | `attach.placement.horizontal` | select | |
+| **porch** | `depth` | number 1–8 | |
+| | `widthMode` | select: door_only, full_facade | |
+| | `aroundDoor` | select door ids on same face | Required when `door_only`; clear when `full_facade` |
+| | `attach.targetSurface` | select | |
+| **chimney** | `attach.targetSurface` | select | |
+| | `attach.placement.horizontal` | select | |
+| **step** | `attach.targetDoor` | select door component ids | |
+| **any** | `materials` override | per-slot select (classic keys) | Optional section “Override materials” |
+| **root** | `materials.*` | six selects | Section “Blueprint palette” |
+
+**Labels:** use `metadata.label` as read-only subtitle only; do not edit labels in Phase 6 unless trivial.
+
+**Constraints:** `constraints.maxBlockCount` etc. — **read-only** in Phase 6 (presets carry fixed constraints); editing constraints is deferrable.
+
+After each patch: replace `draft` → triggers validation pipeline (§17.7).
+
+---
+
+### 17.6 Add/remove component plan
+
+**Recommendation:** Include **remove** and a **narrow add** set in Phase 6 **only at checkpoint 6e**, after edit path is stable. If schedule is tight, **defer entire 6e** without blocking 6a–6d.
+
+#### In scope for 6e (if approved)
+
+| Action | Allowed types | Rules |
+|--------|---------------|-------|
+| **Add** | `window_group`, `chimney`, `porch`, `step` | No second `room`; no `door` add (door changes facade capacity for porch/step) — **defer add door** |
+| **Remove** | Any non-room component | Cannot remove root room; removing door removes dependent steps (or block with error) |
+
+#### Deterministic ID generation
+
+```text
+{surface-face}-{kind-suffix}[-{n}]
+
+Examples:
+  front-windows-2     // second window_group on front
+  right-chimney
+  front-porch         // if id free; else front-porch-2
+  front-step          // only if no step on that door yet
+```
+
+Algorithm:
+
+1. Parse target surface `main-room.{face}` from context.
+2. Base = `{face}-{kind}` with kind ∈ `windows`, `chimney`, `porch`, `step`.
+3. If id taken, append `-2`, `-3`, …
+4. Slug regex must pass Phase 2 validator.
+
+**Defaults for new components** (minimal viable):
+
+| Type | Defaults |
+|------|----------|
+| `window_group` | `count: 2`, `layout: symmetric`, `heightBand: auto`, `targetSurface: main-room.{face}`, `placement: center` |
+| `chimney` | `targetSurface: main-room.right`, `placement: center` |
+| `porch` | `depth: 2`, `widthMode: full_facade`, `targetSurface: main-room.front` |
+| `step` | `targetDoor: {selectedDoor}` |
+
+**Validation-driven UX:**
+
+- On add: insert → `validateBlueprint` → if errors, show issues and **revert add** or keep draft with errors (prefer keep draft + errors like edits).
+- On remove door: if steps reference it, show error `multiple_steps_per_door` / `unknown_target_door` — offer remove step first or cascade-delete steps with confirm.
+
+**Explicitly out of scope:** add/remove `room`, `roof`, `door`; duplicate preset-wide refactors; drag-and-drop tree reorder.
+
+---
+
+### 17.7 Validation and generation flow
+
+```text
+draft (on every edit / preset load)
+  → validateBlueprint(draft)     // BlueprintValidationResultV2
+  → if ok:
+       generateStructure(draft)  // VoxelBlock[]
+       set currentValid + lastValidSnapshot
+     else:
+       keep lastValidSnapshot for canvas
+       show errors/warnings; notes optional panel
+```
+
+**Display structured issues** (lab validation panel):
+
+| Severity | UI |
+|----------|-----|
+| **error** | Red list; optional `path`, `componentId`, `code` monospace secondary line |
+| **warning** | Amber list |
+| **note** | Zinc/muted list (normalization: defaulted placement, clamped roof layers) |
+
+Do not collapse to strings-only internally — keep `ValidationIssue` for future “fix it” (Phase 7).
+
+**Stale banner** (reuse copy from `GenericLabInspectionPanel`):  
+“Editor state is invalid — canvas shows previous valid build.”
+
+**Empty canvas:** invalid draft with no prior valid snapshot → show errors in preview area center (mirror preview).
+
+**Do not** call `resolve`/`compile` on every keystroke for preview — only for optional debug tab (debounced).
+
+---
+
+### 17.8 ComponentPlanV2 / debug visibility
+
+All **read-only**. No edit of plan JSON.
+
+| Panel | Content | When shown |
+|-------|---------|------------|
+| **Authoring JSON** | `JSON.stringify(draft, null, 2)` | Always |
+| **Normalized JSON** | `validation.normalized` | `validation.ok` only |
+| **ComponentPlan summary** | Compact text or JSON: `planVersion`, `rootRoomId`, `bounds`, `components[].kind` + `sourceComponentId`, mask sizes (`doorMask`, `windowMask`, `shellSkipMask` counts) | `validation.ok` only; from `compileGenericBuildingV2Plan(resolve(normalized))` |
+| **Block counts** | From `fullStructureBlockBreakdown` on display structure | When structure non-empty |
+
+**Do not expose** full `ResolvedGenericBuildingV2` as editable JSON. Optional: collapsed “Resolved summary” one-liner for devs — defer unless zero cost.
+
+**Performance:** compute plan summary in `useMemo` when `validation.ok` and debug tab active (lazy).
+
+---
+
+### 17.9 File / module layout
+
+**Recommendation:** **Separate `src/app/generic-lab/v2/`** subtree; minimal edits to V1 files.
+
+#### Create
+
+| Path | Purpose |
+|------|---------|
+| `src/app/generic-lab/GenericLabShell.tsx` | `labMode` toggle; render `GenericLabClient` or `GenericLabV2Client` |
+| `src/app/generic-lab/v2/GenericLabV2Client.tsx` | V2 orchestrator (state, layout) |
+| `src/app/generic-lab/v2/ComponentTreePanel.tsx` | Tree UI |
+| `src/app/generic-lab/v2/ComponentInspectorPanel.tsx` | Type-specific forms |
+| `src/app/generic-lab/v2/ValidationPanel.tsx` | errors / warnings / notes |
+| `src/app/generic-lab/v2/DebugPanel.tsx` | JSON + plan summary tabs |
+| `src/app/generic-lab/v2/genericLabV2Utils.ts` | tree build, patch helpers, id suggest, clone v2 preset |
+| `src/lib/blueprints/formatValidationFeedback.ts` | Shared by preview + lab (extract from preview) |
+
+#### Update
+
+| Path | Change |
+|------|--------|
+| `src/app/generic-lab/page.tsx` | Mount `GenericLabShell` instead of `GenericLabClient` directly |
+| `src/app/preview/PreviewInspectionClient.tsx` | Import shared `formatValidationFeedback` (optional refactor) |
+
+**Do not move** `GenericLabClient.tsx` into `v1/` folder (§16 / user constraint: no v1 file moves).
+
+---
+
+### 17.10 Tests
+
+| Test file | Cases |
+|-----------|-------|
+| `src/app/generic-lab/v2/__tests__/genericLabV2Utils.test.ts` | `buildComponentTree` grouping; sort order; step under door |
+| | `patchComponent` immutability; id unchanged |
+| | `suggestComponentId` (if 6e) |
+| `src/lib/blueprints/__tests__/formatValidationFeedback.test.ts` | v1 vs v2 result shaping (if extracted) |
+
+**No** Playwright/e2e unless repo already has it (it does not).
+
+**Component render tests:** optional smoke with React Testing Library **only if** already configured; not required for Phase 6 exit.
+
+**Keep green:** all `pnpm test:generator` tests; no change to generator invariants.
+
+---
+
+### 17.11 Explicit non-goals (Phase 6)
+
+- No AI runtime, prompt box, or LLM operation queue (Phase 7).
+- No image upload.
+- No floor plans, interiors, multiple rooms, walls-as-components.
+- No raw coordinate placement or region selection.
+- No public editable `ComponentPlanV2` or `ResolvedGenericBuildingV2`.
+- No JSON **text editor** for full blueprint (forms only; debug JSON is read-only).
+- No V1 removal, V1 file moves, or breaking V1 lab forms.
+- No `/preview` changes required for Phase 6 exit (already done in Phase 5).
+- No `applyOperations` implementation (Phase 7).
+
+---
+
+### 17.12 Implementation checkpoints (for Cursor after approval)
+
+| # | Checkpoint | Done when |
+|---|------------|-----------|
+| 1 | **V2 mode shell** — `GenericLabShell`, toggle, mount `GenericLabV2Client` | v1 lab unchanged; v2 mode reachable |
+| 2 | **Preset + preview** — v2 picker, validate, generate, stale snapshot, `GenericLabInspectionPanel` | All v2 presets render |
+| 3 | **Read-only tree** — grouping, expand/collapse, selection highlights | Tree matches §17.3 examples |
+| 4 | **Inspector edits** — all fields in §17.5 except materials | Edit → revalidate → regenerate |
+| 5 | **Materials** — root palette + per-component overrides | Classic key selects work |
+| 6 | **Add/remove (optional)** — §17.6 if approved | Add window/chimney/porch/step; remove optional |
+| 7 | **Debug panel** — authoring/normalized/plan summary/counts | Read-only tabs |
+| 8 | **Tests + CHANGE.md** — utils tests; manual checklist; CI | tsc, lint, test:generator, build |
+
+---
+
+### 17.13 Open questions
+
+| # | Question | Recommended answer |
+|---|----------|-------------------|
+| 1 | Default lab mode v1 or v2? | **v1** until product flips |
+| 2 | Extract `formatValidationFeedback` to shared lib? | **Yes** — reduces preview/lab drift |
+| 3 | Add `door` in 6e? | **No** — defer; door affects porch/step/windows |
+| 4 | Cascade delete steps when door removed? | **Yes** — auto-remove dependent steps with note in CHANGE |
+| 5 | Surface nodes selectable? | **No** — group headers only in Phase 6 |
+| 6 | Edit `metadata.label`? | **No** — read-only display |
+| 7 | Debounce validation? | **No** for Phase 6 — presets are small; add debounce only if perf issue |
+
+None of these block starting checkpoint 1.
+
+---
+
+### 17.14 Recommended implementation scope
+
+**Implement in Phase 6:**
+
+- Generic v1 / Generic v2 **mode toggle** with **isolated state**
+- V2 **preset picker** (three presets from `sampleGenericBuildingBlueprintsV2.ts`)
+- **Validate → generate → VoxelViewer** with **last-valid stale preview**
+- **Semantic component tree** (room → surfaces → attachments; roof; steps under doors)
+- **Component inspector** editing all fields in §17.5
+- **Root material palette** + **per-component material overrides**
+- **Validation panel** (structured errors/warnings/notes)
+- **Read-only debug:** authoring JSON, normalized JSON (when valid), ComponentPlanV2 **summary** (when valid), block breakdown
+- **Utility unit tests** for tree + patch helpers
+- **`CHANGE.md`** addendum + manual verification checklist
+
+**Defer (acceptable to ship Phase 6 without):**
+
+- **Add/remove components (6e)** — defer if inspector or tree runs long; not required for MVP lab
+- **Query-param deep link** to v2 preset from preview
+- **Constraint editing** (`maxBlockCount`, etc.)
+- **Editable metadata.label**
+- **“Fix it” from `ValidationIssue.suggestion`** (Phase 7+)
+
+**Do not implement:** anything in §17.11.
+
+**Exit criteria:** Developer can load each v2 preset in `/generic-lab`, navigate tree, edit semantic fields, see validation feedback, and view regenerated voxels without breaking V1 lab.

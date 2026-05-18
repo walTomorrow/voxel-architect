@@ -16,8 +16,8 @@ import {
   previewPresetOptionsForSource,
   type PreviewLabSource,
 } from "@/src/lib/blueprints/previewPresetCatalog";
+import { formatValidationFeedback } from "@/src/lib/blueprints/formatValidationFeedback";
 import {
-  isBlueprintValidationResultV2,
   validateBlueprint,
   type ValidateBlueprintResult,
 } from "@/src/lib/blueprints/validateBlueprint";
@@ -38,26 +38,8 @@ import {
 import { PARTIAL_BLOCK_SHOWCASE_STRUCTURE } from "@/src/lib/voxel/sampleStructure";
 import { validateVoxelStructurePlacements } from "@/src/lib/voxel/voxelBlockPlacement";
 
-function formatValidationFeedback(result: ValidateBlueprintResult): {
-  errors: string[];
-  warnings: string[];
-  notes: string[];
-} {
-  if (isBlueprintValidationResultV2(result)) {
-    return {
-      errors: result.errors.map((e) => e.message),
-      warnings: result.warnings.map((w) => w.message),
-      notes: result.notes.map((n) => n.message),
-    };
-  }
-  return {
-    errors: [...result.errors],
-    warnings: [],
-    notes: [...result.notes],
-  };
-}
-
 /**
+
  * Read-only inspection for `/preview` — generic v1/v2 presets or partial-block showcase.
  */
 export function PreviewInspectionClient() {
