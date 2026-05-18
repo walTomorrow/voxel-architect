@@ -1,4 +1,5 @@
 import type { BlockTypeId } from "@/src/lib/voxel/blocks/registry-types";
+import type { GenericBuildingBlueprintV2 } from "./types/genericBuildingV2";
 
 /** Authoring-time material slot: classic pack local id (e.g. `cobblestone`). */
 export type ClassicMaterialKey = string;
@@ -99,8 +100,10 @@ export interface GenericBuildingBlueprint {
   readonly constraints: BlueprintConstraints;
 }
 
-/** Authoring input accepted by `validateBlueprint()`. */
-export type StructureBlueprint = GenericBuildingBlueprint;
+/** Authoring input accepted by `validateBlueprint()` (v1 and v2). */
+export type StructureBlueprint =
+  | GenericBuildingBlueprint
+  | GenericBuildingBlueprintV2;
 
 /** Fully validated / normalized input for procedural generators (registry ids). */
 export type ResolvedStructure = ResolvedGenericBuilding;
@@ -145,3 +148,39 @@ export interface ResolvedGenericBuilding {
     readonly overhang: number;
   };
 }
+
+export type {
+  BlueprintMaterialPalette,
+  ComponentMaterialOverride,
+} from "./types/materials";
+
+export type {
+  ComponentId,
+  RoomFace,
+  RoomSurfaceRef,
+  HorizontalPlacementV2,
+  SurfaceAttachment,
+  DoorAttachment,
+  GenericBuildingComponentTypeV2,
+  ComponentBaseV2,
+  RoomComponentV2,
+  RoofKindV2,
+  ShedOrientationV2,
+  RoofComponentV2,
+  DoorComponentV2,
+  WindowLayoutV2,
+  WindowHeightBandV2,
+  WindowGroupComponentV2,
+  PorchWidthModeV2,
+  PorchComponentV2,
+  ChimneyComponentV2,
+  StepComponentV2,
+  GenericBuildingComponentV2,
+  GenericBuildingBlueprintV2,
+} from "./types/genericBuildingV2";
+
+export type {
+  ValidationSeverity,
+  ValidationIssue,
+  BlueprintValidationResultV2,
+} from "./types/validationResult";

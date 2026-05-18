@@ -1,344 +1,1084 @@
-# Plan — Retire tower-era product path (full pivot to `generic_building`)
+# Plan — GenericBuildingBlueprint v2 (component authoring model)
 
-**Branch:** `cleanup/remove-legacy-visualizer`  
-**Status:** Planning only — no implementation until review.  
-**Supersedes:** Prior PLAN.md (visualizer-only retirement while keeping `medieval_tower` on `/preview`).
+**Branch:** `feature/component-authoring-model`  
+**Status:** Planning only — **no implementation** until review.  
+**Goal:** Cohesive implementation of **GenericBuildingBlueprint v2** as an LLM-optimized, component-based semantic architecture compiler, coexisting with **v1** until v2 is stable.
 
----
+**Related docs (current v1):**
 
-## 1. Goal
+- [`docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md`](docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md) — v1 `ComponentPlan` pipeline
+- [`docs/generation/GENERATION_DESIGN_PRINCIPLES.md`](docs/generation/GENERATION_DESIGN_PRINCIPLES.md) — semantic compiler principles
+- [`docs/generation/GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md) — invariant tests
+- [`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`](docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md) — feature taxonomy
+- [`docs/VISION.md`](docs/VISION.md) — product direction (recipes over monoliths)
 
-Complete the architecture pivot: **remove the tower-era product and generator path** and make the active product:
-
-| Layer | Active surface |
-|-------|----------------|
-| Authoring | `GenericBuildingBlueprint` |
-| Internal IR | `ComponentPlan` (not public) |
-| Generation | Component generators + `compileGenericBuildingToComponentPlan` + `emitFromComponentPlan` |
-| Developer lab | `/generic-lab` |
-| Demo / inspection | `/preview` → **Generic** \| **Partials** |
-
-**Remove active tower support:** `/visualizer`, `medieval_tower` generator, tower presets, preview Towers tab, tower validation branch, tower exchange helpers, tower-specific tests, and active docs that describe towers as current behavior.
-
-**Keep:** `generic_building`, `/generic-lab`, partial-block showcase, historical screenshots (past-tense captions), `blacksmith_workshop` must not be revived.
-
-**Out of scope:** AI, image upload, `InteriorPlan`, region selection, new families, generic `blueprintExchange` v2, public `ComponentPlan` JSON.
+**Prior work:** Tower-era retirement on branch `cleanup/remove-legacy-visualizer` (see `CHANGE.md`). This plan does **not** reintroduce towers or `blacksmith_workshop`.
 
 ---
 
-## 2. Tower-related code paths (survey)
+## Fixed product constraints (do not violate)
 
-### 2.1 App routes & UI
-
-| Path / symbol | Role | Action |
-|---------------|------|--------|
-| [`src/app/visualizer/page.tsx`](src/app/visualizer/page.tsx) | Tower lab route shell | **Delete** |
-| [`src/app/visualizer/VisualizerClient.tsx`](src/app/visualizer/VisualizerClient.tsx) (~1,169 lines) | Tower blueprint editor, import/export, `StructureInspectionPanel` | **Delete** |
-| [`src/app/preview/PreviewInspectionClient.tsx`](src/app/preview/PreviewInspectionClient.tsx) | `preset_towers` mode, tower presets, default `useState("preset_towers")` | **Update** — Generic \| Partials only; default **Generic** |
-| [`src/app/preview/page.tsx`](src/app/preview/page.tsx) | Metadata mentions “medieval tower presets” | **Update** copy |
-| [`src/app/page.tsx`](src/app/page.tsx) | Landing CTA copy “sample tower” | **Update** — generic building / preview demo |
-| [`src/components/voxel/StructureInspectionPanel.tsx`](src/components/voxel/StructureInspectionPanel.tsx) | `PreviewLabSource` includes `preset_towers`, “Towers” tab | **Update** — remove tower tab; simplify preset UI for Generic only |
-| [`src/app/generic-lab/*`](src/app/generic-lab/) | Active lab | **Keep** (nav/copy only if needed) |
-
-### 2.2 Blueprint layer
-
-| Path / symbol | Role | Action |
-|---------------|------|--------|
-| [`src/lib/blueprints/types.ts`](src/lib/blueprints/types.ts) | `StructureType`, `MedievalTowerBlueprint`, tower-only interfaces, unions | **Update** — remove tower types; `StructureBlueprint` = `GenericBuildingBlueprint`; `ResolvedStructure` = `ResolvedGenericBuilding` |
-| [`src/lib/blueprints/validateBlueprint.ts`](src/lib/blueprints/validateBlueprint.ts) | Dispatches `validateMedievalTowerBlueprint` + generic | **Update** — generic only (thin wrapper or re-export `validateGenericBuildingBlueprint`) |
-| [`src/lib/blueprints/validateGenericBuilding.ts`](src/lib/blueprints/validateGenericBuilding.ts) | Generic validator | **Keep** |
-| [`src/lib/blueprints/sampleBlueprints.ts`](src/lib/blueprints/sampleBlueprints.ts) | `MEDIEVAL_TOWER_PRESETS`, `SAMPLE_MEDIEVAL_TOWER_BLUEPRINT`, northwatch, etc. | **Delete** entire file |
-| [`src/lib/blueprints/sampleGenericBuildingBlueprints.ts`](src/lib/blueprints/sampleGenericBuildingBlueprints.ts) | Generic presets | **Keep** |
-| [`src/lib/blueprints/blueprintExchange.ts`](src/lib/blueprints/blueprintExchange.ts) | Tower-only v1 envelope; only `VisualizerClient` | **Delete** |
-| [`src/lib/blueprints/blueprintImportStructure.ts`](src/lib/blueprints/blueprintImportStructure.ts) | Import shape guard; only `blueprintExchange` | **Delete** |
-| [`src/lib/blueprints/blueprintSource.ts`](src/lib/blueprints/blueprintSource.ts) | Visualizer sidebar provenance | **Delete** |
-
-**Tower-only types to remove from `types.ts` (if unused after delete):**  
-`BlueprintDimensions`, `BlueprintMassing`, `BlueprintLevels`, tower `BlueprintOpenings`, tower `BlueprintRoof`, tower `BlueprintFeatures`, `FootprintShape`, `VerticalEmphasis`, `SymmetryMode`, `RoofStyle`, `WindowPlacement`, `WindowFloors`, `MedievalTowerBlueprint`, `ResolvedMedievalTower`.
-
-**Keep in `types.ts`:** `BlueprintMetadata`, `BlueprintMaterials`, `BlueprintConstraints`, all `GenericBuilding*`, `GenericBuildingBlueprint`, `ResolvedGenericBuilding`, `EntranceSide` (shared with generic entrance).
-
-### 2.3 Generation layer
-
-| Path / symbol | Role | Action |
-|---------------|------|--------|
-| [`src/lib/generation/generators/generateMedievalTower.ts`](src/lib/generation/generators/generateMedievalTower.ts) (~811 lines) | Tower family generator | **Delete** |
-| [`src/lib/generation/generators/generateGenericBuilding.ts`](src/lib/generation/generators/generateGenericBuilding.ts) | Generic entry | **Keep** |
-| [`src/lib/generation/generateStructure.ts`](src/lib/generation/generateStructure.ts) | `switch` on `medieval_tower` \| `generic_building` | **Update** — `generic_building` only |
-| [`src/lib/generation/components/*`](src/lib/generation/components/) | Component pipeline | **Keep** |
-| [`src/lib/generation/families/buildingFamilies.ts`](src/lib/generation/families/buildingFamilies.ts) | Catalog: `medieval_tower` + `generic_building` | **Update** — `generic_building` only; remove `medieval_tower` entry |
-| [`src/lib/generation/styles/buildingStyles.ts`](src/lib/generation/styles/buildingStyles.ts) | Six tower aesthetic styles; only `sampleBlueprints` + test | **Delete** |
-| [`src/lib/generation/facade/paneAxis.ts`](src/lib/generation/facade/paneAxis.ts) | Pane axis helper | **Keep** — used by `sparseWindows.ts` (generic) |
-| [`src/lib/generation/placement/placementUtils.ts`](src/lib/generation/placement/placementUtils.ts) | `filterGrounded` (tower), `filterGroundedConnected26` (generic) | **Keep** — generic uses 26-connected; `filterGrounded` still tested in `placementUtils.test.ts` |
-
-### 2.4 Voxel / viewer defaults
-
-| Path | Role | Action |
-|------|------|--------|
-| [`src/lib/voxel/sampleStructure.ts`](src/lib/voxel/sampleStructure.ts) `SAMPLE_STRUCTURE` | Hand-built stone “tower” default for `VoxelViewer` | **Investigate → update** — change default to empty `{ blocks: [] }` or document-only; avoid tower-shaped default when no structure passed |
-| [`src/components/voxel/VoxelViewer.tsx`](src/components/voxel/VoxelViewer.tsx) | `structure = SAMPLE_STRUCTURE` default | **Update** if `SAMPLE_STRUCTURE` retired |
-| [`PARTIAL_BLOCK_SHOWCASE_STRUCTURE`](src/lib/voxel/sampleStructure.ts) | Preview Partials tab | **Keep** |
-
-### 2.5 References by search term (summary)
-
-| Term | Delete | Update to generic | Historical docs only | Investigate |
-|------|--------|-------------------|----------------------|-------------|
-| `/visualizer` | Route files | `next.config` redirect → `/generic-lab` | Timeline §3,7–8; screenshot README | — |
-| `VisualizerClient` | Entire file | — | — | — |
-| `medieval_tower` | Generator, family entry, types, tests | `buildingFamilies`, docs | Grammar, FEATURE_CATALOG §4.1, timeline | — |
-| `MedievalTowerBlueprint` | types, samples, fixtures, visualizer | Unions → generic only | BLUEPRINT_JSON_FORMAT | — |
-| `MEDIEVAL_TOWER_PRESETS` / `getMedievalTowerPreset` | `sampleBlueprints.ts`, preview, tests | — | — | — |
-| `generateMedievalTower` | File | `generateStructure.ts` | — | — |
-| `validateMedievalTowerBlueprint` | Inline in `validateBlueprint.ts` | — | — | — |
-| `preset_towers` / **Towers** tab | — | Preview + `StructureInspectionPanel` | — | — |
-| `northwatch` | Presets | — | Comments, screenshots, material meta note | — |
-| `blueprintExchange` | 3 blueprint files | — | BLUEPRINT_JSON_FORMAT (historical spec) | — |
-| `buildingStyles` | File + test | — | DESIGN_PRINCIPLES style paragraph | Future AI styles TBD |
-
----
-
-## 3. Preview after tower removal
-
-### Recommended behavior
-
-| Question | Decision |
-|----------|----------|
-| Tabs | **Generic \| Partials** only (remove **Towers**). |
-| Default tab | **`preset_generic`** (`DEFAULT_GENERIC_PRESET_ID` / `simple_rustic_cabin`). |
-| Route role | **Keep `/preview`** as the main public demo / inspection surface (orbit, layers, breakdown). |
-| Developer lab link | **Keep** “Developer lab →” → `/generic-lab` (already correct). |
-| Copy | Remove “tower”, “medieval tower”, “Towers and Generic” wording; describe generic presets + partial showcase. |
-| `PreviewLabSource` type | `"preset_generic" \| "partial_showcase"` only. |
-| Preset `<select>` | Shown only in **Generic** mode (or always when not Partials); lists `GENERIC_BUILDING_PRESETS` only. |
-| `StructureInspectionPanel` | Remove three-way source toggle; two-way **Generic \| Partials** (or single preset list + Partials button). |
-
-### `StructureInspectionPanel` simplification
-
-- Remove `preset_towers` from `PreviewLabSource`.
-- Remove “Towers” button and “Preset lists apply to Towers and Generic” copy.
-- Default `panelDescription` → generic preset text (already partially duplicated in `PreviewInspectionClient` for generic).
-- Props: drop tower-specific branches; `presetOptions` only when `previewSource === "preset_generic"`.
-
----
-
-## 4. Blueprint / type changes
-
-### Is removing `MedievalTowerBlueprint` safe?
-
-**Yes**, after deleting all importers (survey shows no production path outside tower stack). Plan:
-
-1. **`StructureType`** → `"generic_building"` only (or remove discriminant if redundant).
-2. **`StructureBlueprint`** → alias or rename to `GenericBuildingBlueprint`.
-3. **`ResolvedStructure`** → `ResolvedGenericBuilding`.
-4. **`validateBlueprint(blueprint)`** → delegate only to `validateGenericBuildingBlueprint` (keep export name for tests/UI).
-5. **Delete** tower-only interface blocks from `types.ts` (~90 lines of tower schema).
-
-No reason to keep dead tower types “for documentation” — docs carry historical JSON examples in git / `BLUEPRINT_JSON_FORMAT.md` (marked retired).
-
-### Family catalog
-
-[`buildingFamilies.ts`](src/lib/generation/families/buildingFamilies.ts): single shipped family `generic_building`.  
-[`buildingFamilies.test.ts`](src/lib/generation/__tests__/buildingFamilies.test.ts): expect length **1**; keep `blacksmith_workshop` undefined assertion.
-
----
-
-## 5. Generator changes
-
-| Action | Path |
-|--------|------|
-| **Delete** | [`generateMedievalTower.ts`](src/lib/generation/generators/generateMedievalTower.ts) |
-| **Delete** | [`buildingStyles.ts`](src/lib/generation/styles/buildingStyles.ts) |
-| **Update** | [`generateStructure.ts`](src/lib/generation/generateStructure.ts) — remove `generateMedievalTower` import and `medieval_tower` case |
-| **Keep** | All `src/lib/generation/components/**` |
-| **Keep** | [`generateGenericBuilding.ts`](src/lib/generation/generators/generateGenericBuilding.ts), [`placementUtils.ts`](src/lib/generation/placement/placementUtils.ts), [`paneAxis.ts`](src/lib/generation/facade/paneAxis.ts) |
-
----
-
-## 6. Tests
-
-### Delete (tower-only)
-
-| File | Reason |
-|------|--------|
-| [`src/lib/generation/__tests__/generatorPresetInvariants.test.ts`](src/lib/generation/__tests__/generatorPresetInvariants.test.ts) | `MEDIEVAL_TOWER_PRESETS` only |
-| [`src/lib/generation/__tests__/generatorEdgeCaseInvariants.test.ts`](src/lib/generation/__tests__/generatorEdgeCaseInvariants.test.ts) | `EDGE_CASE_BLUEPRINT_FIXTURES` (tower) |
-| [`src/lib/generation/__tests__/fixtures/edgeCaseBlueprints.ts`](src/lib/generation/__tests__/fixtures/edgeCaseBlueprints.ts) | Tower blueprint fixtures |
-| [`src/lib/generation/__tests__/buildingStyles.test.ts`](src/lib/generation/__tests__/buildingStyles.test.ts) | Tower styles + preset `styleId` |
-
-### Rewrite / trim
-
-| File | Action |
-|------|--------|
-| [`generatorPipeline.smoke.test.ts`](src/lib/generation/__tests__/generatorPipeline.smoke.test.ts) | Use `GENERIC_BUILDING_PRESETS[0]` or `DEFAULT_GENERIC_PRESET_ID` instead of `SAMPLE_MEDIEVAL_TOWER_BLUEPRINT` |
-| [`generatorWindowPanes.test.ts`](src/lib/generation/__tests__/generatorWindowPanes.test.ts) | **Keep** `describe("paneAxisForWindowCell")` (3 tests); **delete** `medieval tower window-adjacent…` and `medieval tower window panes` describes; optional: add 1–2 generic preset pane assertions (or rely on `generatorGenericPresetInvariants` + component tests) |
-| [`buildingFamilies.test.ts`](src/lib/generation/__tests__/buildingFamilies.test.ts) | Single family `generic_building`; update length expectations |
-
-### Keep (target suite focus)
-
-| Area | Files |
-|------|--------|
-| Generic validation | [`validateGenericBuilding.test.ts`](src/lib/blueprints/__tests__/validateGenericBuilding.test.ts) |
-| Generic preset invariants | [`generatorGenericPresetInvariants.test.ts`](src/lib/generation/__tests__/generatorGenericPresetInvariants.test.ts) |
-| Component compiler | [`compileGenericBuildingPlan.test.ts`](src/lib/generation/components/__tests__/compileGenericBuildingPlan.test.ts) |
-| Component generators | [`componentGenerators.test.ts`](src/lib/generation/components/__tests__/componentGenerators.test.ts), [`entranceDoorway.test.ts`](src/lib/generation/components/__tests__/entranceDoorway.test.ts), [`openingMask.test.ts`](src/lib/generation/components/__tests__/openingMask.test.ts), [`shedRoof.test.ts`](src/lib/generation/components/__tests__/shedRoof.test.ts) |
-| Pipeline smoke | [`generatorPipeline.smoke.test.ts`](src/lib/generation/__tests__/generatorPipeline.smoke.test.ts) (after rewrite) |
-| Placement | [`placementUtils.test.ts`](src/lib/generation/__tests__/placementUtils.test.ts) |
-| Pane axis | [`generatorWindowPanes.test.ts`](src/lib/generation/__tests__/generatorWindowPanes.test.ts) (trimmed) |
-| Voxel | [`partialBlockShowcase.test.ts`](src/lib/voxel/__tests__/partialBlockShowcase.test.ts), [`materialMetaHelpers.test.ts`](src/lib/voxel/__tests__/materialMetaHelpers.test.ts), [`voxelBlockShape.test.ts`](src/lib/voxel/__tests__/voxelBlockShape.test.ts), [`structureAnalysis.test.ts`](src/lib/voxel/__tests__/structureAnalysis.test.ts) |
-| Families | [`buildingFamilies.test.ts`](src/lib/generation/__tests__/buildingFamilies.test.ts) (rewritten) |
-| Shared utils | [`testUtils.ts`](src/lib/generation/__tests__/testUtils.ts) |
-
-**Expected test count:** ~**100 − 6 − 6 − ~8 − ~7 ≈ 73–80** (verify after run); update [`GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md) count when implementing.
-
-**`blueprintExchange` deletion:** **No test breakage** (zero test imports).
-
----
-
-## 7. Documentation
-
-### Active-product updates (required)
-
-| Document | Changes |
-|----------|---------|
-| [`docs/generation/GENERATION_DESIGN_PRINCIPLES.md`](docs/generation/GENERATION_DESIGN_PRINCIPLES.md) | Single active path: `generic_building` + component pipeline; towers **historical**; developer lab = `/generic-lab`; remove `MedievalTowerBlueprint` as co-equal authoring target; trim `buildingStyles` / tower preset paragraphs |
-| [`docs/generation/GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md) | Remove tower preset/edge-case suites; update test count; diagnostics → `/generic-lab` |
-| [`docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md`](docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md) | Remove “`medieval_tower` remains legacy vertical family” as **active**; note tower family **retired** |
-| [`docs/blueprints/BLUEPRINT_JSON_FORMAT.md`](docs/blueprints/BLUEPRINT_JSON_FORMAT.md) | Tower exchange = **historical** (retired with `/visualizer`); active authoring = raw `GenericBuildingBlueprint` (as in `/generic-lab` copy button); remove live import/export UI references |
-| [`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`](docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md) | Active table: **`generic_building` only**; §4.1 Medieval Tower → **Historical / retired**; remove `/visualizer` from active surfaces |
-| [`docs/project-history/DEVELOPMENT_TIMELINE.md`](docs/project-history/DEVELOPMENT_TIMELINE.md) | §3,7–8: past tense (“tower-era lab, **later retired**”); §11: `/generic-lab` replaced visualizer **and** tower authoring; **Current product** → Preview Generic \| Partials, `/generic-lab`, no `/visualizer` |
-| [`docs/project-history/screenshots/README.md`](docs/project-history/screenshots/README.md) | Rows 03/08/09: historical `/visualizer`; row 12: remove “tower lab remains”; checklist: `/visualizer` historical |
-
-### Historical only (keep files, adjust wording)
-
-- All `docs/project-history/screenshots/*visualizer*.png` — **do not delete**.
-- Timeline embeds for tower era — keep; captions note retirement after §11.
-- [`CHANGE.md`](CHANGE.md) — addendum when implementing (not in planning step).
-
-### Optional / low priority
-
-- [`docs/VISION.md`](docs/VISION.md) — “tower” as future **recipe** over components is still valid vision language; clarify not the old `medieval_tower` generator.
-- [`README.md`](README.md) — generator test blurb still accurate.
-
----
-
-## 8. Redirects / routes
-
-| Route | After cleanup |
-|-------|----------------|
-| `/` | Unchanged → `/preview` CTA |
-| `/preview` | Generic \| Partials inspection |
-| `/generic-lab` | Active developer lab |
-| `/visualizer` | **No page** — **`redirect` (308)** → `/generic-lab` in [`next.config.ts`](next.config.ts) |
-
-**Other URLs:** No dedicated tower preview URLs existed. Bookmarks to `/visualizer` are the only legacy route concern.
-
-**Build manifest:** Expect routes `/`, `/preview`, `/generic-lab`, `_not-found` only (+ redirect config).
-
----
-
-## 9. Risks and open questions
-
-| Risk | Mitigation |
+| Area | Constraint |
 |------|------------|
-| **Broad type union removal** | Single-type `StructureBlueprint`; run `tsc` after each layer (types → validate → generate → UI) |
-| **Tests expecting `medieval_tower`** | Delete/replace per §6; run `pnpm test:generator` until green |
-| **Preview default was towers** | Explicit `useState("preset_generic")` |
-| **`VoxelViewer` default `SAMPLE_STRUCTURE`** | Still a small tower mesh — change default to `{ blocks: [] }` or minimal placeholder to avoid misleading empty viewer |
-| **Docs drift** | Grep `visualizer`, `medieval_tower`, `Towers`, `MEDIEVAL_TOWER` after implementation |
-| **Family catalog tests** | Update expected family count to 1 |
-| **GENERATOR_RELIABILITY “100 tests”** | Update doc to new count |
-| **Full-repo `pnpm lint`** | Deleting `VisualizerClient.tsx` removes one `set-state-in-effect` failure; `PreviewInspectionClient` may still fail unless fixed in this branch (**investigate** — small derived-layer fix optional) |
-| **Deleting `blueprintExchange`** | Safe — no tests; document envelope as historical in BLUEPRINT_JSON_FORMAT |
-| **Cloudflare deployed links** | Redirect handles `/visualizer` |
+| Authoring | Constrained **component composition** (`room`, `roof`, `door`, `window_group`, `porch`, `chimney`, `step`); not monolithic whole-building fields |
+| IR | **ComponentPlan v2** is private compiler IR — never public editable JSON |
+| Coexistence | **schemaVersion** dispatches v1 vs v2; **do not remove v1** until cleanup milestone |
+| Migration | Manual v2 presets first; **no automatic v1→v2 converter** in initial work |
+| V2.0 scope | **Exactly one root `room`**; attachment-first; no raw coordinates; openings as **first-class** components |
+| Deferred | Multiple rooms, walls-as-components, dormers, freeform placement, region selection, image input, **AI runtime**, towers, `blacksmith_workshop` |
+| Materials | Global palette + per-component overrides; resolution: **override → blueprint default → compiler default** |
+| Validation | Mixed: hard **errors**, safe **normalization notes**, **warnings**; structured for future LLM repair + UI “fix it” |
+| Lowering | **New ComponentPlan v2** — do not shoehorn v2 into v1-shaped `ComponentPlan` |
+| `/generic-lab` | Human component-tree editor; **no** visual AI operation queue |
+| LLM | Full blueprint for create; **semantic operations** for refine; never edit ComponentPlan v2 directly |
 
-**Open questions (confirm before implement):**
+### Architecture (target)
 
-1. **`SAMPLE_STRUCTURE`:** Remove entirely vs keep for dev-only fixture?
-2. **`validateBlueprint` name:** Keep as alias to generic validator vs rename exports?
-3. **`buildingStyles.ts`:** Delete now vs keep file with zero consumers for future AI (recommend **delete**).
-4. **Lint:** Fix `PreviewInspectionClient` layer `useEffect` in same branch?
+```text
+GenericBuildingBlueprint v2
+  → validate / resolve semantic components
+  → ComponentPlan v2 (internal IR)
+  → deterministic component emitters
+  → VoxelBlock[]
+```
+
+```mermaid
+flowchart LR
+  subgraph public [Public authoring]
+    BP2[GenericBuildingBlueprintV2]
+    OPS[BlueprintOperationV2]
+  end
+  subgraph internal [Internal compiler]
+    RES[ResolvedGenericBuildingV2]
+    CP2[ComponentPlanV2]
+  end
+  subgraph output [Output]
+    VOX[VoxelBlock array]
+  end
+  BP2 --> VAL[validate + normalize]
+  OPS -.->|Phase 7| BP2
+  VAL --> RES
+  RES --> LOW[compileGenericBuildingV2Plan]
+  LOW --> CP2
+  CP2 --> EMIT[emitFromComponentPlanV2]
+  EMIT --> VOX
+  VOX --> UI["/preview and /generic-lab"]
+```
+
+```text
+Coexistence:
+
+GenericBuildingBlueprint (schemaVersion: 1)  →  ComponentPlan v1  →  emit v1
+GenericBuildingBlueprintV2 (schemaVersion: 2) →  ComponentPlanV2 →  emit v2
+```
 
 ---
 
-## 10. Verification
+## 1. Current repo survey
+
+### 1.1 V1 blueprint & validation
+
+| Path | Role | V2 action |
+|------|------|-----------|
+| [`src/lib/blueprints/types.ts`](src/lib/blueprints/types.ts) | `GenericBuildingBlueprint` (`schemaVersion: 1`), `ResolvedGenericBuilding`, `StructureBlueprint` | **Extend** — add v2 types; keep v1 types; union `StructureBlueprint` |
+| [`src/lib/blueprints/validateBlueprint.ts`](src/lib/blueprints/validateBlueprint.ts) | Dispatches `structureType === "generic_building"` → v1 validator | **Extend** — dispatch on `schemaVersion` |
+| [`src/lib/blueprints/validateGenericBuilding.ts`](src/lib/blueprints/validateGenericBuilding.ts) | V1 validation, `BlueprintValidationResult` (errors + notes only) | **Leave v1**; v2 gets richer result type |
+| [`src/lib/blueprints/sampleGenericBuildingBlueprints.ts`](src/lib/blueprints/sampleGenericBuildingBlueprints.ts) | V1 presets (`simple_rustic_cabin`, `shed_roof_workshop`) | **Leave**; add separate v2 preset module |
+| [`src/lib/blueprints/__tests__/validateGenericBuilding.test.ts`](src/lib/blueprints/__tests__/validateGenericBuilding.test.ts) | V1 validation tests | **Leave**; add v2 validation tests |
+
+**V1 shape assumption:** one monolithic object with `body`, `roof`, `openings`, `features` — conflicts with v2’s **component array** and **surface/anchor** references.
+
+### 1.2 V1 generation & ComponentPlan v1
+
+| Path | Role | V2 action |
+|------|------|-----------|
+| [`src/lib/generation/generateStructure.ts`](src/lib/generation/generateStructure.ts) | `generateStructureFromResolved` → `generateGenericBuilding` | **Extend** — branch on resolved v1 vs v2 |
+| [`src/lib/generation/generators/generateGenericBuilding.ts`](src/lib/generation/generators/generateGenericBuilding.ts) | v1: compile v1 plan → emit | **Leave** as v1 entry |
+| [`src/lib/generation/components/types.ts`](src/lib/generation/components/types.ts) | `ComponentPlan` v1, `PlannedComponent` kinds | **Leave**; add `components/v2/types.ts` |
+| [`src/lib/generation/components/compileGenericBuildingPlan.ts`](src/lib/generation/components/compileGenericBuildingPlan.ts) | Lowers **monolithic** resolved building → fixed ids (`body_main`, `entrance_main`, …) | **Do not extend** for v2 — new `compileGenericBuildingV2Plan.ts` |
+| [`src/lib/generation/components/geometry/openingMask.ts`](src/lib/generation/components/geometry/openingMask.ts) | Derives masks from **resolved v1** `openings` + `body` | **Refactor shared math** where possible; v2 lowering feeds masks from **door/window_group** plan nodes |
+| [`src/lib/generation/components/emitFromComponentPlan.ts`](src/lib/generation/components/emitFromComponentPlan.ts) | v1 emitter dispatch + merge + grounding | **Leave**; add `emitFromComponentPlanV2.ts` |
+| [`src/lib/generation/components/generators/*`](src/lib/generation/components/generators/) | foundation, hollowWallShell, entranceOnSide, sparseWindows, roofs, chimney, frontStep | **Reuse/adapt** — many map to v2 plan kinds |
+| [`src/lib/generation/components/priorities.ts`](src/lib/generation/components/priorities.ts) | Merge priorities | **Reuse** (possibly extend for porch) |
+| [`src/lib/generation/placement/placementUtils.ts`](src/lib/generation/placement/placementUtils.ts) | merge, 26-connectivity filter | **Reuse** unchanged |
+| [`src/lib/generation/facade/paneAxis.ts`](src/lib/generation/facade/paneAxis.ts) | Window pane axis helper | **Reuse** |
+| [`src/lib/generation/families/buildingFamilies.ts`](src/lib/generation/families/buildingFamilies.ts) | Single `generic_building` family | **Leave** (v2 = same family, new schema version) |
+
+### 1.3 UI routes
+
+| Path | Role | V2 action |
+|------|------|-----------|
+| [`src/app/preview/PreviewInspectionClient.tsx`](src/app/preview/PreviewInspectionClient.tsx) | V1 generic presets + partials | **Extend** — preset groups: “Generic v1” / “Generic v2” |
+| [`src/app/preview/page.tsx`](src/app/preview/page.tsx) | Preview shell copy | **Update** when v2 presets ship |
+| [`src/app/generic-lab/GenericLabClient.tsx`](src/app/generic-lab/GenericLabClient.tsx) | Monolithic form editor for v1 | **Extend** — schemaVersion toggle or tab: v1 editor vs **v2 component tree** |
+| [`src/app/generic-lab/genericLabUtils.ts`](src/app/generic-lab/genericLabUtils.ts) | V1 clamps, preset clone | **Extend** — v2 tree helpers |
+| [`src/app/generic-lab/GenericLabInspectionPanel.tsx`](src/app/generic-lab/GenericLabInspectionPanel.tsx) | Layer/breakdown (preset-agnostic) | **Reuse** for v2 preview |
+| [`src/components/voxel/VoxelViewer.tsx`](src/components/voxel/VoxelViewer.tsx) | R3F viewer | **Leave** |
+| [`src/components/voxel/StructureInspectionPanel.tsx`](src/components/voxel/StructureInspectionPanel.tsx) | Preview side panel | **Extend** preset grouping for v2 |
+
+### 1.4 Tests & docs
+
+| Path | Role | V2 action |
+|------|------|-----------|
+| `src/lib/generation/__tests__/generatorGenericPresetInvariants.test.ts` | V1 preset invariants | **Leave** |
+| `src/lib/generation/__tests__/generatorPipeline.smoke.test.ts` | Smoke (v1 default) | **Add** v2 smoke; keep v1 |
+| `src/lib/generation/components/__tests__/compileGenericBuildingPlan.test.ts` | v1 lowering | **Leave** |
+| `docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md` | Documents v1 | **Update** in Phase 8 — mark v1, document v2 |
+| `docs/blueprints/BLUEPRINT_JSON_FORMAT.md` | Generic internal JSON | **Update** — v2 authoring; still no public ComponentPlan |
+
+### 1.5 Conflicting v1 assumptions (must not carry into v2)
+
+1. **Single implicit “main body”** — v1 hardcodes `body_main`, `entrance_main`, `roof_main`; v2 uses **author-defined slug IDs** and **surface references** (`main-room.front`).
+2. **Openings nested in blueprint** — v1 `openings.entrance` / `openings.windows`; v2 **`door`** and **`window_group`** are sibling components.
+3. **Features flags** — v1 `features.chimney.enabled` / `frontStep.enabled`; v2 **optional components** in the `components` array.
+4. **Entrance side on building** — v2 door targets a **surface**; compiler maps surface → facade side + span.
+5. **Window mode enum on building** — v2 `window_group` has distribution + height band per group.
+6. **Validation result shape** — v1 flat `errors[]` / `notes[]`; v2 needs **paths, component IDs, severity, codes** for LLM repair.
+7. **Lowering = field copy** — v1 `compileGenericBuildingToComponentPlan` is mostly structural mapping; v2 must **resolve attachments**, build **plan graph**, derive **aperture masks** from multiple opening components.
+
+---
+
+## 2. Proposed file / module layout
+
+```
+src/lib/blueprints/
+  types.ts                          # extend: v1 unchanged; export v2 + unions
+  types/
+    genericBuildingV1.ts            # optional: move v1 types when types.ts grows
+    genericBuildingV2.ts            # public v2 authoring + resolved v2
+    materials.ts                    # shared palette / override types
+    validationResult.ts             # structured ValidationResult (v2); v1 adapter
+  validateBlueprint.ts              # schemaVersion dispatch
+  validateGenericBuilding.ts        # v1 only
+  validateGenericBuildingV2.ts      # v2 validate + normalize
+  resolveGenericBuildingV2.ts       # resolved semantic graph (surfaces, anchors)
+  sampleGenericBuildingBlueprints.ts  # v1 presets (unchanged)
+  sampleGenericBuildingBlueprintsV2.ts
+  operations/
+    types.ts                        # LLM semantic operation unions
+    applyOperations.ts              # Phase 7+: apply ops to blueprint (pure)
+  __tests__/
+    validateGenericBuildingV2.test.ts
+    resolveGenericBuildingV2.test.ts
+    operations.test.ts              # Phase 7
+
+src/lib/generation/
+  generateStructure.ts              # dispatch resolved v1 | v2
+  generators/
+    generateGenericBuilding.ts      # v1 entry (unchanged)
+    generateGenericBuildingV2.ts    # v2 entry
+  components/
+    v1/                             # optional rename: move existing v1 files
+      types.ts
+      compileGenericBuildingPlan.ts
+      emitFromComponentPlan.ts
+      ...
+    v2/
+      types.ts                      # ComponentPlanV2, PlanComponent union
+      compileGenericBuildingV2Plan.ts
+      emitFromComponentPlanV2.ts
+      resolveAttachments.ts
+      deriveSurfaces.ts
+      deriveApertureMasksV2.ts
+      planContextV2.ts
+      generators/
+        roomShell.ts
+        roof.ts
+        door.ts
+        windowGroup.ts
+        porch.ts
+        chimney.ts
+        step.ts
+      __tests__/
+        compileGenericBuildingV2Plan.test.ts
+        deriveApertureMasksV2.test.ts
+        emitV2.invariants.test.ts
+        fixtures/
+          validV2Presets.ts
+          invalidV2Blueprints.ts
+
+src/app/generic-lab/
+  GenericLabClient.tsx              # v1 editor + v2 mode switch
+  v2/
+    GenericLabV2Client.tsx
+    ComponentTreePanel.tsx
+    ComponentInspectorPanel.tsx
+    ValidationPanel.tsx
+    genericLabV2Utils.ts
+
+src/app/preview/
+  PreviewInspectionClient.tsx       # v1 + v2 preset sections
+```
+
+**Docs (Phase 8, in existing paths):**
+
+- Extend `docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md` — v2 component + attachment vocabulary
+- Extend `docs/blueprints/BLUEPRINT_JSON_FORMAT.md` — v2 authoring reference
+- Update `docs/generation/GENERATOR_RELIABILITY.md` — v2 test inventory
+- Update `docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md` — v2 active sections
+
+---
+
+## 3. Proposed V2 schema (TypeScript shapes)
+
+### 3.1 Root blueprint
+
+```ts
+/** Public authoring — LLM and /generic-lab edit this. */
+export interface GenericBuildingBlueprintV2 {
+  readonly structureType: "generic_building";
+  readonly schemaVersion: 2;
+  readonly metadata: BlueprintMetadata;
+  readonly defaults: BlueprintMaterialDefaults;
+  readonly constraints: BlueprintConstraints;
+  readonly components: readonly GenericBuildingComponentV2[];
+}
+
+export type StructureBlueprint =
+  | GenericBuildingBlueprint   // schemaVersion: 1
+  | GenericBuildingBlueprintV2;
+
+export interface BlueprintMaterialDefaults {
+  readonly wall: ClassicMaterialKey;
+  readonly floor: ClassicMaterialKey;
+  readonly roof: ClassicMaterialKey;
+  readonly window: ClassicMaterialKey;
+  readonly door: ClassicMaterialKey;
+  readonly accent: ClassicMaterialKey;
+}
+
+export interface ComponentMaterialOverride {
+  readonly wall?: ClassicMaterialKey;
+  readonly floor?: ClassicMaterialKey;
+  readonly roof?: ClassicMaterialKey;
+  readonly window?: ClassicMaterialKey;
+  readonly door?: ClassicMaterialKey;
+  readonly accent?: ClassicMaterialKey;
+}
+```
+
+### 3.2 Component identity and naming rules
+
+```ts
+/** Canonical programmatic identity — slug, stable across edits. */
+export type ComponentId = string; // validated: /^[a-z][a-z0-9-]*$/
+
+export interface ComponentBaseV2 {
+  readonly id: ComponentId;
+  readonly type: GenericBuildingComponentTypeV2;
+  /** Human display only; not used for references. */
+  readonly label?: string;
+  readonly materials?: ComponentMaterialOverride;
+}
+
+export type GenericBuildingComponentTypeV2 =
+  | "room"
+  | "roof"
+  | "door"
+  | "window_group"
+  | "porch"
+  | "chimney"
+  | "step";
+
+export type GenericBuildingComponentV2 =
+  | RoomComponentV2
+  | RoofComponentV2
+  | DoorComponentV2
+  | WindowGroupComponentV2
+  | PorchComponentV2
+  | ChimneyComponentV2
+  | StepComponentV2;
+```
+
+**ID rules:**
+
+- Persisted/resolved components must have an `id`.
+- Lowercase slug: letters, numbers, hyphens (e.g. `main-room`, `front-door`, `front-windows`).
+- Used for references, operations, validation messages, compiler diagnostics, semantic provenance, `/generic-lab` selection.
+- Optional `label` for display only.
+- System may suggest deterministic IDs for new components.
+- Once assigned, IDs remain stable — do not auto-rename when properties change.
+
+### 3.3 Semantic references (attachment vocabulary)
+
+```ts
+export type RoomFace = "front" | "back" | "left" | "right" | "roof";
+export type RoomSurfaceRef = `${ComponentId}.${RoomFace}`;
+
+export interface SurfaceAttachment {
+  readonly surface: RoomSurfaceRef;
+  readonly placement: HorizontalPlacementV2;
+}
+
+export interface HorizontalPlacementV2 {
+  readonly align: "start" | "center" | "end";
+  // defer: offsetCells, corner targets
+}
+
+export interface DoorAnchorAttachment {
+  readonly door: ComponentId;
+}
+```
+
+**V2.0 derived surfaces (example):** `main-room.front`, `main-room.back`, `main-room.left`, `main-room.right`, `main-room.roof`.
+
+**V2.0 anchors (example):** `front-door` (step targets door).
+
+**Placement vocabulary (constrained):**
+
+| Component | Targets | Placement fields |
+|-----------|---------|------------------|
+| `door` | room surface | horizontal `align` |
+| `window_group` | room surface | `align`, `distribution`, `heightBand`, `count` |
+| `roof` | `{root}.roof` | `kind`, `layers`, `overhang`, shed `orientation` |
+| `porch` | room surface | `depth`, `widthMode`, optional `aroundDoor` |
+| `chimney` | wall surface | simple horizontal placement |
+| `step` | door component | door anchor only |
+
+**Deferred:** corner targets, freeform offsets, surface subdivision, multiple anchors, region selection, multi-room surfaces.
+
+### 3.4 Component variants
+
+```ts
+export interface RoomComponentV2 extends ComponentBaseV2 {
+  readonly type: "room";
+  readonly width: number;
+  readonly depth: number;
+  readonly wallHeight: number;
+  readonly wallThickness: number;
+  readonly hollowInterior: boolean;
+  readonly role?: "root";
+}
+
+export type RoofKindV2 = "pitched_gable" | "shed" | "none";
+export type ShedOrientationV2 = "front_back" | "left_right";
+
+export interface RoofComponentV2 extends ComponentBaseV2 {
+  readonly type: "roof";
+  readonly target: RoomSurfaceRef;
+  readonly kind: RoofKindV2;
+  readonly layers?: number;
+  readonly overhang?: number;
+  readonly orientation?: ShedOrientationV2;
+}
+
+export interface DoorComponentV2 extends ComponentBaseV2 {
+  readonly type: "door";
+  readonly attach: SurfaceAttachment;
+  readonly width: number;
+  readonly height: number;
+}
+
+export type WindowDistributionV2 = "single" | "pair" | "row";
+export type WindowHeightBandV2 = "auto" | "mid" | "upper";
+
+export interface WindowGroupComponentV2 extends ComponentBaseV2 {
+  readonly type: "window_group";
+  readonly attach: SurfaceAttachment;
+  readonly count: number;
+  readonly distribution: WindowDistributionV2;
+  readonly heightBand?: WindowHeightBandV2;
+}
+
+export type PorchWidthModeV2 = "door_only" | "full_facade";
+
+export interface PorchComponentV2 extends ComponentBaseV2 {
+  readonly type: "porch";
+  readonly attach: SurfaceAttachment;
+  readonly depth: number;
+  readonly widthMode: PorchWidthModeV2;
+  readonly aroundDoor?: ComponentId;
+}
+
+export interface ChimneyComponentV2 extends ComponentBaseV2 {
+  readonly type: "chimney";
+  readonly attach: SurfaceAttachment;
+}
+
+export interface StepComponentV2 extends ComponentBaseV2 {
+  readonly type: "step";
+  readonly attach: DoorAnchorAttachment;
+}
+```
+
+### 3.5 Resolved v2 (internal — not public JSON)
+
+```ts
+export interface ResolvedGenericBuildingV2 {
+  readonly structureType: "generic_building";
+  readonly schemaVersion: 2;
+  readonly metadata: BlueprintMetadata;
+  readonly constraints: BlueprintConstraints;
+  readonly rootRoomId: ComponentId;
+  readonly materials: ResolvedMaterialPalette;
+  readonly components: readonly ResolvedComponentV2[];
+  readonly surfaces: ReadonlyMap<RoomSurfaceRef, ResolvedSurfaceV2>;
+  readonly anchors: ReadonlyMap<ComponentId, ResolvedAnchorV2>;
+  readonly grid: PlanBoundsV2;
+}
+
+export interface ResolvedComponentV2 {
+  readonly id: ComponentId;
+  readonly type: GenericBuildingComponentTypeV2;
+  readonly materials: ResolvedMaterialPalette;
+  // type-specific resolved fields + resolved attachment targets
+}
+```
+
+---
+
+## 4. Proposed validation result shape
+
+```ts
+export type ValidationSeverity = "error" | "warning" | "note";
+
+export interface ValidationIssue {
+  readonly severity: ValidationSeverity;
+  readonly code: string;
+  readonly message: string;
+  readonly path?: string;
+  readonly componentId?: ComponentId;
+  readonly surface?: RoomSurfaceRef;
+  readonly anchor?: ComponentId;
+  readonly suggestion?: string;
+}
+
+export interface BlueprintValidationResultV2 {
+  readonly ok: boolean;
+  readonly errors: readonly ValidationIssue[];
+  readonly warnings: readonly ValidationIssue[];
+  readonly notes: readonly ValidationIssue[];
+  readonly resolved?: ResolvedGenericBuildingV2;
+  readonly normalized?: GenericBuildingBlueprintV2;
+}
+```
+
+| Severity | Examples |
+|----------|----------|
+| **error** | duplicate id, zero/multiple rooms, unknown surface, door too wide, invalid material, step not on door, roof target not `.roof` |
+| **note** | clamped dimensions, defaulted `layers`/`align`, inserted optional fields |
+| **warning** | high window count, large porch depth, chimney on front facade |
+
+V1 keeps `BlueprintValidationResult` (`errors[]` / `notes[]` strings) until optional unification later.
+
+---
+
+## 5. Resolution model
+
+```text
+GenericBuildingBlueprintV2 (authoring)
+  → parse / structural checks (ids, types, duplicates)
+  → detect exactly one room → rootRoomId
+  → per-component type validation
+  → resolve material inheritance (override → defaults → compiler fallbacks)
+  → build surface catalog from root room
+  → resolve attachments (surface → facade; door → anchor frame)
+  → group openings per facade
+  → plan aperture cells (shell skip, window fill, door trim)
+  → compute PlanBoundsV2
+  → estimate block budget vs maxBlockCount
+  → ResolvedGenericBuildingV2
+```
+
+| Step | Responsibility |
+|------|----------------|
+| ID validation | `^[a-z][a-z0-9-]*$`, unique set |
+| Root room | exactly one `type === "room"` |
+| Material inheritance | per-component resolved palette |
+| Surface derivation | room box at origin; faces `roomId.face` |
+| Target resolution | parse surface ref; must be root room |
+| Anchor resolution | step → door component |
+| Opening grouping | by facade; non-overlap where possible |
+| Aperture planning | merge masks; y=0 floor band (v1 parity) |
+| Bounds | y=0 slab, walls y≥1, roof above body |
+| Budget | v1-style estimate or component sum |
+
+**No user-authored world coordinates in V2.0** — compiler assigns lattice from root room at origin.
+
+---
+
+## 6. ComponentPlan v2 design
+
+### 6.1 Public vs internal vs output
+
+| Layer | Public? |
+|-------|---------|
+| `GenericBuildingBlueprintV2` | **Yes** |
+| `ResolvedGenericBuildingV2` | **Internal** |
+| `ComponentPlanV2` | **Internal** — never LLM-editable |
+| `VoxelBlock[]` | Output — inspectable only |
+
+### 6.2 ComponentPlanV2 shape
+
+```ts
+export interface ComponentPlanV2 {
+  readonly planVersion: 2;
+  readonly sourceSchemaVersion: 2;
+  readonly rootRoomId: ComponentId;
+  readonly bounds: PlanBoundsV2;
+  readonly materials: ResolvedMaterialPalette;
+  readonly constraints: BlueprintConstraints;
+  readonly openings: DerivedOpeningsV2;
+  readonly components: readonly PlanComponentV2[];
+  readonly compileNotes?: readonly string[];
+}
+
+export interface PlanBoundsV2 {
+  readonly origin: { readonly x: number; readonly y: number; readonly z: number };
+  readonly width: number;
+  readonly depth: number;
+  readonly bodyLayers: number;
+  readonly roofLayers: number;
+  readonly overhang: number;
+}
+
+export type PlanComponentV2 =
+  | PlanRoomShellV2
+  | PlanRoofV2
+  | PlanDoorV2
+  | PlanWindowGroupV2
+  | PlanPorchV2
+  | PlanChimneyV2
+  | PlanStepV2;
+```
+
+**Lowering map (do not reuse v1 plan kinds):**
+
+| Authoring | Plan v2 kind | Emitter |
+|-----------|--------------|---------|
+| `room` | `room_shell` | foundation + hollow shell |
+| `door` | `door` | aperture + trim (v1 entrance logic) |
+| `window_group` | `window_group` | sparse windows |
+| `roof` | `roof` | gable / shed / none |
+| `porch` | `porch` | **new** v2.0 emitter |
+| `chimney` | `chimney` | adapt v1 |
+| `step` | `step` | adapt v1 frontStep (door-anchored) |
+
+### 6.3 Provenance (optional V2.0)
+
+Internal placements may carry `sourceComponentId` / `sourcePlanKind`. Defer public `VoxelBlock` provenance until inspection UI needs it.
+
+---
+
+## 7. Emitters
+
+```text
+ComponentPlanV2
+  → createPlanContextV2(plan)
+  → emit in order → GeneratorPlacement[]
+  → mergePlacements (COMPONENT_PRI)
+  → filterGroundedConnected26
+  → VoxelBlock[]
+```
+
+**Emission order (proposed):**
+
+1. `room_shell`
+2. `porch`
+3. `door` / `window_group` (masks applied in shell)
+4. `roof`
+5. `chimney`
+6. `step`
+
+**Reuse:** `mergePlacements`, `filterGroundedConnected26`, `paneAxisForWindowCell`, `priorities.ts`.
+
+**New:** porch emitter; multi `window_group` per facade validation.
+
+---
+
+## 8. V1 / V2 dispatch
+
+```ts
+// validateBlueprint(blueprint)
+if (blueprint.structureType !== "generic_building") return unsupported;
+switch (blueprint.schemaVersion) {
+  case 1: return validateGenericBuildingBlueprint(blueprint);
+  case 2: return validateGenericBuildingBlueprintV2(blueprint);
+  default: return error;
+}
+
+// generateStructureFromResolved(resolved)
+if (resolved.schemaVersion === 1) return generateGenericBuilding(resolved);
+if (resolved.schemaVersion === 2) return generateGenericBuildingV2(resolved);
+```
+
+- V1 preset files unchanged in early phases.
+- All v1 tests stay green until v1 retirement.
+- Call sites narrow on `schemaVersion`.
+
+---
+
+## 9. Presets
+
+**Location:** `src/lib/blueprints/sampleGenericBuildingBlueprintsV2.ts`
+
+```ts
+export const GENERIC_BUILDING_V2_PRESETS = [
+  { id: "simple_cabin_v2", label: "Simple cabin (v2)", blueprint: ... },
+  { id: "stone_workshop_v2", label: "Stone workshop (v2)", blueprint: ... },
+  { id: "porch_house_v2", label: "Porch house (v2)", blueprint: ... },
+] as const;
+```
+
+| Preset | v1 analogue | Component ids (illustrative) |
+|--------|-------------|------------------------------|
+| `simple_cabin_v2` | `simple_rustic_cabin` | `main-room`, `main-roof`, `front-door`, `front-windows`, `chimney`, `front-step` |
+| `stone_workshop_v2` | `shed_roof_workshop` | wider room, shed roof, large door, side windows |
+| `porch_house_v2` | new demo | room, gable roof, door, windows, **porch**, step |
+
+**Staged transition:**
+
+1. V1 and V2 presets side by side.
+2. Add manually authored V2 presets (labeled section).
+3. Make V2 primary when reliable.
+4. Hide V1 as fallback/regression fixture.
+5. Remove V1 in cleanup branch (§14).
+
+**`/preview`:** grouped **Generic v1** / **Generic v2**; default **v1** until product switches.
+
+---
+
+## 10. `/generic-lab` V2 UI
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ Header: preset | v1/v2 toggle | link to /preview           │
+├──────────────┬──────────────────────────┬───────────────────┤
+│ Component    │ Voxel preview            │ Validation panel  │
+│ tree         │                          │ errors/warnings/  │
+│              ├──────────────────────────┤ notes             │
+│              │ Inspector (selected)     │                   │
+├──────────────┴──────────────────────────┴───────────────────┤
+│ Collapsible: read-only V2 JSON | debug ComponentPlan v2      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Tree grouping:** root room → surfaces → attached doors/windows/porches/chimneys; roof node; steps under doors.
+
+| Milestone | Capability |
+|-----------|------------|
+| **6a** | Read-only tree + validation + preview |
+| **6b** | Inspector edits + revalidate |
+| **6c** | Add/remove components; material overrides |
+| **Later** | “Fix it” from `ValidationIssue.suggestion` |
+
+**No** visual AI operation queue. V1 monolithic editor remains via toggle/tab.
+
+---
+
+## 11. LLM operation model
+
+```ts
+export type BlueprintOperationV2 =
+  | AddComponentOperation
+  | UpdateComponentOperation
+  | RemoveComponentOperation
+  | SetMaterialPaletteOperation
+  | SetMaterialOverrideOperation;
+
+export interface AddComponentOperation {
+  readonly op: "addComponent";
+  readonly component: GenericBuildingComponentV2;
+}
+
+export interface UpdateComponentOperation {
+  readonly op: "updateComponent";
+  readonly id: ComponentId;
+  readonly patch: Partial</* per-type */>;
+}
+
+export interface RemoveComponentOperation {
+  readonly op: "removeComponent";
+  readonly id: ComponentId;
+}
+
+export interface SetMaterialPaletteOperation {
+  readonly op: "setMaterialPalette";
+  readonly defaults: Partial<BlueprintMaterialDefaults>;
+}
+
+export interface SetMaterialOverrideOperation {
+  readonly op: "setMaterialOverride";
+  readonly id: ComponentId;
+  readonly materials: ComponentMaterialOverride;
+}
+```
+
+| Phase | Deliverable |
+|-------|-------------|
+| **7a** | Types + doc comments |
+| **7b** | `applyOperations(blueprint, ops)` + tests |
+| **Later** | API, repair loop, prompts |
+
+**Recommendation:** Phase 7 after validate/compile/emit work. **Create:** full `GenericBuildingBlueprintV2`. **Refine:** semantic operations (not JSON Patch, not ComponentPlan v2).
+
+---
+
+## 12. Tests
+
+### 12.1 New v2 tests
+
+| File | Cases |
+|------|-------|
+| `validateGenericBuildingV2.test.ts` | valid presets; duplicate id; no room; two rooms; bad slug; door too wide; materials |
+| `resolveGenericBuildingV2.test.ts` | invalid surface; roof not `.roof`; invalid anchor |
+| `compileGenericBuildingV2Plan.test.ts` | plan kinds; bounds; masks |
+| `emitV2.invariants.test.ts` | hard invariants per v2 preset |
+| `generatorPipelineV2.smoke.test.ts` | validate → generate non-empty |
+| `operations.test.ts` | add/update/remove (Phase 7) |
+
+### 12.2 Preserved v1 tests
+
+- `validateGenericBuilding.test.ts`
+- `compileGenericBuildingPlan.test.ts`
+- `generatorGenericPresetInvariants.test.ts`
+- `generatorPipeline.smoke.test.ts`
+
+Reuse `src/lib/generation/__tests__/testUtils.ts` invariant helpers.
+
+---
+
+## 13. Phased implementation plan
+
+### Phase 1 — Types + fixtures
+
+- v2 types, `StructureBlueprint` union, guards
+- Fixture TS for 3 v2 presets + invalid cases
+- **No dispatch, no emitters**
+
+**Exit:** `tsc` passes; v1 untouched
+
+### Phase 2 — Validation + normalization
+
+- `validateGenericBuildingBlueprintV2`, structured results
+- ID rules, root room, materials, attachments
+
+**Exit:** validation tests green
+
+### Phase 3 — Resolution + ComponentPlan v2 lowering
+
+- `resolveGenericBuildingV2`, `compileGenericBuildingV2Plan`, `deriveApertureMasksV2`
+- Plan snapshot tests only (no voxels)
+
+**Exit:** lowering tests green
+
+### Phase 4 — Emitters + generation
+
+- `generateGenericBuildingV2`, `emitFromComponentPlanV2`, porch emitter
+- Wire `generateStructure` dispatch
+- Invariant tests
+
+**Exit:** v2 + v1 tests green
+
+### Phase 5 — Presets + `/preview`
+
+- Ship v2 presets; grouped preview picker
+
+**Exit:** manual preview v1 + v2
+
+### Phase 6 — `/generic-lab` component tree
+
+- 6a read-only → 6b edit → 6c add/remove
+
+**Exit:** end-to-end v2 edit in lab
+
+### Phase 7 — LLM operations (optional)
+
+- Types + `applyOperations` + tests
+
+### Phase 8 — Docs + v1 deprecation prep
+
+- Update grammar, JSON format, reliability, feature catalog
+- **Do not remove v1**
+
+### Validation commands (every implementation PR)
 
 ```bash
+pnpm lint
 pnpm test:generator
 pnpm exec tsc --noEmit
 pnpm run build
-pnpm exec eslint src/app/preview src/app/generic-lab src/lib/blueprints src/lib/generation next.config.ts
-pnpm lint
 ```
-
-| Check | Expectation |
-|-------|-------------|
-| `test:generator` | All remaining tests pass; count ↓ from 100 |
-| `tsc` | No references to deleted symbols |
-| `build` | No `/visualizer` page; redirect configured |
-| Manual | `/preview` defaults to Generic; Partials works; `/generic-lab` works; `/visualizer` redirects |
-| `pnpm lint` | Strict improvement if visualizer removed; preview may still warn |
 
 ---
 
-## 11. Implementation sequence
+## 14. V1 deprecation criteria (future cleanup branch)
 
-### Phase A — Remove tower app & libs
+V1 may be retired only when:
 
-| Step | Action | Paths |
-|------|--------|-------|
-| A1 | Add redirect | [`next.config.ts`](next.config.ts) |
-| A2 | Delete visualizer route | [`src/app/visualizer/page.tsx`](src/app/visualizer/page.tsx), [`VisualizerClient.tsx`](src/app/visualizer/VisualizerClient.tsx) |
-| A3 | Delete tower-only blueprint modules | [`blueprintExchange.ts`](src/lib/blueprints/blueprintExchange.ts), [`blueprintImportStructure.ts`](src/lib/blueprints/blueprintImportStructure.ts), [`blueprintSource.ts`](src/lib/blueprints/blueprintSource.ts), [`sampleBlueprints.ts`](src/lib/blueprints/sampleBlueprints.ts) |
-| A4 | Delete tower generator & styles | [`generateMedievalTower.ts`](src/lib/generation/generators/generateMedievalTower.ts), [`buildingStyles.ts`](src/lib/generation/styles/buildingStyles.ts) |
+- [ ] Multiple manually authored **v2** presets cover visible demo cases (cabin, workshop, porch house)
+- [ ] Each v2 preset validates, compiles through **ComponentPlan v2**, renders in `/preview` and `/generic-lab`
+- [ ] Tests cover v2 validation, lowering, emission, structural invariants
+- [ ] `pnpm lint`, `pnpm test:generator`, `tsc`, `build` pass
+- [ ] Docs identify **v2 as active** generic path
+- [ ] `/generic-lab` v2 editor is primary; v1 hidden or fixture-only
 
-### Phase B — Types & validation
-
-| Step | Action | Paths |
-|------|--------|-------|
-| B1 | Remove tower types/unions | [`types.ts`](src/lib/blueprints/types.ts) |
-| B2 | Slim validator dispatcher | [`validateBlueprint.ts`](src/lib/blueprints/validateBlueprint.ts) |
-| B3 | Generic-only generate dispatch | [`generateStructure.ts`](src/lib/generation/generateStructure.ts) |
-| B4 | Single-family catalog | [`buildingFamilies.ts`](src/lib/generation/families/buildingFamilies.ts) |
-
-### Phase C — Preview & shared UI
-
-| Step | Action | Paths |
-|------|--------|-------|
-| C1 | Preview client: Generic default, no towers | [`PreviewInspectionClient.tsx`](src/app/preview/PreviewInspectionClient.tsx) |
-| C2 | Inspection panel: two modes | [`StructureInspectionPanel.tsx`](src/components/voxel/StructureInspectionPanel.tsx) |
-| C3 | Preview + landing metadata/copy | [`preview/page.tsx`](src/app/preview/page.tsx), [`page.tsx`](src/app/page.tsx) |
-| C4 | VoxelViewer default structure (if changed) | [`VoxelViewer.tsx`](src/components/voxel/VoxelViewer.tsx), [`sampleStructure.ts`](src/lib/voxel/sampleStructure.ts) |
-
-### Phase D — Tests
-
-| Step | Action | Paths |
-|------|--------|-------|
-| D1 | Delete tower test files | [`generatorPresetInvariants.test.ts`](src/lib/generation/__tests__/generatorPresetInvariants.test.ts), [`generatorEdgeCaseInvariants.test.ts`](src/lib/generation/__tests__/generatorEdgeCaseInvariants.test.ts), [`fixtures/edgeCaseBlueprints.ts`](src/lib/generation/__tests__/fixtures/edgeCaseBlueprints.ts), [`buildingStyles.test.ts`](src/lib/generation/__tests__/buildingStyles.test.ts) |
-| D2 | Rewrite smoke, families, window panes | [`generatorPipeline.smoke.test.ts`](src/lib/generation/__tests__/generatorPipeline.smoke.test.ts), [`buildingFamilies.test.ts`](src/lib/generation/__tests__/buildingFamilies.test.ts), [`generatorWindowPanes.test.ts`](src/lib/generation/__tests__/generatorWindowPanes.test.ts) |
-
-### Phase E — Docs & changelog
-
-| Step | Action | Paths |
-|------|--------|-------|
-| E1 | Project history (past tense, current product) | [`DEVELOPMENT_TIMELINE.md`](docs/project-history/DEVELOPMENT_TIMELINE.md), [`screenshots/README.md`](docs/project-history/screenshots/README.md) |
-| E2 | Generation + blueprint docs | [`GENERATION_DESIGN_PRINCIPLES.md`](docs/generation/GENERATION_DESIGN_PRINCIPLES.md), [`GENERATOR_RELIABILITY.md`](docs/generation/GENERATOR_RELIABILITY.md), [`ARCHITECTURAL_COMPONENT_GRAMMAR.md`](docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md), [`BLUEPRINT_JSON_FORMAT.md`](docs/blueprints/BLUEPRINT_JSON_FORMAT.md), [`BLUEPRINT_FEATURE_CATALOG.md`](docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md) |
-| E3 | Run §10 checks; update test counts in docs | — |
-| E4 | `CHANGE.md` addendum | [`CHANGE.md`](CHANGE.md) |
-
-**Stop after E4 for review.** Do not add AI, import v2, or new families.
+Then delete v1 in a dedicated **cleanup** branch.
 
 ---
 
-## Reference — post-cleanup architecture
+## 15. Clarifications needed before implementation
 
-```text
-GenericBuildingBlueprint
-  → validateBlueprint() / validateGenericBuildingBlueprint()
-  → ResolvedGenericBuilding
-  → compileGenericBuildingToComponentPlan()   [internal ComponentPlan]
-  → generateFromComponentPlan()
-  → VoxelBlock[]
-  → /preview (inspect) | /generic-lab (author)
+Items **1–12** below were reviewed and **resolved in §16**. Remaining open items (not blocking Phase 1):
+
+- **Material vocabulary** — Same `CLASSIC_BLOCK_PACK` keys as v1? New roles beyond wall/floor/roof/window/door/accent?
+- **Roof kinds / shed orientation** — Is `ShedOrientationV2` (`front_back` | `left_right`) correct? Omit `roof` component vs `kind: "none"`?
+- **Root room defaults** — Reuse v1 clamps (W 5–17, D 5–13, height 4–9, T 1–2)?
+- **`/generic-lab` first ship** — Phase 6a read-only OK, or minimal editing required before merge?
+- **Preview default** — Switch to v2 when stable, or keep v1 until cleanup?
+- **Validation codes** — Stable `code` registry const for LLM repair?
+
+---
+
+## 16. Clarification decisions (resolved)
+
+Review answers for schema and Phase 1 boundaries. Each item: **recommendation**, **why**, **tradeoff/risk**, **Phase impact**.
+
+### 16.1 Material field naming
+
+**Recommendation:** Use **`materials`** at the blueprint root for the global palette.
+
+**Why:** Matches v1 (`materials: BlueprintMaterials`), decision language (“blueprint-level material palette”), and how LLMs phrase edits (“set wall material”). Per-component overrides stay on each component as optional **`materials`** (same role names, partial object). Avoid `defaults` (ambiguous with constraint defaults) and `materialDefaults` (verbose).
+
+**Tradeoff/risk:** Root `materials` vs component `materials` overload — mitigate with type names (`BlueprintMaterialPalette` at root, `ComponentMaterialOverride` on components).
+
+**Phase:** **Blocks Phase 1** — fix public field name when defining v2 types.
+
+---
+
+### 16.2 Surface attachment field shape
+
+**Recommendation:** Consistent pattern for surface-attached components:
+
+```ts
+attach: {
+  targetSurface: "main-room.front",
+  placement: { ... }
+}
 ```
 
-**Retired (historical):** `MedievalTowerBlueprint`, `generateMedievalTower()`, `/visualizer`, tower `blueprintExchange` v1, `/preview` Towers tab.
+Use **`targetSurface`** inside **`attach`** (not a bare top-level field) so every attachable component shares **`attach`**, while step uses a parallel shape: `attach: { targetDoor: "front-door" }`.
+
+**Why:** `targetSurface` is explicit for LLMs. Nesting under `attach` distinguishes surface vs door attachment structurally.
+
+**Roof exception:** See §16.5 — roof uses `targetRoom`, not `attach.targetSurface`.
+
+**Tradeoff/risk:** Slightly more nesting than flat fields; worth it for cross-component consistency.
+
+**Phase:** **Blocks Phase 1** — schema shape in types/fixtures.
+
+---
+
+### 16.3 Placement vocabulary
+
+**Recommendation:** Facade-relative horizontal placement:
+
+**`placement.horizontal: "left" | "center" | "right"`**
+
+Always relative to the **outward-facing facade** (viewer standing outside that wall). Do **not** use `start`/`end`. Do **not** use `near-front`/`near-back` in v2.0.
+
+**V2.0 per component:**
+
+| Component | Placement fields |
+|-----------|------------------|
+| **door** | `horizontal: left \| center \| right` (default `center`) |
+| **window_group** | `horizontal` for group anchor; plus `layout` + `count` (§16.7) along facade |
+| **porch** | `horizontal: center` only in v2.0; width from `widthMode` + optional `aroundDoor` |
+| **chimney** | `horizontal: left \| right` on side walls; `left \| center \| right` on front/back; validate per surface |
+| **roof** | No horizontal placement; use `kind`, `layers`, `overhang`, shed `orientation` |
+| **step** | No horizontal placement; derived from target door |
+
+**Tradeoff/risk:** Left/right on `back` requires one documented viewer-outside convention; compiler encodes it.
+
+**Phase:** **Phase 1** — enum in types; **Phase 2** — per-surface validation rules.
+
+---
+
+### 16.4 Surface references
+
+**Recommendation:**
+
+- **Public schema:** string **`targetSurface`** = `{roomId}.{face}` with `face ∈ front | back | left | right | roof`.
+- **Resolved/internal:** structured **`{ roomId: ComponentId, face: RoomFace }`** after parse/validate.
+
+**Why:** Strings are best for LLM JSON and presets; structs prevent drift in compiler/emitters and improve `ValidationIssue` fields.
+
+**Tradeoff/risk:** Must reject malformed strings early.
+
+**Phase:** **Phase 1** — document format + parser/types; **Phase 2** — resolution to struct.
+
+---
+
+### 16.5 Roof target
+
+**Recommendation:** Public roof does **not** primarily use `main-room.roof`.
+
+```ts
+{
+  type: "roof",
+  id: "main-roof",
+  targetRoom: "main-room",
+  kind: "pitched_gable" | "shed" | "none",
+  ...
+}
+```
+
+Compiler maps `targetRoom` → internal roof surface / plan bounds.
+
+**Why:** LLMs naturally say “roof over the main room.” `.roof` as a surface is derived topology.
+
+**Tradeoff/risk:** Roof breaks the `attach.targetSurface` pattern; document explicitly.
+
+**Phase:** **Blocks Phase 1** — public roof shape in types; **Phase 3** — lowering.
+
+---
+
+### 16.6 Step and porch attachment
+
+**Recommendation (V2.0):**
+
+| Component | Rule |
+|-----------|------|
+| **step** | **`attach.targetDoor` required**; target must be `type: "door"`; at most one step per door |
+| **porch** | **`attach.targetSurface` required**; **`aroundDoor` optional** — required when `widthMode: "door_only"`; absent when `widthMode: "full_facade"` |
+
+Defer step→porch until v2.1.
+
+**Tradeoff/risk:** If `aroundDoor` is set, require `widthMode: "door_only"`.
+
+**Phase:** **Phase 1** types; **Phase 2** validation; porch emitter **Phase 4**.
+
+---
+
+### 16.7 Window distribution semantics
+
+**Recommendation:** Drop `single | pair | row`. Use:
+
+```ts
+{
+  type: "window_group",
+  attach: { targetSurface, placement: { horizontal: "center" } },
+  count: number,
+  layout: "symmetric" | "even",
+  heightBand?: "auto" | "mid" | "upper"
+}
+```
+
+- **`symmetric`:** slots mirrored about facade center.
+- **`even`:** spread `count` slots with minimum gap along interior span.
+
+For `count: 1`, `layout` may be ignored.
+
+**Why:** `single/pair/row` overlaps with `count` and confuses LLMs.
+
+**Tradeoff/risk:** Two layout words need preset/docs examples.
+
+**Phase:** **Phase 1** field names; **Phase 2–3** slot logic + tests.
+
+---
+
+### 16.8 ComponentPlan v2 opening representation
+
+**Recommendation:** **Separate plan kinds** for door and window_group (e.g. `plan_door`, `plan_window_group`), each with resolved aperture data — **not** a unified public `opening` type.
+
+Shared **`DerivedOpeningsV2`** mask set (shell skip / window / door), same pattern as v1.
+
+**Why:** Emitters align with v1 entrance vs window paths; unified `openingType` adds abstraction without v2.0 benefit.
+
+**Tradeoff/risk:** Two emitter paths; share mask derivation module.
+
+**Phase:** **Does not block Phase 1** — IR in **Phase 3**.
+
+---
+
+### 16.9 V1 file organization
+
+**Recommendation:** **Do not move** v1 into `components/v1/` early. Add **`src/lib/generation/components/v2/`** beside existing v1 files.
+
+**Why:** Avoids large churn with no user value until v2 works. Optional v1 folder move at retirement or dedicated refactor PR.
+
+**Tradeoff/risk:** Temporary `components/` + `components/v2/` asymmetry — acceptable.
+
+**Phase:** **Does not block Phase 1**.
+
+---
+
+### 16.10 Validation result compatibility
+
+**Recommendation:** Add **`BlueprintValidationResultV2`** with structured `ValidationIssue[]`. Keep v1 **`BlueprintValidationResult`** (`errors: string[]`, `notes: string[]`) unchanged. `validateBlueprint()` discriminates on `schemaVersion`.
+
+**Why:** Least disruptive; zero v1 test changes. Unify optionally when v1 retires.
+
+**Tradeoff/risk:** Lab/preview must render both shapes until v1 is hidden.
+
+**Phase:** **Phase 1** — type definitions; **Phase 2** — v2 validator implementation.
+
+---
+
+### 16.11 Provenance
+
+**Recommendation (minimum v2.0):**
+
+1. **Internal:** optional `sourceComponentId` (and optionally `sourcePlanKind`) on **`GeneratorPlacement`** during v2 emit — not on public `VoxelBlock`.
+2. **`/generic-lab` debug:** per-component placement counts (group by `sourceComponentId`) — read-only.
+
+Skip provenance on `VoxelBlock` and full inspection breakdown until later.
+
+**Why:** Enough to debug component→voxel mapping without a permanent voxel metadata contract.
+
+**Tradeoff/risk:** Slightly larger placement struct; optional field keeps v1 unchanged.
+
+**Phase:** **Phase 4** (1), **Phase 6** (2) — **does not block Phase 1**.
+
+---
+
+### 16.12 Phase 1 boundary
+
+**Phase 1 implements only:**
+
+**Create**
+
+- `src/lib/blueprints/types/genericBuildingV2.ts` (or equivalent) — public v2 types per §16.1–16.7, §16.5 roof `targetRoom`
+- `src/lib/blueprints/types/validationResult.ts` — `ValidationIssue`, `BlueprintValidationResultV2`
+- `src/lib/blueprints/types/materials.ts` — shared palette / override types (if split)
+- `src/lib/blueprints/sampleGenericBuildingBlueprintsV2.ts` — three hand-authored presets (syntax-valid; may not compile)
+- `src/lib/blueprints/__tests__/fixtures/v2/` — invalid/edge fixtures
+- `src/lib/generation/components/v2/types.ts` — skeleton `ComponentPlanV2` / `PlanComponentV2` (no logic)
+- Optional: `src/lib/blueprints/__tests__/v2Schema.fixtures.test.ts` — TypeScript fixture typechecks only
+
+**Update (minimal)**
+
+- `src/lib/blueprints/types.ts` — re-export v2; widen `StructureBlueprint` union; **do not** change v1 shapes
+- `src/lib/blueprints/validateBlueprint.ts` — optional stub: v2 returns clear “not implemented” or exhaustiveness guard only
+
+**Not in Phase 1**
+
+- No v2 validate / resolve / lower / emit
+- No `generateStructure` v2 branch
+- No UI changes
+- No v1 `components/v1/` move
+- No `applyOperations`
+- No preview preset wiring
+
+**Phase 1 exit:** `pnpm exec tsc --noEmit` passes; v1 tests unchanged; fixtures typecheck; no v1 runtime behavior change.
+
+**Tradeoff/risk:** If `validateBlueprint` accepts v2 JSON early, return explicit `schemaVersion 2 not implemented` until Phase 2.
+
+---
+
+### 16.13 Summary — Phase 1 blockers
+
+| # | Topic | Blocks Phase 1? |
+|---|--------|-----------------|
+| 1 | Root field `materials` | **Yes** |
+| 2 | `attach.targetSurface` / `attach.targetDoor` | **Yes** |
+| 3 | `horizontal: left \| center \| right` | **Yes** (types) |
+| 4 | Public string, resolved struct | **Yes** (format + types) |
+| 5 | Roof `targetRoom` | **Yes** |
+| 6 | Porch/step rules | **Yes** (types); validation Phase 2 |
+| 7 | `layout: symmetric \| even` + `count` | **Yes** (names) |
+| 8 | Separate plan door/window kinds | **No** (Phase 3) |
+| 9 | No v1 folder move | **No** |
+| 10 | Separate `BlueprintValidationResultV2` | **Yes** (types) |
+| 11 | Provenance | **No** (Phase 4/6) |
+| 12 | Phase 1 scope | **N/A** |

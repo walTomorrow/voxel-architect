@@ -279,3 +279,76 @@ Historical screenshot PNGs under `docs/project-history/screenshots/` were **not*
 | `pnpm test:generator` | **76** passed, 15 files |
 | `pnpm exec tsc --noEmit` | Pass |
 | `pnpm run build` | Pass |
+
+---
+
+## Addendum — GenericBuildingBlueprint v2 Phase 1 (types + fixtures)
+
+**Branch:** `feature/component-authoring-model`  
+**Phase implemented:** Phase 1 — Types + fixtures (per [`PLAN.md`](PLAN.md) §16)
+
+### Summary
+
+Added public **schemaVersion 2** authoring types, three hand-authored v2 presets, structured **validation result types** (no validator yet), and **ComponentPlanV2** skeleton IR. V1 shapes, validation, generation, preview, and `/generic-lab` behavior are unchanged. `validateBlueprint()` returns a clear error for `schemaVersion: 2` until Phase 2.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| [`src/lib/blueprints/types/materials.ts`](src/lib/blueprints/types/materials.ts) | `BlueprintMaterialPalette`, `ComponentMaterialOverride` |
+| [`src/lib/blueprints/types/genericBuildingV2.ts`](src/lib/blueprints/types/genericBuildingV2.ts) | Public v2 blueprint + component union, attachments, surfaces |
+| [`src/lib/blueprints/types/validationResult.ts`](src/lib/blueprints/types/validationResult.ts) | `ValidationIssue`, `BlueprintValidationResultV2` |
+| [`src/lib/blueprints/sampleGenericBuildingBlueprintsV2.ts`](src/lib/blueprints/sampleGenericBuildingBlueprintsV2.ts) | Presets: `simple_cabin_v2`, `stone_workshop_v2`, `porch_house_v2` |
+| [`src/lib/generation/components/v2/types.ts`](src/lib/generation/components/v2/types.ts) | Skeleton `ComponentPlanV2` / `PlanComponentV2` IR |
+| [`src/lib/blueprints/__tests__/v2Schema.fixtures.test.ts`](src/lib/blueprints/__tests__/v2Schema.fixtures.test.ts) | Preset shape + type surface + v2 not-implemented guard |
+
+### Files updated
+
+| Path | Changes |
+|------|---------|
+| [`src/lib/blueprints/types.ts`](src/lib/blueprints/types.ts) | `StructureBlueprint` union includes v2; re-exports v2 + validation types |
+| [`src/lib/blueprints/validateBlueprint.ts`](src/lib/blueprints/validateBlueprint.ts) | Reject `schemaVersion: 2` with Phase 2 message; export v2 validation types |
+
+### V2 public types added
+
+- `GenericBuildingBlueprintV2` — root `materials` palette, `components[]`, `schemaVersion: 2`
+- Component union: `room`, `roof`, `door`, `window_group`, `porch`, `chimney`, `step`
+- Attachments: `attach.targetSurface` + optional `placement.horizontal` (`left` \| `center` \| `right`); steps use `attach.targetDoor`
+- Roof: `targetRoom` (not `main-room.roof` on public roof component)
+- `ComponentId`, `RoomSurfaceRef`, material override types
+- `BlueprintValidationResultV2` / `ValidationIssue` (types only)
+
+### V2 preset fixtures
+
+| Preset id | Components (stable ids) |
+|-----------|-------------------------|
+| `simple_cabin_v2` | `main-room`, `main-roof`, `front-door`, `front-windows`, `chimney`, `front-step` |
+| `stone_workshop_v2` | `main-room`, `main-roof`, `front-door`, `front-windows`, `left-windows` |
+| `porch_house_v2` | `main-room`, `main-roof`, `front-door`, `front-windows`, `front-porch`, `front-step` |
+
+Presets are syntax-valid TypeScript; they do not validate or generate yet.
+
+### ComponentPlanV2 skeleton
+
+Internal plan kinds: `room_shell`, `roof`, `door`, `window_group`, `porch`, `chimney`, `step` — plus `PlanBoundsV2`, `DerivedOpeningsV2`, `ResolvedMaterialPaletteV2`. No lowering, emitters, or generation.
+
+### Confirmations
+
+- **V1 runtime unchanged** — v1 presets, `validateGenericBuildingBlueprint`, `generateStructure`, preview, and lab still use schemaVersion 1 only.
+- **No V2 validation implementation** — only result types; `validateBlueprint` returns not-implemented for v2.
+- **No V2 generation, lowering, emitters, preview/lab UI, or LLM operations.**
+
+### Checks
+
+| Command | Result |
+|---------|--------|
+| `pnpm exec tsc --noEmit` | **Pass** |
+| `pnpm lint` | **Pass** |
+| `pnpm test:generator` | **80** tests passed, **16** files (+4 v2 fixture tests) |
+
+### Next steps (Phase 2)
+
+- Implement `validateGenericBuildingBlueprintV2` + normalization
+- Parse/resolve `RoomSurfaceRef` to internal structs
+- ID rules, single root room, attachment and opening fit checks
+- Unit tests for validation errors/warnings/notes
