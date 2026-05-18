@@ -1,6 +1,7 @@
 /** Merge priority for generic component generators (higher wins per cell). */
 export const COMPONENT_PRI = {
   FOUNDATION: 10,
+  PORCH: 12,
   FRONT_STEP: 15,
   INTERIOR_FLOOR: 20,
   WALL: 30,

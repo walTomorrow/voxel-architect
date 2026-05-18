@@ -9,6 +9,7 @@ export default defineConfig({
       "src/lib/generation/__tests__/**/*.test.ts",
       "src/lib/generation/components/__tests__/**/*.test.ts",
       "src/lib/voxel/__tests__/**/*.test.ts",
+      "src/app/generic-lab/v2/__tests__/**/*.test.ts",
     ],
   },
   resolve: {

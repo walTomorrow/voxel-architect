@@ -10,7 +10,8 @@ export type StructureInspectionPresetOption = {
   readonly label: string;
 };
 
-export type PreviewLabSource = "preset_generic" | "partial_showcase";
+export type { PreviewLabSource } from "@/src/lib/blueprints/previewPresetCatalog";
+import type { PreviewLabSource } from "@/src/lib/blueprints/previewPresetCatalog";
 
 type Props = {
   readonly title?: string;
@@ -21,6 +22,10 @@ type Props = {
   readonly panelDescription?: string;
   /** Validator notes when inspecting a generated preset (optional). */
   readonly validationNotes?: readonly string[];
+  readonly validationWarnings?: readonly string[];
+  readonly validationErrors?: readonly string[];
+  /** Shown under the preset selector for generic presets (e.g. schemaVersion 2). */
+  readonly presetSchemaLabel?: string;
   readonly presetOptions: readonly StructureInspectionPresetOption[];
   readonly selectedPresetId: string;
   readonly onPresetIdChange: (id: string) => void;
@@ -130,16 +135,24 @@ function InspectionPanelBody(p: Props) {
           <div className="flex rounded-lg border border-zinc-700 bg-zinc-900/80 p-0.5">
             <button
               type="button"
-              aria-pressed={p.previewSource === "preset_generic"}
-              className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${p.previewSource === "preset_generic" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
-              onClick={() => p.onPreviewSourceChange!("preset_generic")}
+              aria-pressed={p.previewSource === "preset_generic_v1"}
+              className={`flex-1 rounded-md px-1.5 py-1.5 text-[10px] font-medium transition sm:px-2 sm:text-[11px] ${p.previewSource === "preset_generic_v1" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
+              onClick={() => p.onPreviewSourceChange!("preset_generic_v1")}
             >
-              Generic
+              Generic v1
+            </button>
+            <button
+              type="button"
+              aria-pressed={p.previewSource === "preset_generic_v2"}
+              className={`flex-1 rounded-md px-1.5 py-1.5 text-[10px] font-medium transition sm:px-2 sm:text-[11px] ${p.previewSource === "preset_generic_v2" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
+              onClick={() => p.onPreviewSourceChange!("preset_generic_v2")}
+            >
+              Generic v2
             </button>
             <button
               type="button"
               aria-pressed={p.previewSource === "partial_showcase"}
-              className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${p.previewSource === "partial_showcase" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
+              className={`flex-1 rounded-md px-1.5 py-1.5 text-[10px] font-medium transition sm:px-2 sm:text-[11px] ${p.previewSource === "partial_showcase" ? "bg-emerald-600/90 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
               onClick={() => p.onPreviewSourceChange!("partial_showcase")}
             >
               Partials
@@ -170,7 +183,36 @@ function InspectionPanelBody(p: Props) {
             ))}
           </select>
         )}
+        {p.presetSchemaLabel ? (
+          <p className="text-[10px] text-zinc-500">{p.presetSchemaLabel}</p>
+        ) : null}
       </section>
+
+      {p.validationErrors && p.validationErrors.length > 0 ? (
+        <section className="space-y-1.5">
+          <span className="block text-[11px] font-medium uppercase tracking-wider text-red-400/90">
+            Validation errors
+          </span>
+          <ul className="space-y-1 rounded-md border border-red-900/50 bg-red-950/30 px-2 py-2 text-[10px] leading-snug text-red-200/90">
+            {p.validationErrors.map((msg) => (
+              <li key={msg}>{msg}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {p.validationWarnings && p.validationWarnings.length > 0 ? (
+        <section className="space-y-1.5">
+          <span className="block text-[11px] font-medium uppercase tracking-wider text-amber-400/90">
+            Validation warnings
+          </span>
+          <ul className="space-y-1 rounded-md border border-amber-900/40 bg-amber-950/20 px-2 py-2 text-[10px] leading-snug text-amber-100/90">
+            {p.validationWarnings.map((msg) => (
+              <li key={msg}>{msg}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {p.validationNotes && p.validationNotes.length > 0 ? (
         <section className="space-y-1.5">

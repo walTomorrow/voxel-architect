@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { GenericLabClient } from "@/src/app/generic-lab/GenericLabClient";
+import { GenericLabShell } from "@/src/app/generic-lab/GenericLabShell";
 
 export const metadata: Metadata = {
   title: "Generic blueprint lab · Voxel Architect",
@@ -38,7 +38,7 @@ export default function GenericLabPage() {
       </header>
 
       <div className="min-h-0 flex-1">
-        <GenericLabClient />
+        <GenericLabShell />
       </div>
     </div>
   );
