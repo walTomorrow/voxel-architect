@@ -597,3 +597,93 @@ Uses `mergePlacements` + `filterGroundedConnected26` when `allowFloatingBlocks` 
 
 - Ship v2 presets in `/preview` grouped picker
 - Manual inspection of v1 + v2 generated structures
+
+---
+
+## Addendum — GenericBuildingBlueprint v2 Phase 5 — preview preset exposure
+
+**Branch:** `feature/component-authoring-model`  
+**Phase implemented:** Phase 5 — Presets + `/preview` (per [`PLAN.md`](PLAN.md) §13)
+
+### Summary
+
+`/preview` now exposes all three **GenericBuildingBlueprint v2** presets alongside existing **v1** generic presets and the **partial block showcase**. Source toggle groups: **Generic v1** / **Generic v2** / **Partials**. Default source remains **Generic v1** (`simple_rustic_cabin`).
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| [`src/lib/blueprints/previewPresetCatalog.ts`](src/lib/blueprints/previewPresetCatalog.ts) | Preview source types, v1/v2 preset option lists, id validation helpers |
+| [`src/lib/blueprints/__tests__/previewPresetCatalog.test.ts`](src/lib/blueprints/__tests__/previewPresetCatalog.test.ts) | Catalog coverage (3 tests) |
+
+### Files updated
+
+| Path | Changes |
+|------|---------|
+| [`src/app/preview/PreviewInspectionClient.tsx`](src/app/preview/PreviewInspectionClient.tsx) | v1/v2/Partials sources; `validateBlueprint` + `generateStructure`; v2 validation errors/warnings/notes |
+| [`src/components/voxel/StructureInspectionPanel.tsx`](src/components/voxel/StructureInspectionPanel.tsx) | Three-way source toggle; schema label; validation errors/warnings sections |
+| [`src/app/preview/page.tsx`](src/app/preview/page.tsx) | Metadata mentions v1 + v2 presets |
+
+### How `/preview` grouping works
+
+| Source button | Preset dropdown | Default preset |
+|---------------|-----------------|----------------|
+| **Generic v1** | V1 `GENERIC_BUILDING_PRESETS` | `simple_rustic_cabin` |
+| **Generic v2** | V2 `GENERIC_BUILDING_V2_PRESETS` | `simple_cabin_v2` |
+| **Partials** | (none — static showcase) | — |
+
+Panel title and description reflect the active group; v2 shows `schemaVersion 2 · component-authored blueprint`.
+
+### V2 presets exposed
+
+| Preset id | Label |
+|-----------|--------|
+| `simple_cabin_v2` | Simple cabin (v2) |
+| `stone_workshop_v2` | Stone workshop (v2) |
+| `porch_house_v2` | Porch house (v2) |
+
+### Preview behavior
+
+| Source | Validate | Generate | Viewer |
+|--------|----------|----------|--------|
+| Generic v1 | `validateBlueprint()` | `generateStructure()` | unchanged |
+| Generic v2 | `validateBlueprint()` → structured issues | `generateStructure()` (v2 pipeline) | same `VoxelViewer` |
+| Partials | — | static structure | unchanged |
+
+On failure: empty canvas message + validation errors in panel (and inline when no structure). Warnings/notes shown in panel when present.
+
+### Tests added/updated
+
+- **New:** `previewPresetCatalog.test.ts`
+- **Preserved:** all generator tests (126 total)
+
+### Manual verification checklist
+
+- [ ] `/preview` loads without runtime console errors
+- [ ] **Generic v1** presets still render (e.g. simple rustic cabin, shed roof workshop)
+- [ ] **Partials** showcase still renders
+- [ ] **Generic v2** — each preset renders non-empty structure:
+  - [ ] `simple_cabin_v2` — cabin, door, windows, chimney, front step
+  - [ ] `porch_house_v2` — visible front porch deck
+  - [ ] `stone_workshop_v2` — workshop proportions and limestone/slate materials
+- [ ] Switching v1 ↔ v2 ↔ Partials updates title, schema label, and preset list
+- [ ] `/generic-lab` unchanged (still v1-only)
+
+### Confirmations
+
+- **No generic-lab V2 UI** — no component tree, editing, operations, or AI
+- **V1 default preserved** — initial source is `preset_generic_v1`
+
+### Checks
+
+| Command | Result |
+|---------|--------|
+| `pnpm exec tsc --noEmit` | **Pass** |
+| `pnpm lint` | **Pass** |
+| `pnpm test:generator` | **126** tests passed, **21** files |
+| `pnpm run build` | **Pass** |
+
+### Next steps (Phase 6)
+
+- `/generic-lab` read-only component tree for v2
+- Optional v2 preset editing in lab (6b/6c)

@@ -1,23 +1,29 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type {
-  GenericBuildingBlueprint,
-  StructureBlueprint,
-} from "@/src/lib/blueprints/types";
+import type { StructureBlueprint } from "@/src/lib/blueprints/types";
 import {
   DEFAULT_GENERIC_PRESET_ID,
-  GENERIC_BUILDING_PRESETS,
   getGenericBuildingPreset,
 } from "@/src/lib/blueprints/sampleGenericBuildingBlueprints";
 import {
+  DEFAULT_GENERIC_V2_PRESET_ID,
+  getGenericBuildingPresetV2,
+} from "@/src/lib/blueprints/sampleGenericBuildingBlueprintsV2";
+import {
+  defaultPresetIdForSource,
+  isPresetIdValidForSource,
+  previewPresetOptionsForSource,
+  type PreviewLabSource,
+} from "@/src/lib/blueprints/previewPresetCatalog";
+import {
   isBlueprintValidationResultV2,
   validateBlueprint,
+  type ValidateBlueprintResult,
 } from "@/src/lib/blueprints/validateBlueprint";
-import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
+import { generateStructure } from "@/src/lib/generation/generateStructure";
 import {
   StructureInspectionPanel,
-  type PreviewLabSource,
   type StructureInspectionPresetOption,
 } from "@/src/components/voxel/StructureInspectionPanel";
 import { VoxelViewer } from "@/src/components/voxel/VoxelViewer";
@@ -32,19 +38,32 @@ import {
 import { PARTIAL_BLOCK_SHOWCASE_STRUCTURE } from "@/src/lib/voxel/sampleStructure";
 import { validateVoxelStructurePlacements } from "@/src/lib/voxel/voxelBlockPlacement";
 
-const GENERIC_PRESET_OPTIONS: readonly StructureInspectionPresetOption[] =
-  GENERIC_BUILDING_PRESETS.map((p) => ({
-    id: p.id,
-    label: p.label,
-  }));
+function formatValidationFeedback(result: ValidateBlueprintResult): {
+  errors: string[];
+  warnings: string[];
+  notes: string[];
+} {
+  if (isBlueprintValidationResultV2(result)) {
+    return {
+      errors: result.errors.map((e) => e.message),
+      warnings: result.warnings.map((w) => w.message),
+      notes: result.notes.map((n) => n.message),
+    };
+  }
+  return {
+    errors: [...result.errors],
+    warnings: [],
+    notes: [...result.notes],
+  };
+}
 
 /**
- * Read-only inspection for `/preview` — generic presets or static partial-block showcase.
+ * Read-only inspection for `/preview` — generic v1/v2 presets or partial-block showcase.
  */
 export function PreviewInspectionClient() {
   const [previewSource, setPreviewSource] =
-    useState<PreviewLabSource>("preset_generic");
-  const [selectedGenericPresetId, setSelectedGenericPresetId] = useState<string>(
+    useState<PreviewLabSource>("preset_generic_v1");
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(
     DEFAULT_GENERIC_PRESET_ID,
   );
   const [cameraResetNonce, setCameraResetNonce] = useState(0);
@@ -62,47 +81,64 @@ export function PreviewInspectionClient() {
     }
   }, []);
 
-  const activePresetMeta = useMemo(() => {
-    if (previewSource !== "preset_generic") return null;
-    const preset = getGenericBuildingPreset(selectedGenericPresetId);
-    const fallback = getGenericBuildingPreset(DEFAULT_GENERIC_PRESET_ID);
-    return preset ?? fallback!;
-  }, [previewSource, selectedGenericPresetId]);
+  const presetOptions: readonly StructureInspectionPresetOption[] = useMemo(
+    () =>
+      previewPresetOptionsForSource(previewSource).map((p) => ({
+        id: p.id,
+        label: p.label,
+      })),
+    [previewSource],
+  );
 
   const blueprint = useMemo((): StructureBlueprint | null => {
-    if (previewSource === "partial_showcase" || !activePresetMeta) {
-      return null;
+    if (previewSource === "partial_showcase") return null;
+    if (previewSource === "preset_generic_v1") {
+      const preset =
+        getGenericBuildingPreset(selectedPresetId) ??
+        getGenericBuildingPreset(DEFAULT_GENERIC_PRESET_ID);
+      return preset ? (structuredClone(preset.blueprint) as StructureBlueprint) : null;
     }
-    return structuredClone(activePresetMeta.blueprint) as StructureBlueprint;
-  }, [previewSource, activePresetMeta]);
+    const preset =
+      getGenericBuildingPresetV2(selectedPresetId) ??
+      getGenericBuildingPresetV2(DEFAULT_GENERIC_V2_PRESET_ID);
+    return preset ? (structuredClone(preset.blueprint) as StructureBlueprint) : null;
+  }, [previewSource, selectedPresetId]);
 
-  const validation = useMemo(() => {
-    if (!blueprint) {
-      return { ok: false as const, errors: [] as string[], notes: [] as string[] };
-    }
-    return validateBlueprint(blueprint as GenericBuildingBlueprint);
+  const validation = useMemo((): ValidateBlueprintResult | null => {
+    if (!blueprint) return null;
+    return validateBlueprint(blueprint);
   }, [blueprint]);
 
-  const generatedStructure: VoxelStructure = useMemo(() => {
-    if (
-      previewSource === "partial_showcase" ||
-      !validation.ok ||
-      isBlueprintValidationResultV2(validation) ||
-      !validation.resolved
-    ) {
-      return { blocks: [] };
+  const validationFeedback = useMemo(() => {
+    if (!validation) {
+      return { errors: [] as string[], warnings: [] as string[], notes: [] as string[] };
     }
-    return {
-      blocks: generateStructureFromResolved(validation.resolved),
-    };
-  }, [previewSource, validation]);
+    return formatValidationFeedback(validation);
+  }, [validation]);
+
+  const { generatedBlocks, generationError } = useMemo(() => {
+    if (previewSource === "partial_showcase" || !blueprint || !validation?.ok) {
+      return { generatedBlocks: [] as const, generationError: undefined };
+    }
+    try {
+      return {
+        generatedBlocks: generateStructure(blueprint),
+        generationError: undefined,
+      };
+    } catch (err) {
+      return {
+        generatedBlocks: [] as const,
+        generationError: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }, [previewSource, blueprint, validation]);
 
   const structure: VoxelStructure = useMemo(() => {
     if (previewSource === "partial_showcase") {
       return PARTIAL_BLOCK_SHOWCASE_STRUCTURE;
     }
-    return generatedStructure;
-  }, [previewSource, generatedStructure]);
+    return { blocks: [...generatedBlocks] };
+  }, [previewSource, generatedBlocks]);
 
   const layerExtents = useMemo(
     () => computeLayerYExtents(structure.blocks),
@@ -146,37 +182,60 @@ export function PreviewInspectionClient() {
   };
 
   const handlePresetIdChange = (id: string) => {
-    if (previewSource !== "preset_generic") return;
-    if (!getGenericBuildingPreset(id)) return;
-    setSelectedGenericPresetId(id);
+    if (previewSource === "partial_showcase") return;
+    if (!isPresetIdValidForSource(previewSource, id)) return;
+    setSelectedPresetId(id);
     setLayerViewMode("full");
   };
 
   const handlePreviewSourceChange = (source: PreviewLabSource) => {
     setPreviewSource(source);
+    setSelectedPresetId(defaultPresetIdForSource(source));
     setLayerViewMode("full");
   };
 
   const hasStructure = totalCount > 0;
 
+  const sourceLabel =
+    previewSource === "partial_showcase"
+      ? "Partials"
+      : previewSource === "preset_generic_v2"
+        ? "Generic v2"
+        : "Generic v1";
+
   const panelTitle =
     previewSource === "partial_showcase"
       ? "Partial block showcase"
-      : "Preset inspection";
+      : `${sourceLabel} preset inspection`;
+
+  const presetSchemaLabel =
+    previewSource === "preset_generic_v2"
+      ? "schemaVersion 2 · component-authored blueprint"
+      : previewSource === "preset_generic_v1"
+        ? "schemaVersion 1 · monolithic generic building"
+        : undefined;
 
   const panelDescription = useMemo(() => {
     if (previewSource === "partial_showcase") {
       return "Developer inspection: static slabs, panes, and posts using classic textures only — not preset generator output. Layer modes filter the canvas; breakdown reflects this showcase.";
     }
-    return "Preset loads a hand-authored generic building (component pipeline). Layer modes filter the canvas only; the block breakdown below always reflects the full generated structure.";
+    if (previewSource === "preset_generic_v2") {
+      return "Hand-authored GenericBuildingBlueprint v2 (component pipeline). Validates, resolves, compiles, and generates voxels. Layer modes filter the canvas only; breakdown reflects the full generated structure.";
+    }
+    return "Hand-authored GenericBuildingBlueprint v1. Layer modes filter the canvas only; the block breakdown below always reflects the full generated structure.";
   }, [previewSource]);
 
   const validationNotes =
     previewSource !== "partial_showcase" &&
-    validation.ok &&
-    validation.notes.length > 0
-      ? validation.notes
+    validation?.ok &&
+    validationFeedback.notes.length > 0
+      ? validationFeedback.notes
       : undefined;
+
+  const displayErrors = [
+    ...validationFeedback.errors,
+    ...(generationError ? [generationError] : []),
+  ];
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-zinc-950 text-zinc-100 md:flex-row">
@@ -194,8 +253,16 @@ export function PreviewInspectionClient() {
               Could not build this preset
             </p>
             <p className="max-w-sm text-xs text-zinc-500">
-              Pick another preset from the inspection panel.
+              Pick another preset from the inspection panel, or fix validation errors
+              below.
             </p>
+            {displayErrors.length > 0 ? (
+              <ul className="mt-2 max-w-md space-y-1 text-left text-[11px] text-red-200/90">
+                {displayErrors.map((msg) => (
+                  <li key={msg}>{msg}</li>
+                ))}
+              </ul>
+            ) : null}
           </div>
         )}
       </div>
@@ -204,10 +271,21 @@ export function PreviewInspectionClient() {
         title={panelTitle}
         panelDescription={panelDescription}
         validationNotes={validationNotes}
+        validationWarnings={
+          previewSource !== "partial_showcase" && validationFeedback.warnings.length > 0
+            ? validationFeedback.warnings
+            : undefined
+        }
+        validationErrors={
+          previewSource !== "partial_showcase" && displayErrors.length > 0
+            ? displayErrors
+            : undefined
+        }
+        presetSchemaLabel={presetSchemaLabel}
         previewSource={previewSource}
         onPreviewSourceChange={handlePreviewSourceChange}
-        presetOptions={GENERIC_PRESET_OPTIONS}
-        selectedPresetId={selectedGenericPresetId}
+        presetOptions={presetOptions}
+        selectedPresetId={selectedPresetId}
         onPresetIdChange={handlePresetIdChange}
         hasStructure={hasStructure}
         layerViewMode={layerViewMode}

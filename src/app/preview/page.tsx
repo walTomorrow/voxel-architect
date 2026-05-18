@@ -5,7 +5,7 @@ import { PreviewInspectionClient } from "@/src/app/preview/PreviewInspectionClie
 export const metadata: Metadata = {
   title: "3D preview · Voxel Architect",
   description:
-    "Inspect generic building presets and partial blocks in 3D — orbit, zoom, and layer modes.",
+    "Inspect generic building presets (v1 and v2) and partial blocks in 3D — orbit, zoom, and layer modes.",
 };
 
 export default function PreviewPage() {
