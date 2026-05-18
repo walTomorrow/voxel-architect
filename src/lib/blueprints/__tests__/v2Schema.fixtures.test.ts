@@ -5,7 +5,6 @@ import type {
   ComponentPlanV2,
   PlanComponentV2,
 } from "@/src/lib/generation/components/v2/types";
-import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import type {
   BlueprintValidationResultV2,
   GenericBuildingBlueprintV2,
@@ -39,13 +38,6 @@ describe("GenericBuildingBlueprint v2 schema fixtures", () => {
     if (roof?.type === "roof") {
       expect(roof.targetRoom).toBe("main-room");
     }
-  });
-
-  it("validateBlueprint returns not-implemented for schemaVersion 2", () => {
-    const bp = GENERIC_BUILDING_V2_PRESETS[0].blueprint;
-    const r = validateBlueprint(bp);
-    expect(r.ok).toBe(false);
-    expect(r.errors[0]).toMatch(/schemaVersion 2 is not implemented/i);
   });
 
   it("v2 validation result and plan types are importable (compile-time surface)", () => {

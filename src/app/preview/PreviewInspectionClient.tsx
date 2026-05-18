@@ -1,13 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { StructureBlueprint } from "@/src/lib/blueprints/types";
+import type {
+  GenericBuildingBlueprint,
+  StructureBlueprint,
+} from "@/src/lib/blueprints/types";
 import {
   DEFAULT_GENERIC_PRESET_ID,
   GENERIC_BUILDING_PRESETS,
   getGenericBuildingPreset,
 } from "@/src/lib/blueprints/sampleGenericBuildingBlueprints";
-import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
+import {
+  isBlueprintValidationResultV2,
+  validateBlueprint,
+} from "@/src/lib/blueprints/validateBlueprint";
 import { generateStructureFromResolved } from "@/src/lib/generation/generateStructure";
 import {
   StructureInspectionPanel,
@@ -74,11 +80,16 @@ export function PreviewInspectionClient() {
     if (!blueprint) {
       return { ok: false as const, errors: [] as string[], notes: [] as string[] };
     }
-    return validateBlueprint(blueprint);
+    return validateBlueprint(blueprint as GenericBuildingBlueprint);
   }, [blueprint]);
 
   const generatedStructure: VoxelStructure = useMemo(() => {
-    if (previewSource === "partial_showcase" || !validation.ok || !validation.resolved) {
+    if (
+      previewSource === "partial_showcase" ||
+      !validation.ok ||
+      isBlueprintValidationResultV2(validation) ||
+      !validation.resolved
+    ) {
       return { blocks: [] };
     }
     return {

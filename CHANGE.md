@@ -352,3 +352,84 @@ Internal plan kinds: `room_shell`, `roof`, `door`, `window_group`, `porch`, `chi
 - Parse/resolve `RoomSurfaceRef` to internal structs
 - ID rules, single root room, attachment and opening fit checks
 - Unit tests for validation errors/warnings/notes
+
+---
+
+## Addendum — GenericBuildingBlueprint v2 Phase 2 — validation + normalization
+
+**Branch:** `feature/component-authoring-model`  
+**Phase implemented:** Phase 2 — V2 validation + normalization (per [`PLAN.md`](PLAN.md) §16)
+
+### Summary
+
+Implemented `validateGenericBuildingBlueprintV2`, wired `validateBlueprint()` dispatch for `schemaVersion` 1 vs 2, added `parseRoomSurfaceRef()` for public surface strings, and added unit tests. V2 blueprints validate to a **normalized** blueprint on success; there is still **no** `resolved` object, lowering, emitters, generation branch, preview/lab V2 UI, or operations. V1 validation, resolution, and generation behavior are unchanged.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| [`src/lib/blueprints/parseRoomSurfaceRef.ts`](src/lib/blueprints/parseRoomSurfaceRef.ts) | `parseRoomSurfaceRef(ref)` → `{ roomId, face }` or parse error |
+| [`src/lib/blueprints/validateGenericBuildingV2.ts`](src/lib/blueprints/validateGenericBuildingV2.ts) | `validateGenericBuildingBlueprintV2`, normalization draft types |
+| [`src/lib/blueprints/__tests__/validateGenericBuildingV2.test.ts`](src/lib/blueprints/__tests__/validateGenericBuildingV2.test.ts) | V2 validation/normalization unit tests (21 cases) |
+
+### Files updated
+
+| Path | Changes |
+|------|---------|
+| [`src/lib/blueprints/validateBlueprint.ts`](src/lib/blueprints/validateBlueprint.ts) | Dispatch: v1 → existing validator; v2 → `validateGenericBuildingBlueprintV2`; unknown version → error; overloads + `isBlueprintValidationResultV2` |
+| [`src/lib/generation/generateStructure.ts`](src/lib/generation/generateStructure.ts) | Early throw for `schemaVersion: 2` (generation remains Phase 4) |
+| [`src/app/preview/PreviewInspectionClient.tsx`](src/app/preview/PreviewInspectionClient.tsx) | Narrow validation to v1 presets (`GenericBuildingBlueprint` cast + v2 guard) |
+| [`src/lib/blueprints/__tests__/v2Schema.fixtures.test.ts`](src/lib/blueprints/__tests__/v2Schema.fixtures.test.ts) | Removed obsolete “v2 not implemented” expectation |
+
+### Validation rules implemented (hard errors)
+
+- `structureType` must be `generic_building`; `schemaVersion` must be `2`
+- `components` non-empty; each component is an object with valid slug `id` (`/^[a-z][a-z0-9-]*$/`); ids unique
+- Exactly one `room` component (root); room `width`/`depth`/`wallHeight`/`wallThickness` in approved ranges; hollow interior minimum span
+- Blueprint `materials` and per-component overrides use classic pack keys (`CLASSIC_BLOCK_PACK`)
+- `targetSurface` strings parse via `parseRoomSurfaceRef`; target room component must exist, be type `room`, and match the root room id
+- Face must be `front` \| `back` \| `left` \| `right` \| `roof`; door/window/porch/chimney cannot target `roof` (`surface_roof_not_allowed`)
+- Roof uses `targetRoom` referencing an existing root room (`room` type)
+- Steps: `attach.targetDoor` required, must reference an existing `door` component; at most one step per door
+- Porch: `aroundDoor` must reference an existing door when set; `door_only` requires `aroundDoor`; `full_facade` forbids `aroundDoor`
+- Door/window opening fit on façade (width/height/count vs interior span); **window count above façade capacity → error** (`window_count_exceeds_facade`)
+- Unknown `component.type` → error
+
+### Normalization behavior (notes)
+
+- Missing `attach.placement.horizontal` → `center` (note: `default_placement_horizontal`)
+- Roof: default/clamp `layers` (1–3), default/clamp `overhang` (0–1), default shed `orientation` to `front_back`; clear layers when `kind: none`
+- Missing `window_group.heightBand` → `auto`
+- Safe numeric clamps on roof fields emit notes when values change
+
+### Warnings implemented
+
+- `no_door` — blueprint has no door component
+- `no_windows` — no `window_group` components
+- `chimney_on_front` — chimney attached to `main-room.front` (or root front face)
+- `porch_depth_large` — porch `depth` > 4
+- `window_count_high` — window count ≥ 80% of computed façade slot capacity (error if above 100%)
+
+### Tests added/updated
+
+- **New:** `validateGenericBuildingV2.test.ts` — presets pass; duplicate id; bad slug; missing/multiple rooms; invalid/unknown/non-room/non-root surfaces; roof `targetRoom`; step/porch door refs; invalid materials; placement default; no door/window warnings; door too wide; window over-capacity **error**
+- **Updated:** `v2Schema.fixtures.test.ts` — fixture-only (no dispatch stub)
+- **Unchanged:** all existing V1 generator/validation tests still pass
+
+### Confirmations
+
+- **V1 runtime unchanged** — v1 `validateGenericBuildingBlueprint` + `resolved` + `generateStructure` path untouched; preview/lab still load v1 presets only
+- **No V2 generation/UI/operations** — no resolver, `ComponentPlanV2` lowering, v2 emitters, `generateStructure` v2 branch, `/generic-lab` v2 UI, `applyOperations`, or `resolved` on v2 validation result
+
+### Checks
+
+| Command | Result |
+|---------|--------|
+| `pnpm exec tsc --noEmit` | **Pass** |
+| `pnpm lint` | **Pass** |
+| `pnpm test:generator` | **100** tests passed, **17** files |
+
+### Next steps (Phase 3)
+
+- Resolver: surface catalog, `ResolvedGenericBuildingV2` (or equivalent internal struct)
+- Lower `GenericBuildingBlueprintV2` → `ComponentPlanV2`

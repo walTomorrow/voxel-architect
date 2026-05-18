@@ -1,23 +1,50 @@
-import type { GenericBuildingBlueprint, StructureBlueprint } from "./types";
-import { validateGenericBuildingBlueprint } from "./validateGenericBuilding";
+import type {
+  GenericBuildingBlueprint,
+  GenericBuildingBlueprintV2,
+  StructureBlueprint,
+} from "./types";
+import type { BlueprintValidationResultV2 } from "./types/validationResult";
+import {
+  validateGenericBuildingBlueprint,
+  type BlueprintValidationResult,
+} from "./validateGenericBuilding";
+import { validateGenericBuildingBlueprintV2 } from "./validateGenericBuildingV2";
 
 export type { BlueprintValidationResult } from "./validateGenericBuilding";
 export { validateGenericBuildingBlueprint } from "./validateGenericBuilding";
+export { validateGenericBuildingBlueprintV2 } from "./validateGenericBuildingV2";
 export type {
   BlueprintValidationResultV2,
   ValidationIssue,
   ValidationSeverity,
 } from "./types/validationResult";
 
-/**
- * Validates a generic building blueprint and returns a resolved structure when valid.
- */
-const SCHEMA_V2_NOT_IMPLEMENTED =
-  "Generic building blueprint schemaVersion 2 is not implemented yet (validation is Phase 2).";
+export type ValidateBlueprintResult =
+  | BlueprintValidationResult
+  | BlueprintValidationResultV2;
+
+export function isBlueprintValidationResultV2(
+  result: ValidateBlueprintResult,
+): result is BlueprintValidationResultV2 {
+  return "warnings" in result;
+}
 
 export function validateBlueprint(
+  blueprint: GenericBuildingBlueprint,
+): BlueprintValidationResult;
+export function validateBlueprint(
+  blueprint: GenericBuildingBlueprintV2,
+): BlueprintValidationResultV2;
+export function validateBlueprint(
   blueprint: StructureBlueprint,
-): ReturnType<typeof validateGenericBuildingBlueprint> {
+): ValidateBlueprintResult;
+/**
+ * Validates a generic building blueprint (v1 or v2).
+ * v1 returns resolved structure when valid; v2 returns normalized blueprint (no resolved yet).
+ */
+export function validateBlueprint(
+  blueprint: StructureBlueprint,
+): ValidateBlueprintResult {
   if (blueprint.structureType !== "generic_building") {
     return {
       ok: false,
@@ -27,12 +54,20 @@ export function validateBlueprint(
       notes: [],
     };
   }
-  if (blueprint.schemaVersion === 2) {
-    return {
-      ok: false,
-      errors: [SCHEMA_V2_NOT_IMPLEMENTED],
-      notes: [],
-    };
+
+  const version = blueprint.schemaVersion;
+  if (version === 2) {
+    return validateGenericBuildingBlueprintV2(blueprint);
   }
-  return validateGenericBuildingBlueprint(blueprint as GenericBuildingBlueprint);
+  if (version === 1) {
+    return validateGenericBuildingBlueprint(blueprint as GenericBuildingBlueprint);
+  }
+
+  return {
+    ok: false,
+    errors: [
+      `Unsupported schemaVersion: ${String(version)}. Supported values are 1 and 2.`,
+    ],
+    notes: [],
+  };
 }

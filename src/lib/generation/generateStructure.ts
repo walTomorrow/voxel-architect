@@ -1,4 +1,5 @@
 import type {
+  GenericBuildingBlueprint,
   ResolvedStructure,
   StructureBlueprint,
 } from "@/src/lib/blueprints/types";
@@ -11,7 +12,12 @@ import type { VoxelBlock } from "@/src/lib/voxel/types";
  * Throws if validation fails (use `validateBlueprint()` first for UI flows).
  */
 export function generateStructure(blueprint: StructureBlueprint): VoxelBlock[] {
-  const result = validateBlueprint(blueprint);
+  if (blueprint.schemaVersion === 2) {
+    throw new Error(
+      "schemaVersion 2 generation is not implemented yet (Phase 4).",
+    );
+  }
+  const result = validateBlueprint(blueprint as GenericBuildingBlueprint);
   if (!result.ok) {
     throw new Error(result.errors.join("; "));
   }
