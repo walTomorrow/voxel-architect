@@ -57,15 +57,26 @@ export default function Home() {
                 Open the interactive voxel demo: orbit, zoom, and inspect a
                 generated voxel structures in full view.
               </p>
-              <Link
-                href="/preview"
-                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-400/40 bg-gradient-to-b from-emerald-500/20 to-emerald-600/10 px-8 py-5 text-center text-lg font-semibold tracking-tight text-white shadow-lg shadow-emerald-950/30 ring-1 ring-emerald-500/20 transition hover:border-emerald-300/55 hover:from-emerald-500/28 hover:to-emerald-600/18 hover:ring-emerald-400/35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400/70 sm:py-6 sm:text-xl lg:py-7 lg:text-2xl"
-              >
-                View 3D preview
-                <span aria-hidden className="text-emerald-200/90">
-                  →
-                </span>
-              </Link>
+              <div className="flex flex-col gap-3 sm:flex-row sm:justify-center">
+                <Link
+                  href="/builder"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-400/40 bg-gradient-to-b from-emerald-500/20 to-emerald-600/10 px-8 py-5 text-center text-lg font-semibold tracking-tight text-white shadow-lg shadow-emerald-950/30 ring-1 ring-emerald-500/20 transition hover:border-emerald-300/55 hover:from-emerald-500/28 hover:to-emerald-600/18 hover:ring-emerald-400/35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400/70 sm:py-6 sm:text-xl lg:flex-1 lg:py-7 lg:text-2xl"
+                >
+                  Open Builder
+                  <span aria-hidden className="text-emerald-200/90">
+                    →
+                  </span>
+                </Link>
+                <Link
+                  href="/preview"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl border border-zinc-600/80 bg-zinc-900/50 px-8 py-5 text-center text-lg font-semibold tracking-tight text-zinc-200 ring-1 ring-zinc-700/60 transition hover:border-zinc-500 hover:bg-zinc-800/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400/70 sm:py-6 sm:text-xl lg:flex-1 lg:py-7 lg:text-2xl"
+                >
+                  View 3D preview
+                  <span aria-hidden className="text-zinc-400">
+                    →
+                  </span>
+                </Link>
+              </div>
             </div>
           </div>
         </header>
