@@ -12,7 +12,8 @@ The key idea is to show a **transparent agent activity panel** rather than expos
 
 - [`../../PLAN.md`](../../PLAN.md) — static `/builder` UI shell (layout, mock chat, preview)
 - [`GENERIC_BUILDING_V2.md`](GENERIC_BUILDING_V2.md) — component authoring model and planned v2 operations
-- [`../../CLOUDFLARE.md`](../../CLOUDFLARE.md) — future Cloudflare Pages / Workers / Agents infrastructure
+- [`../deployment/CLOUDFLARE.md`](../deployment/CLOUDFLARE.md) — future Cloudflare Pages / Workers / Agents infrastructure
+- [`../development/CHANGE.md`](../development/CHANGE.md) — task change reports
 
 ---
 
@@ -210,7 +211,7 @@ type BuilderStreamEvent =
   | { kind: "preview_updated"; blockCount: number };
 ```
 
-**Do not implement** streaming infrastructure in the first activity pass. This is for later alignment with [`CLOUDFLARE.md`](../../CLOUDFLARE.md).
+**Do not implement** streaming infrastructure in the first activity pass. This is for later alignment with [`CLOUDFLARE.md`](../deployment/CLOUDFLARE.md).
 
 ---
 
@@ -294,7 +295,7 @@ Emit the same checklist UI from actual pipeline hooks.
 
 ### Phase 3 — Cloudflare Agent integration
 
-Backend session, model calls, `BuilderStreamEvent` envelope, persistence — per [`CLOUDFLARE.md`](../../CLOUDFLARE.md). Out of scope until explicitly planned.
+Backend session, model calls, `BuilderStreamEvent` envelope, persistence — per [`CLOUDFLARE.md`](../deployment/CLOUDFLARE.md). Out of scope until explicitly planned.
 
 ### Phase 4 — Tool-based v2 refinement
 
