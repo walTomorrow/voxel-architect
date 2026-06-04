@@ -1,3 +1,104 @@
+# Change report — Planner routing & chat context fixes
+
+## Semantic routing refactor (2026-06-04)
+
+- **`auto` mode** classifies prompts: literal → deterministic; semantic/structural → LLM planner.
+- Deterministic mapper trimmed to explicit mechanical commands only; semantic band-aids removed.
+- Activity labels: `Semantic edit — using LLM planner`, `Rejected unsupported edit: …`.
+- See `docs/plans/BUILDER_PLANNER_SEMANTIC_ROUTING.md`.
+
+---
+
+## Branch
+
+`feature/builder-agent-tools`
+
+## Scope
+
+Post-QA fixes: broader refine gate (`give it a gabled roof`), design-feedback routing, structured planner rejection codes, hardened no-tool system prompt, compact build context on non-tool chat turns.
+
+## Behavior
+
+- **give it a gabled roof** → refine tool (deterministic gable match or LLM).
+- **what do you think of this design?** → stream chat with build summary; no tool.
+- **Failed planner** → activity shows `Rejected: CODE — detail`; export includes last rejection.
+- **Stream chat** with `activeBlueprint` → system prompt includes `[Current build context]`.
+- **Assistant** must not claim preview updated without `[Server builder tool result]`.
+
+## Files created
+
+- `src/lib/builder/plannerRejection.ts`
+- `src/lib/builder/augmentChatWithBuildContext.ts`
+- `src/lib/builder/__tests__/augmentChatWithBuildContext.test.ts`
+
+## Files updated
+
+- `src/lib/builder/shouldRunRefinementTool.ts`
+- `src/lib/builder/mapRefinementPromptToOperations.ts`
+- `src/lib/builder/validatePlannerOperations.ts`
+- `src/lib/builder/planAndRefineBuildingPreview.ts`
+- `src/lib/builder/planBlueprintOperationsWithLlm.ts`
+- `src/lib/builder/callWorkersAiJsonPlanner.ts`
+- `src/lib/builder/builderToolTypes.ts`
+- `src/lib/builder/builderSystemPrompt.ts`
+- `src/lib/builder/formatToolResultForModel.ts`
+- `src/lib/builder/callWorkersAiChat.ts`
+- `src/app/api/builder/chat/route.ts`
+- `src/lib/builder/formatBuilderConversationExport.ts`
+- `src/app/builder/mockBuilderData.ts`
+- `src/app/builder/BuilderClient.tsx`
+- `src/app/builder/components/BuilderWorkspace.tsx`
+- Tests: `shouldRunRefinementTool`, `validatePlannerOperations`, `mapRefinementPromptToOperations`, `planAndRefineBuildingPreview`
+
+---
+
+# Change report — LLM operation planner (hybrid refinement)
+
+## Branch
+
+`feature/builder-agent-tools` (planner extension)
+
+## Scope
+
+Hybrid refinement: deterministic phrase mapper first, then strict Workers AI JSON operation planner when the mapper misses. Planner may only emit `setMaterialPalette` and `updateComponent`; server validates all output before apply. No image-to-planner context in v1.
+
+## Behavior
+
+- **`plannerMode: "auto"`** (chat): try deterministic mapper → LLM planner on miss → apply → validate → generate.
+- **`POST /api/builder/refine`**: optional `plannerMode` — `auto` | `deterministic` | `llm`.
+- **Max 3 operations** per planner turn; unknown fields/IDs/materials rejected.
+- **Broadened refinement gate**: natural-language edits (e.g. “more rustic”) when `activeBlueprint` exists; casual chat excluded.
+- **Activity**: labels for deterministic vs LLM path (`plan-det`, `plan-llm`, `plan-reject`, etc.).
+- **Preview** updates only on `toolResult.ok` after validate + generate.
+
+## Files created (planner)
+
+- `src/lib/builder/plannerTypes.ts`
+- `src/lib/builder/summarizeBlueprintForPlanner.ts`
+- `src/lib/builder/buildAllowedOperationsSchema.ts`
+- `src/lib/builder/buildPlannerPrompt.ts`
+- `src/lib/builder/validatePlannerOperations.ts`
+- `src/lib/builder/callWorkersAiJsonPlanner.ts`
+- `src/lib/builder/planBlueprintOperationsWithLlm.ts`
+- `src/lib/builder/planAndRefineBuildingPreview.ts`
+- `src/lib/builder/__tests__/summarizeBlueprintForPlanner.test.ts`
+- `src/lib/builder/__tests__/validatePlannerOperations.test.ts`
+- `src/lib/builder/__tests__/planAndRefineBuildingPreview.test.ts`
+
+## Files updated (planner)
+
+- `src/lib/builder/runBuilderChatTurn.ts` — async `planAndRefineBuildingPreview` with `auto`
+- `src/lib/builder/refineBuildingPreview.ts` — thin wrapper (`deterministic` mode)
+- `src/app/api/builder/refine/route.ts` — `plannerMode` query body field
+- `src/lib/builder/shouldRunRefinementTool.ts` — `looksLikeEditRequest` + casual exclusions
+- `src/lib/builder/builderToolTypes.ts` — `plannerPath`, `rationaleSummary`
+- `src/lib/builder/formatToolResultForModel.ts` — `PLANNER_PATH`
+- `src/lib/builder/builderSystemPrompt.ts` — planner path guidance
+- `src/lib/builder/__tests__/shouldRunRefinementTool.test.ts`
+- `src/lib/builder/__tests__/refineBuildingPreview.test.ts`
+
+---
+
 # Change report — Builder v2 refinement layer
 
 ## Branch
@@ -14,7 +115,7 @@ Deterministic semantic edits on an active v2 blueprint: client stores full `acti
 - **Strong create** (e.g. “make me a workshop”) with an active blueprint: replaces build via existing generate path.
 - **Wider porch**: unsupported — clear error, preview unchanged.
 - **More windows**: front/primary `window_group` only.
-- **`POST /api/builder/refine`**: standalone debug endpoint; `/api/builder/chat` calls the same `refineBuildingPreview` in-process.
+- **`POST /api/builder/refine`**: standalone debug endpoint; chat uses `planAndRefineBuildingPreview` in-process.
 - **Normal chat**: SSE streaming unchanged.
 
 ## Files created (refinement)

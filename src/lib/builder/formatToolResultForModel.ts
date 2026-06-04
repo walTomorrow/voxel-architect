@@ -7,13 +7,22 @@ export function formatToolResultForModel(toolResult: BuilderToolResult): string 
   const kind = toolResult.toolKind === "refine" ? "refine" : "generate";
 
   if (!toolResult.ok) {
-    return [
+    const lines = [
       `TOOL_KIND: ${kind}`,
       "BUILDER_TOOL_STATUS: failed",
       `ERROR: ${toolResult.error ?? "Unknown error"}`,
       "PREVIEW_UPDATED: no",
-      "INSTRUCTION: Tell the user the preview was not updated. Do not claim you changed the building.",
-    ].join("\n");
+    ];
+    if (toolResult.rejectionCode) {
+      lines.push(`REJECTION_CODE: ${toolResult.rejectionCode}`);
+    }
+    if (toolResult.rejectionDetail) {
+      lines.push(`REJECTION_DETAIL: ${toolResult.rejectionDetail}`);
+    }
+    lines.push(
+      "INSTRUCTION: Tell the user the preview was not updated. Quote REJECTION_DETAIL when present. Do not claim you changed the building or imply partial success.",
+    );
+    return lines.join("\n");
   }
 
   const warnings =
@@ -24,9 +33,12 @@ export function formatToolResultForModel(toolResult: BuilderToolResult): string 
       ? toolResult.appliedOperations.join("; ")
       : "none";
 
+  const plannerPath = toolResult.plannerPath ?? "none";
+
   return [
     `TOOL_KIND: ${kind}`,
     "BUILDER_TOOL_STATUS: success",
+    `PLANNER_PATH: ${plannerPath}`,
     toolResult.presetLabel
       ? `PRESET: ${toolResult.presetLabel}`
       : `OPERATIONS: ${ops}`,

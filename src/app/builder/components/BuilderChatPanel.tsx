@@ -5,21 +5,25 @@ import {
   BuilderMessageBubble,
   type BuilderMessageView,
 } from "@/src/app/builder/components/BuilderMessage";
+import { BuilderChatDevMenu } from "@/src/app/builder/components/BuilderChatDevMenu";
 import {
   BuilderPromptInput,
   type PendingImageReference,
 } from "@/src/app/builder/components/BuilderPromptInput";
+import type { BuilderConversationExportMeta } from "@/src/lib/builder/formatBuilderConversationExport";
 
 type Props = {
   readonly messages: readonly BuilderMessageView[];
   readonly isLoading: boolean;
   readonly onSendMessage: (text: string, image: PendingImageReference | null) => void;
+  readonly exportMeta: BuilderConversationExportMeta;
 };
 
 export function BuilderChatPanel({
   messages,
   isLoading,
   onSendMessage,
+  exportMeta,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -31,10 +35,16 @@ export function BuilderChatPanel({
   return (
     <div className="flex h-full min-h-0 flex-col border-l border-zinc-800/90 bg-zinc-950/98">
       <div className="shrink-0 border-b border-zinc-800/90 px-4 py-3">
-        <h2 className="text-sm font-semibold text-zinc-200">Conversation</h2>
-        <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
-          Multimodal assistant — generate a building, then refine materials, size, roof, and windows.
-        </p>
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-semibold text-zinc-200">Conversation</h2>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
+              Multimodal assistant — generate a building, then refine materials, size, roof, and
+              windows.
+            </p>
+          </div>
+          <BuilderChatDevMenu messages={messages} exportMeta={exportMeta} />
+        </div>
       </div>
       <div
         ref={scrollRef}

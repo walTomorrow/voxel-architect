@@ -10,7 +10,7 @@ import type {
 } from "@/src/lib/builder/builderToolTypes";
 import { formatToolResultForModel } from "@/src/lib/builder/formatToolResultForModel";
 import { generateBuildingPreview } from "@/src/lib/builder/generateBuildingPreview";
-import { refineBuildingPreview } from "@/src/lib/builder/refineBuildingPreview";
+import { planAndRefineBuildingPreview } from "@/src/lib/builder/planAndRefineBuildingPreview";
 import { shouldRunGenerationTool } from "@/src/lib/builder/shouldRunGenerationTool";
 import {
   shouldRunRefinementTool,
@@ -130,6 +130,10 @@ export async function runBuilderRefinementChatTurn(
   | { ok: false; error: string; code: "CONFIG" | "UPSTREAM" | "LICENSE"; upstreamStatus?: number }
 > {
   const prompt = lastUserMessageText(messages);
-  const toolResult = refineBuildingPreview({ prompt, blueprint: currentBlueprint });
+  const toolResult = await planAndRefineBuildingPreview({
+    prompt,
+    blueprint: currentBlueprint,
+    plannerMode: "auto",
+  });
   return runToolChatTurn(messages, attachment, toolResult);
 }

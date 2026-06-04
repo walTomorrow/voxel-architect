@@ -1,659 +1,737 @@
-# Plan — Builder v2 refinement operations
+# Plan — LLM operation planner for v2 refinement
 
-**Branch:** `feature/builder-agent-tools` (continued)  
+> **Post-QA fix plan (routing, rejections, chat context):** see [docs/plans/BUILDER_PLANNER_ROUTING_FIX.md](docs/plans/BUILDER_PLANNER_ROUTING_FIX.md) — planning only, awaiting approval.
+
+**Branch:** `feature/builder-agent-tools`  
 **Status:** Planning only — **no implementation** until review.  
-**Prerequisite:** Preset-based `generate_building_preview` tool bridge is implemented and verified on this branch.
+**Prerequisite:** Preset generation bridge and deterministic refinement layer are implemented and verified on this branch.
 
 **Live app:** https://voxel-architect.wlc562.workers.dev/
-
-**Goal:** Extend the builder tool path from **“select v2 preset → generate”** to **“apply simple semantic edits to the current `GenericBuildingBlueprintV2` → validate → regenerate → update preview.”**
-
-Still **not** a full autonomous agent. Boundaries unchanged:
-
-| Layer | Responsibility |
-|-------|----------------|
-| **Server (code)** | Detect refine vs generate vs chat; map user text to typed operations; `applyBlueprintOperationsV2`; validate; generate blocks |
-| **LLM** | User-facing explanation only; summarizes compact tool result |
-| **Never** | Model authors blueprint JSON, edits `ComponentPlan`, outputs voxel coordinates, or claims preview update without `toolResult.ok` |
 
 ---
 
 ## 1. Summary
 
-After a successful generation (e.g. “Make me a stone workshop”), the preview shows the correct v2 preset build, but every follow-up that asks to **change** the current building still hits the **create** path or returns **“modify not available yet.”**
+This plan upgrades `/builder` refinement from **deterministic keyword mapping** to a **hybrid**: keep the existing fast mapper for exact commands, and add a **strict, schema-constrained LLM operation planner** for natural, stylistic, and ambiguous edit requests.
 
-This plan adds a **small, typed, testable operation system** on top of the existing pipeline:
+The AI/code boundary is unchanged:
+
+| Layer | Responsibility |
+|-------|----------------|
+| **LLM (planner)** | Propose **typed `BlueprintOperationV2[]` only**, from user request + compact blueprint summary + allowed schema |
+| **Server (code)** | Validate planner JSON; apply via `applyBlueprintOperationsV2`; `validateBlueprint`; `generateStructure`; decide preview update |
+| **LLM (chat)** | User-facing explanation only; summarizes compact tool result after server work |
+| **Never** | Model authors full blueprints, edits `ComponentPlan`, outputs voxel coordinates, or claims preview update without `toolResult.ok` |
+
+Target pipeline:
 
 ```text
-current GenericBuildingBlueprintV2 (in memory)
-  + user refinement request (deterministic parse)
-  → BlueprintOperationV2[] (server-produced)
-  → applyBlueprintOperationsV2()
-  → validateBlueprint()
-  → generateStructure()
-  → toolResult + preview update + activity log
+user request
++ compact blueprint summary (code-generated)
++ allowed operation schema (code-generated)
+→ LLM proposes strict JSON operations (when deterministic mapper does not match)
+→ server validates operation JSON
+→ applyBlueprintOperationsV2
+→ validateBlueprint
+→ generateStructure
+→ preview update (client)
+→ assistant summarizes actual result
 ```
 
-**Recommended strategy:** **Option A** — deterministic rule-based operation mapper first. **No** LLM JSON planner in this step. Add Option B only after `applyOperations` and validation integration are stable and tested.
+This is **not** a full autonomous agent. No Cloudflare Agents, D1/R2 persistence, AI Gateway, canonical screenshots, interiors, region selection, or LLM full-blueprint generation in this step.
 
 ---
 
 ## 2. Current status audit
 
-### 2.1 Builder tool files (this branch)
+### 2.1 What exists — generation bridge
 
-| File | Role |
-|------|------|
-| `src/lib/builder/builderToolTypes.ts` | `GenerateBuildingPreviewRequest/Result`, activity types |
-| `src/lib/builder/generateBuildingPreview.ts` | Preset clone → validate → generate |
-| `src/lib/builder/resolvePresetFromPrompt.ts` | Keyword → `simple_cabin_v2` \| `stone_workshop_v2` \| `porch_house_v2` |
-| `src/lib/builder/shouldRunGenerationTool.ts` | Generation verb gate; image-only excluded |
-| `src/lib/builder/runBuilderChatTurn.ts` | `runBuilderGenerationChatTurn` + `shouldUseGenerationJsonTurn` |
-| `src/lib/builder/formatToolResultForModel.ts` | Injects tool summary for Workers AI |
-| `src/lib/builder/builderActivityFromTool.ts` | Activity steps from tool result |
-| `src/lib/blueprints/clonePresetBlueprint.ts` | `clonePresetBlueprintV2` |
-| `src/app/api/builder/generate/route.ts` | Standalone preset tool POST |
-| `src/lib/builder/__tests__/*` | Preset tool + classifier tests |
+| Piece | Location | Notes |
+|-------|----------|-------|
+| Intent gate | `shouldRunGenerationTool.ts` | Generation verbs; image-only stays chat-only |
+| Preset resolver | `resolvePresetFromPrompt.ts` | Keywords → `simple_cabin_v2`, `stone_workshop_v2`, `porch_house_v2` |
+| Tool | `generateBuildingPreview.ts` | Clone preset → validate → generate; returns `toolKind: "generate"` |
+| Standalone API | `POST /api/builder/generate` | Debug/direct tool access |
+| Chat orchestration | `runBuilderGenerationChatTurn` | Tool then Workers AI summary |
+| Strong create override | `shouldStrongCreatePrompt` | “Make me a workshop” replaces active build via generate |
 
-### 2.2 What already works
+### 2.2 What exists — deterministic refinement
 
-- **`POST /api/builder/chat`**
-  - **Generation intent** → non-streaming JSON `{ message, model, toolResult }` (`X-Builder-Chat-Mode: json`, `X-Builder-Tool-Ran: true`)
-  - **Normal text** → SSE streaming (unchanged)
-  - **Image-only** (no build verbs) → JSON chat, no tool
-- **`generateBuildingPreview`**
-  - Modes: `create_from_prompt` / `select_preset` (same path), `modify_current` → **hard fail** with friendly message
-  - Always starts from **fresh v2 preset clone**, not from an edited blueprint
-- **Client (`BuilderClient`)**
-  - On `toolResult.ok`: stores `generatedStructure` (blocks), `presetId`, `status: preview_ready`, validation warnings
-  - Preview uses `generatedStructure` when present; else default v2 preset render
-  - Header: “Not saved after refresh”
-- **v2 stack in `src/`** (not docs-only): types, validator, resolver, generator, 3 presets, tests
+| Piece | Location | Notes |
+|-------|----------|-------|
+| Refinement gate | `shouldRunRefinementTool.ts` | Requires `activeBlueprint` + `REFINE_VERBS` regex; defers strong-create |
+| Phrase mapper | `mapRefinementPromptToOperations.ts` | ~370 lines of regex → `BlueprintOperationV2[]` |
+| Apply layer | `applyBlueprintOperationsV2.ts` | Pure apply + clamp; uses `structuredClone` |
+| Component index | `blueprintComponentIndex.ts` | Find room, roof, porch, chimney, front windows |
+| Refine tool | `refineBuildingPreview.ts` | **Sync**; mapper-only; validate → generate |
+| Standalone API | `POST /api/builder/refine` | `{ prompt, blueprint }` → `{ toolResult }` |
+| Chat orchestration | `runBuilderRefinementChatTurn` | Refine tool then Workers AI summary |
+| Blueprint parse | `parseCurrentBlueprint.ts` | Structural checks on incoming JSON |
+| Request body | `validateChatRequest.ts` | Parses `currentBlueprint` on chat POST |
 
-### 2.3 Critical gap for refinement
+### 2.3 Operation types (`blueprintOperationsV2.ts`)
 
-| Stored today | Needed for refine |
-|--------------|-------------------|
-| `generatedStructure` (blocks only) | Yes for preview |
-| `presetId` | Label only |
-| **`activeBlueprint` JSON** | **Missing** — tool returns `blueprint` in `toolResult` but **client does not persist it** |
+**Allowed op kinds today:**
 
-Without persisting and resending the blueprint, refinement would incorrectly re-clone a preset or have nothing to edit.
+- `setMaterialPalette` — partial palette patch
+- `updateComponent` — typed component patch
+- `setMaterialOverride` — per-component materials (**implemented in apply, not used by mapper**)
 
-### 2.4 v2 blueprint shape (authoring)
+**Supported component patches (apply layer):**
 
-Defined in `src/lib/blueprints/types/genericBuildingV2.ts`:
+| Component | Patch fields | Clamps (apply) |
+|-----------|--------------|----------------|
+| `room` | `width`, `depth`, `wallHeight` | 5–17, 5–13, 4–9 |
+| `roof` | `kind`, `layers`, `overhang`, `orientation` | layers 1–3 |
+| `window_group` | `count`, `layout` | count 0–12 |
+| `porch` | `depth` only | depth 1–8 |
+| `chimney` | `targetFace`, `placementHorizontal` | — |
 
-- **Root:** `structureType`, `schemaVersion: 2`, `metadata`, `materials` (full palette), `constraints`, `components[]`
-- **Component types:** `room`, `roof`, `door`, `window_group`, `porch`, `chimney`, `step`
-- **Attachments:** `SurfaceAttachment` (`targetSurface` + optional `placement.horizontal`), `DoorAttachment`
+**Not supported in patches:** door dimensions, porch width, add/remove components, metadata/constraints edits.
 
-**Preset component IDs (stable across presets):**
+**Deterministic mapper coverage (examples):**
 
-| Preset | Notable ids |
-|--------|-------------|
-| `simple_cabin_v2` | `main-room`, `main-roof`, `front-door`, `front-windows`, `chimney`, `front-step` |
-| `stone_workshop_v2` | `main-room`, `main-roof`, `front-door`, `front-windows`, `left-windows` (no porch/chimney) |
-| `porch_house_v2` | `main-room`, `main-roof`, `front-door`, `front-windows`, `front-porch`, `front-step` |
+- Materials: stone/brick/wood walls, dark wood/slate roof, glass windows, wooden building
+- Room: wider/narrower/deeper/shallower/taller/shorter/larger/smaller
+- Roof: shed/gable, steeper/flatter (layers)
+- Windows: more/fewer on **front primary** `window_group` only
+- Porch: **deeper only**; **wider explicitly rejected**
+- Chimney: left/right/back placement
 
-Refinement mapper must **resolve components by id/type** on the **current** blueprint, not assume every preset has a porch or chimney.
+**Known mapper gaps (observed in use):**
 
-### 2.5 Validation limits (use for clamping in `applyOperations`)
+- “make the roof into wood” — no match (requires adjacent phrase like `wood roof` or `roof dark wood`)
+- Stylistic/semantic requests — no match at all
 
-From `validateGenericBuildingV2.ts` (representative):
+### 2.4 Chat route orchestration (`/api/builder/chat`)
 
-| Field | Range / rules |
-|-------|----------------|
-| `room.width` | 5–17 |
-| `room.depth` | 5–13 |
-| `room.wallHeight` | 4–9 |
-| `roof.kind` | `pitched_gable` \| `shed` \| `none` |
-| `roof.layers` | 1–3 (clamped) |
-| `window_group.count` | 0–12 (façade capacity checks) |
-| `porch.depth` | 1–8 |
-| `attach.placement.horizontal` | `left` \| `center` \| `right` |
-| Materials | Must be valid classic pack local keys |
+Order today:
 
-### 2.6 `modify_current` today
+1. `shouldUseRefinementJsonTurn` + `currentBlueprint` → `runBuilderRefinementChatTurn`
+2. `shouldUseGenerationJsonTurn` → `runBuilderGenerationChatTurn`
+3. Image or text → stream / sync chat
 
-`generateBuildingPreview({ mode: "modify_current" })` returns `ok: false` immediately. No blueprint input accepted.
+Headers: `X-Builder-Tool-Kind: refine | generate`, `X-Builder-Chat-Mode: json | stream`.
 
----
+### 2.5 Client state
 
-## 3. Recommended next scope
+| State | Location | Notes |
+|-------|----------|-------|
+| `activeBlueprint` | `mockBuilderData.ts`, `BuilderClient.tsx` | Full v2 JSON; in-memory; cleared on reset |
+| `generatedStructure` | same | Voxel blocks for preview |
+| POST body | `BuilderClient.tsx` | Sends `currentBlueprint` on chat |
+| Tool UX | `BuilderClient.tsx` | Uses `shouldRunRefinementTool` + `shouldStrongCreatePrompt` for loading state |
 
-### Options
+Preview updates **only** when `toolResult.ok && toolResult.blocks.length > 0`.
 
-| Option | Description | Speed | Risk | Demo value |
-|--------|-------------|-------|------|------------|
-| **A** | Deterministic text → operations | Fastest | Lowest | Good for scripted demos |
-| **B** | LLM strict JSON → operations | Slower | Parse/schema failures, model drift | Broader phrasing |
-| **C** | Hybrid rules + LLM fallback | Medium | Medium | Best long-term, more scope |
+### 2.6 Tool result / activity flow
 
-### Recommendation: **Option A only** (this step)
+| Piece | Role |
+|-------|------|
+| `BuilderToolResult` | Unified generate/refine result; `appliedOperations`, `activityEvents` |
+| `formatToolResultForModel.ts` | Injects `[Server builder tool result]` for summary LLM |
+| `builderActivityFromTool.ts` | Maps tool events to activity card steps |
+| `builderSystemPrompt.ts` | Rules for generate vs refine summaries |
 
-- Implement **`applyBlueprintOperationsV2`** + tests first.
-- Implement **`mapRefinementPromptToOperations`** (deterministic) with an explicit **supported / unsupported** matrix.
-- LLM continues to **summarize** tool results only (extend `formatToolResultForModel` with refinement fields).
-- **Defer** LLM operation planner to a follow-up after 3–5 edit types work end-to-end.
+Refine activity today: parsed → blueprint → planned (deterministic label) → apply → validate → generate → preview.
 
-**Explicit non-goals for this step:** `addComponent`, `removeComponent`, remove porch, multiple rooms, free-form LLM blueprint patches.
+### 2.7 Workers AI helpers
 
----
+| Piece | Notes |
+|-------|-------|
+| `callWorkersAiChat.ts` | Sync + stream; default `@cf/meta/llama-3.2-11b-vision-instruct`; `max_tokens: 1024` |
+| Vision | Image passed as base64 on sync path |
+| Config | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `WORKERS_AI_MODEL` |
 
-## 4. Operation model
+No dedicated JSON planner call exists. Chat and tool-summary share the same model and system prompt.
 
-New module: `src/lib/builder/blueprintOperationsV2.ts` (types + apply).
+### 2.8 Tests (builder)
 
-### 4.1 Operation union (refined from repo types)
+Included in `vitest.config.ts` under `src/lib/builder/__tests__/`:
 
-Use **typed patches**, not `Record<string, unknown>`:
+- `shouldRunGenerationTool.test.ts`
+- `resolvePresetFromPrompt.test.ts`
+- `generateBuildingPreview.test.ts`
+- `shouldRunRefinementTool.test.ts`
+- `mapRefinementPromptToOperations.test.ts`
+- `applyBlueprintOperationsV2.test.ts`
+- `refineBuildingPreview.test.ts`
 
-```ts
-import type {
-  GenericBuildingBlueprintV2,
-  GenericBuildingComponentTypeV2,
-  RoofKindV2,
-  RoomFace,
-} from "@/src/lib/blueprints/types/genericBuildingV2";
-import type {
-  BlueprintMaterialPalette,
-  ComponentMaterialOverride,
-} from "@/src/lib/blueprints/types/materials";
+**165 tests** pass in `pnpm test:generator` (including builder). `pnpm exec tsc --noEmit` and `pnpm run build` pass.
 
-export type BlueprintOperationV2 =
-  | {
-      op: "updateComponent";
-      id: string;
-      componentType: GenericBuildingComponentTypeV2;
-      patch: ComponentPatchV2;
-    }
-  | {
-      op: "setMaterialPalette";
-      patch: Partial<BlueprintMaterialPalette>;
-    }
-  | {
-      op: "setMaterialOverride";
-      id: string;
-      materials: ComponentMaterialOverride;
-    };
+### 2.9 What is still missing
 
-/** Discriminated per-type allowed fields only. */
-export type ComponentPatchV2 =
-  | { type: "room"; width?: number; depth?: number; wallHeight?: number }
-  | {
-      type: "roof";
-      kind?: RoofKindV2;
-      layers?: number;
-      overhang?: number;
-      orientation?: "front_back" | "left_right";
-    }
-  | { type: "window_group"; count?: number; layout?: "symmetric" | "even" }
-  | { type: "porch"; depth?: number; widthMode?: "door_only" | "full_facade" }
-  | {
-      type: "chimney";
-      placementHorizontal?: "left" | "center" | "right";
-      targetFace?: RoomFace; // only non-front faces allowed by validator
-    }
-  | { type: "door"; width?: number; height?: number };
-  // door/step patches optional in v1 of refine — defer unless easy
-```
-
-**Deferred ops:** `addComponent`, `removeComponent`, raw coordinate ops, metadata-only edits.
-
-### 4.2 Apply result
-
-```ts
-export type ApplyOperationsResult =
-  | { ok: true; blueprint: GenericBuildingBlueprintV2; appliedLabels: string[] }
-  | {
-      ok: false;
-      error: string;
-      code:
-        | "UNKNOWN_COMPONENT"
-        | "TYPE_MISMATCH"
-        | "UNSUPPORTED_FIELD"
-        | "INVALID_VALUE";
-    };
-```
-
-### 4.3 Pure function contract
-
-```ts
-export function applyBlueprintOperationsV2(
-  blueprint: GenericBuildingBlueprintV2,
-  operations: readonly BlueprintOperationV2[],
-): ApplyOperationsResult;
-```
-
-Rules:
-
-- `structuredClone` input; never mutate argument
-- Match `id` + `componentType` on each op
-- Clamp numeric fields to validator ranges **before** apply (or reject with `INVALID_VALUE`)
-- Reject unknown ids / wrong types / forbidden fields (e.g. porch on workshop preset)
-- **Never** accept `ComponentPlan` or `VoxelBlock[]`
+- Blueprint summary helper for planner context
+- LLM operation planner (prompt, call, parse)
+- Strict planner output validator (separate from apply)
+- Hybrid routing (deterministic vs LLM)
+- Broadened refinement entry gate for natural language (see §9)
+- Async refine pipeline (planner requires network)
+- `plannerMode` on refine API
+- Activity events for planner path / failures
+- Planner-specific system prompt (separate from chat prompt)
+- Mocked planner tests
+- Image context summary fed into planner (deferred by default)
+- `setMaterialOverride` in planner allowlist (deferred)
 
 ---
 
-## 5. Allowed first refinements (deterministic mapper)
+## 3. Why deterministic mapping is insufficient
 
-Mapper: `mapRefinementPromptToOperations(prompt, blueprint) → { ok, operations } | { ok: false, reason }`.
+The keyword mapper is valuable for **speed, predictability, and zero extra API cost** on exact commands (“make it taller”, “add more windows”). It is the wrong long-term strategy for **language diversity**.
 
-Helper: `src/lib/builder/blueprintComponentIndex.ts` — `findRoom`, `findRoof`, `findWindowGroups`, `findPorch`, `findChimney` on current blueprint.
+**Examples the mapper cannot handle well (and regex expansion would not scale):**
 
-### 5.1 Materials (palette — `setMaterialPalette`)
+| User request | Why mapper fails |
+|--------------|------------------|
+| “make it feel more medieval” | Style → multiple material/roof/dimension choices; no single regex |
+| “make it look more like the image” | Requires image semantics → typed ops |
+| “make the facade more welcoming” | Subjective → larger door/windows/material warmth |
+| “make the windows more balanced” | May mean count, symmetry layout, or spacing — context-dependent |
+| “make it less squat” | Implies taller walls and/or fewer layers — composite edit |
+| “make the roof dominate the silhouette” | Layers + height + maybe overhang |
+| “make it more rustic” | Palette + maybe roof kind |
+| “make the workshop look sturdier” | Stone walls, lower/wider proportions |
+| “make it brighter” | Glass/windows/light materials — ambiguous |
+| “more like a cabin but keep the stone walls” | Constraint + style blend |
 
-| User phrasing (examples) | Operation |
-|--------------------------|-----------|
-| “stone walls”, “more stone” | `materials.wall` → `cobblestone` or `limestone_bricks` |
-| “wooden”, “wood roof” | `materials.roof` → `oak_planks` |
-| “dark wood roof” | `materials.roof` → `oak_planks` (document as approximate) |
-| “glass windows” | `materials.window` → `glass` |
-| “slate roof” | `materials.roof` → `slate_tiles` |
-
-Use allowlist from `CLASSIC_BLOCK_PACK` / `CLASSIC_MATERIAL_KEYS` (same as generic-lab).
-
-### 5.2 Room dimensions (`updateComponent` on `main-room`)
-
-| Phrasing | Patch |
-|----------|--------|
-| “wider” / “make it wider” | `width += 1` (clamp max 17) |
-| “narrower” | `width -= 1` |
-| “deeper” | `depth += 1` (max 13) |
-| “shallower” | `depth -= 1` |
-| “taller” / “higher” | `wallHeight += 1` (max 9) |
-| “shorter” | `wallHeight -= 1` |
-| “larger” / “bigger” | `width += 1; depth += 1` |
-| “smaller” | `width -= 1; depth -= 1` |
-
-### 5.3 Roof (`updateComponent` on roof where `targetRoom === main-room`)
-
-| Phrasing | Patch |
-|----------|--------|
-| “steeper roof” / “more layers” | `layers += 1` (max 3) |
-| “flatter roof” / “fewer layers” | `layers -= 1` (min 1 unless kind none) |
-| “shed roof” | `kind: "shed"` (+ default `orientation` if missing) |
-| “gable roof” / “pitched roof” | `kind: "pitched_gable"` |
-
-### 5.4 Windows (`updateComponent` on first/front `window_group` or all groups — start with **front** only)
-
-| Phrasing | Patch |
-|----------|--------|
-| “more windows” / “add windows” | `count += 1` (max 12, façade check deferred to validator) |
-| “fewer windows” | `count -= 1` (min 0) |
-
-### 5.5 Porch (`front-porch` if present)
-
-| Phrasing | Patch |
-|----------|--------|
-| “wider porch” | **Unsupported** in v1 (no width field; only `depth`, `widthMode`) — return friendly message |
-| “deeper porch” / “extend porch” | `depth += 1` (max 8) |
-
-### 5.6 Chimney (if `chimney` component exists)
-
-| Phrasing | Patch |
-|----------|--------|
-| “move chimney left/right” | `attach.placement.horizontal` on chimney |
-| “move chimney to the back” | change `targetSurface` to `main-room.back` (validator disallows front) |
-
-### 5.7 Unsupported (explicit)
-
-- Remove porch / remove chimney / add porch
-- “move the door” (attachment surface changes — defer)
-- Arbitrary component creation
-- Raw voxel / coordinate language
-
-Return `ok: false` with **preview unchanged** and clear assistant summary template.
+Adding regex for each phrasing creates **fragile, overlapping rules** and still misses paraphrases. The LLM should **interpret intent** into **already-supported operations**; the server must **enforce** the schema.
 
 ---
 
-## 6. Current blueprint state (client + API)
+## 4. Recommended next scope
 
-### 6.1 Client (`BuilderChat`)
+### Option A — Keep expanding deterministic mapper
 
-Extend `src/app/builder/mockBuilderData.ts`:
+**Pros:** No extra Workers AI call; fully testable; fast.  
+**Cons:** Does not solve natural/stylistic/image-inspired edits; maintenance burden grows without bound.
 
-```ts
-readonly activeBlueprint: GenericBuildingBlueprintV2 | null;
-```
+### Option B — Replace mapper with LLM planner only
 
-**On successful generate/refine `toolResult`:**
+**Pros:** Maximum flexibility.  
+**Cons:** Slower; costs another API call on every edit; regresses reliability on exact commands; harder to debug.
 
-- Set `activeBlueprint` from `toolResult.blueprint` (structured clone on client)
-- Keep `generatedStructure`, `presetId`, `preview_ready`
+### Option C — Hybrid (recommended)
 
-**On reset / new chat:**
+**Pros:** Best of both: fast path for known commands; LLM for everything else; server validates all ops either way.  
+**Cons:** Two planning paths to maintain; need clear routing and activity labeling.
 
-- Clear `activeBlueprint` and `generatedStructure`
-
-**UI copy:** Keep “Not saved after refresh” (already present).
-
-### 6.2 API request body
-
-Extend `BuilderChatRequestBody` in `builderChatTypes.ts`:
-
-```ts
-readonly currentBlueprint?: GenericBuildingBlueprintV2 | null;
-```
-
-Validate server-side:
-
-- `schemaVersion === 2`, `structureType === generic_building`
-- Reasonable size cap (reuse chat body limit)
-- Strip unknown top-level keys if needed
-
-`POST /api/builder/refine` body:
-
-```ts
-{ prompt: string; blueprint: GenericBuildingBlueprintV2 }
-```
-
-### 6.3 Server flow
-
-Never refine from preset id alone when `currentBlueprint` is provided. Clone blueprint server-side before apply.
-
----
-
-## 7. Operation application + generation
-
-New tool: `refineBuildingPreview` in `src/lib/builder/refineBuildingPreview.ts`:
+**Recommendation: Option C**, aligned with branch direction and user preference.
 
 ```text
-blueprint in
-  → mapRefinementPromptToOperations
-  → if unsupported: fail early
-  → applyBlueprintOperationsV2
-  → validateBlueprint (v2)
-  → if !ok: fail with validation errors
-  → generateStructure(normalized)
-  → return GenerateBuildingPreviewResult (reuse type; add toolKind?: "generate" | "refine")
+refinement request + activeBlueprint
+  → try deterministic mapper (confident match)
+  → else LLM operation planner
+  → validate planner JSON
+  → apply → validate blueprint → generate
+  → on total failure: friendly limitation, preview unchanged
 ```
-
-Reuse `GenerateBuildingPreviewResult`; optional field `toolKind: "refine"` and `appliedOperations?: string[]` for activity/model context.
-
-**Do not skip validation** after apply.
 
 ---
 
-## 8. Refinement request handling (server routing)
+## 5. Operation planner contract
 
-New: `src/lib/builder/shouldRunRefinementTool.ts`
+### 5.1 Server-side function
 
 ```ts
-export function shouldRunRefinementTool(
-  userText: string,
-  hasActiveBlueprint: boolean,
-  hasImageAttachment: boolean,
-): boolean;
+planBlueprintOperationsWithLlm(input: {
+  userRequest: string;
+  blueprintSummary: BlueprintPlannerSummary; // structured + renderable text
+  allowedOperations: AllowedOperationsSchema; // derived from blueprint + apply caps
+  imageContextSummary?: string; // Phase 2 optional
+}): Promise<PlannerResult>;
 ```
 
-**Rules (deterministic, order matters in orchestrator):**
-
-1. If **no** `activeBlueprint` / `currentBlueprint` → refinement **off** (assistant can say “generate a building first”).
-2. If image-only without refinement verbs → **off** (chat-only).
-3. If text matches **new-building** preset intent (`workshop`, `cottage`, `make me a …`) **and** strong **create** phrasing → **generate** path (fresh preset), not refine.
-4. If text matches **refinement** patterns (`wider`, `taller`, `change`, `switch`, `more windows`, `dark wood`, `move chimney`, `make the roof`, `make it`) **and** blueprint exists → **refine**.
-5. Else → normal chat stream.
-
-Refinement patterns (separate from `shouldRunGenerationTool`):
+### 5.2 Planner output shape
 
 ```ts
-const REFINE_VERBS = /\b(change|switch|move|wider|narrower|deeper|taller|shorter|steeper|flatter|more|fewer|add|use|make it|make the)\b/i;
+type PlannerResult =
+  | {
+      ok: true;
+      operations: BlueprintOperationV2[];
+      rationaleSummary: string; // short, for activity + tool result
+    }
+  | {
+      ok: false;
+      unsupportedReason: string;
+    };
 ```
 
-Orchestrator in `runBuilderChatTurn.ts`:
+### 5.3 Raw model response shape (before server validation)
+
+Use a **single JSON object** with no markdown fences:
+
+```json
+{
+  "status": "ok",
+  "operations": [ /* BlueprintOperationV2[] */ ],
+  "rationaleSummary": "Raised walls and switched roof to slate for a taller profile."
+}
+```
+
+Or on failure:
+
+```json
+{
+  "status": "unsupported",
+  "unsupportedReason": "Cannot add a second room with current operation set."
+}
+```
+
+### 5.4 Hard rules
+
+- Planner returns **JSON only** — no prose outside the object.
+- No raw voxels, `ComponentPlan`, full blueprint, or metadata/constraints edits.
+- Component IDs must come from the provided summary allowlist.
+- Operation types must be whitelisted (`setMaterialPalette`, `updateComponent` initially).
+- Server **never** applies planner output without passing `validatePlannerOperations()`.
+
+---
+
+## 6. Blueprint summary design
+
+Do **not** send full raw blueprint JSON as primary planner context (token cost, distraction, temptation to emit full JSON).
+
+### 6.1 Helper
 
 ```ts
-if (shouldRunRefinementTool(...)) return runBuilderRefinementChatTurn(...)
-else if (shouldUseGenerationJsonTurn(...)) return runBuilderGenerationChatTurn(...)
-else stream
+summarizeBlueprintForPlanner(
+  blueprint: GenericBuildingBlueprintV2,
+  options?: { presetId?: string },
+): BlueprintPlannerSummary;
 ```
 
+### 6.2 Structured type (internal)
+
+```ts
+type BlueprintPlannerSummary = {
+  schemaVersion: 2;
+  presetSource?: string; // from metadata.name or client presetId if passed
+  materials: Record<string, string>;
+  constraints: { maxBlockCount: number };
+  components: Array<{
+    id: string;
+    type: string;
+    label?: string;
+    // type-specific compact fields
+  }>;
+};
+```
+
+### 6.3 Text rendering (planner prompt)
+
+```text
+Current build:
+- schemaVersion: 2
+- source: stone_workshop_v2
+- components:
+  - room main-room: width 13, depth 9, wallHeight 5
+  - roof main-roof: kind shed, layers 2, orientation front_back
+  - door front-door: surface main-room.front, width 2, height 2
+  - window_group front-windows: count 2, surface main-room.front, layout symmetric
+  - chimney chimney: surface main-room.back, horizontal center
+- materials:
+  - wall cobblestone
+  - roof oak_planks
+  - window glass
+  - door oak_planks
+- constraints:
+  - maxBlockCount 80000
+```
+
+Implementation notes:
+
+- Generate from `GenericBuildingBlueprintV2` via `blueprintComponentIndex` + component-type formatters.
+- Include **every component id** present (planner allowlist).
+- Include attach surfaces for doors/windows/chimney.
+- Omit voxels, ComponentPlan, generator internals.
+
 ---
 
-## 9. LLM involvement
+## 7. Allowed operation schema
 
-**This phase:**
+Planner allowlist must mirror **`applyBlueprintOperationsV2`** — no new op types in v1.
 
-- LLM **does not** produce `BlueprintOperationV2[]`.
-- Deterministic mapper is the **only** operation author.
-- LLM receives updated `formatToolResultForModel` including:
-  - `TOOL_KIND: refine`
-  - `OPERATIONS_APPLIED: ...`
-  - `PREVIEW_UPDATED: yes|no`
-- System prompt addition: on refine success, describe **specific** change (material/roof/size), not “rebuilt from scratch.”
+### 7.1 Included in v1 planner
 
-**If unsupported mapper result:**
+| Op | Notes |
+|----|-------|
+| `setMaterialPalette` | Keys: `wall`, `floor`, `roof`, `window`, `door`, `accent` |
+| `updateComponent` | Patches listed in §2.3 |
 
-- Still call LLM with `PREVIEW_UPDATED: no` and `UNSUPPORTED_REASON: ...` so the assistant explains limitation honestly.
+### 7.2 Excluded from v1 planner
 
-**Future (not this step):** Option B strict JSON planner behind feature flag, with schema validation and whitelist — only after Option A tests pass.
+| Op / edit | Reason |
+|-----------|--------|
+| `setMaterialOverride` | Implemented but untested in mapper; skip until explicitly tested |
+| Add/remove components | Out of scope |
+| Porch width | Not in patch type; mapper rejects “wider porch” |
+| Door dimension patches | Not in `ComponentPatchV2` |
+| Metadata / constraints | Not in operation system |
 
----
+### 7.3 Schema payload for planner prompt
 
-## 10. API design
+Code-generated appendix:
 
-| Endpoint | Role |
-|----------|------|
-| `POST /api/builder/chat` | Add refinement branch; accept optional `currentBlueprint` |
-| `POST /api/builder/generate` | Unchanged (preset create) |
-| **`POST /api/builder/refine`** | **New** — `{ prompt, blueprint }` → `{ toolResult }` for tests/debug |
-
-Shared libs:
-
-- `refineBuildingPreview()`
-- `runBuilderRefinementChatTurn()` (refine + Workers AI + JSON response)
-
-Chat route calls **in-process** refine function (no self-HTTP).
-
-**Response:** Same JSON shape as generation turn: `{ message, model, toolResult }`, non-streaming.
+- **Component allowlist:** `{ id, type }[]` from summary
+- **Material keys:** `CLASSIC_MATERIAL_KEYS` from `genericLabUtils.ts`
+- **Roof kinds:** `pitched_gable`, `shed`, `none` (from v2 types)
+- **Numeric ranges:** same as apply clamps (§2.3)
+- **Unsupported list:** add/remove components, porch width, door resize, full blueprint rewrite, voxels
 
 ---
 
-## 11. UI integration (minimal)
+## 8. Planner validation
+
+New module: `validatePlannerOperations.ts` (name TBD).
+
+### 8.1 Checks (before apply)
+
+| Check | Action on fail |
+|-------|----------------|
+| JSON parses | Reject; optional one repair retry (§11) |
+| Top-level shape: `status`, `operations` or `unsupportedReason` | Reject |
+| `status: "unsupported"` | Return friendly limitation; no apply |
+| `operations` is array, length 1–**MAX_OPS** (default **3**) | Reject |
+| Each `op` whitelisted | Reject |
+| No unknown top-level or op-level keys | Reject (strict) |
+| `updateComponent.id` exists in blueprint | Reject |
+| `componentType` matches actual component | Reject |
+| Patch `type` matches component type | Reject |
+| Patch fields ⊆ allowed fields for type | Reject |
+| Material values ∈ `CLASSIC_MATERIAL_KEYS` | Reject |
+| Numeric values finite; optionally pre-clamp or reject out-of-range | Prefer **reject** if far out of range; apply layer clamps if within generous bounds |
+
+### 8.2 On validation failure
+
+- Do **not** apply operations.
+- Do **not** update preview.
+- Return `toolResult.ok: false` with clear error.
+- Activity: “Planner output invalid” or “Rejected unsupported edit”.
+- **Do not** fall back to deterministic mapper after invalid LLM JSON (unsafe). Fallback only when mapper simply did not match (see §9).
+
+---
+
+## 9. Integration with deterministic mapper
+
+### 9.1 Recommended routing (`plannerMode: "auto"`)
+
+```text
+1. Parse refinement request
+2. Build blueprint summary
+3. If plannerMode === "deterministic" → mapper only
+4. If plannerMode === "llm" → planner only (debug)
+5. If plannerMode === "auto":
+   a. Try mapRefinementPromptToOperations
+   b. If ok → use operations (activity: "Matched deterministic edit")
+   c. Else → planBlueprintOperationsWithLlm
+   d. If planner ok → validate → use (activity: "Planned semantic edit with LLM")
+   e. Else → fail (activity: "Rejected unsupported edit")
+6. applyBlueprintOperationsV2 → validateBlueprint → generateStructure
+7. Workers AI chat summary (unchanged)
+```
+
+**Do not** always call planner first — preserves speed and deterministic test coverage.
+
+### 9.2 Refinement entry gate (required change)
+
+Today `shouldRunRefinementTool` requires `REFINE_VERBS`, so requests like “make it feel more medieval” **never enter the refine path** — they fall through to streaming chat and the LLM hallucinates edits.
+
+**Plan:** Broaden gate when `activeBlueprint` exists:
+
+- Enter refinement JSON turn if: **not** strong-create **and** (`REFINE_VERBS` **or** `looksLikeEditRequest(text)`).
+- `looksLikeEditRequest`: lightweight heuristic — e.g. imperative mood, comparative adjectives (`more`, `less`, `-er`), style adjectives (`rustic`, `medieval`, `sturdy`), or reference to building parts (`roof`, `walls`, `windows`, `facade`, `porch`, `chimney`, `door`).
+- Still **exclude** pure conversation (“what do you think?”, “thanks”, “hello”) via negative patterns or short-message allowlist.
+
+Document and test the gate carefully — false positives trigger unnecessary planner calls; false negatives skip the tool.
+
+### 9.3 Activity path labels
+
+| Event id | Label |
+|----------|-------|
+| `plan-det` | Matched deterministic edit |
+| `plan-llm` | Planned semantic edit with LLM |
+| `plan-reject` | Rejected unsupported edit |
+| `plan-invalid` | Planner output invalid |
+
+---
+
+## 10. API and orchestration
+
+### 10.1 `refineBuildingPreview` → async pipeline
+
+Current function is **synchronous**. Planner requires async.
+
+**Recommended:** extract shared pipeline and add:
+
+```ts
+async function planAndRefineBuildingPreview(
+  request: RefineBuildingPreviewRequest & {
+    plannerMode?: "auto" | "deterministic" | "llm";
+    imageContextSummary?: string;
+  },
+): Promise<BuilderToolResult>;
+```
+
+Keep `refineBuildingPreview` as thin sync wrapper (`plannerMode: "deterministic"`) for unit tests, or migrate tests to inject mock planner.
+
+### 10.2 `/api/builder/refine`
+
+Extend body:
+
+```ts
+{
+  prompt: string;
+  blueprint: GenericBuildingBlueprintV2;
+  plannerMode?: "auto" | "deterministic" | "llm"; // default "auto"
+}
+```
+
+Response unchanged: `{ toolResult }`.
+
+### 10.3 `/api/builder/chat`
+
+- Pass `plannerMode: "auto"` implicitly inside `runBuilderRefinementChatTurn`.
+- `runBuilderRefinementChatTurn` becomes async planner-aware.
+- Generation and stream branches unchanged.
+
+### 10.4 Tool result extensions
+
+Add optional fields on `BuilderToolResult`:
+
+```ts
+plannerPath?: "deterministic" | "llm" | "none";
+rationaleSummary?: string; // from planner when used
+```
+
+Update `formatToolResultForModel` to include `PLANNER_PATH` for summary LLM.
+
+---
+
+## 11. Workers AI model usage
+
+### 11.1 Dedicated JSON planner call
+
+New helper: `callWorkersAiJsonPlanner(messages, { maxTokens })`:
+
+- Same `WORKERS_AI_MODEL` and credentials as chat (**recommend same multimodal model** — keeps one env var; text-only planner requests ignore image).
+- **Non-streaming** only.
+- Low `max_tokens` (e.g. **512** — operations JSON is small).
+- Separate **planner system prompt** — not `BUILDER_SYSTEM_PROMPT`.
+- Temperature low if exposed by API (or omit).
+
+### 11.2 Parse and repair
+
+1. Parse response as JSON (strip accidental markdown fences defensively).
+2. If parse fails: **one** repair request (“Return only valid JSON matching schema”).
+3. If still fails: `PlannerResult ok: false`, friendly message.
+
+### 11.3 Cost / latency
+
+Each ambiguous refinement adds **one** Workers AI call before the existing summary call. Keep summary compact; consider skipping summary model call on planner failure (return `assistantSummary` from tool only).
+
+---
+
+## 12. Image context
+
+**Current behavior:** Image attached on refine turn is passed to **summary** Workers AI call, not to operation planning.
+
+### Phase 1 (default — defer image-aware planning)
+
+- Image + refinement text enters refine path (with broadened gate).
+- Planner receives **text request + blueprint summary only**.
+- Summary LLM still sees image for user-facing reply.
+
+### Phase 2 (optional — if approved)
+
+1. If attachment present and user text references image (“like the photo”, “match the reference”):
+2. Call multimodal model for **short image context summary** (materials, roof shape, proportions, mood) — max ~200 tokens.
+3. Pass `imageContextSummary` into `planBlueprintOperationsWithLlm`.
+4. Do **not** pass raw image bytes to planner prompt builder twice; one vision call only.
+
+**Recommendation:** Defer Phase 2 to keep first implementation focused. Note in activity when image was ignored by planner.
+
+---
+
+## 13. Activity events
+
+### Success path (full)
+
+1. Parsed refinement request  
+2. Built current blueprint summary  
+3. Matched deterministic edit **OR** Planned semantic edit with LLM  
+4. Validated operation plan  
+5. Applied operations  
+6. Validated updated blueprint  
+7. Regenerated voxel structure  
+8. Ready to update builder preview  
+9. Assistant response ready  
+
+### Failure path
+
+| Condition | Activity |
+|-----------|----------|
+| Mapper + planner both unsupported | Rejected unsupported edit |
+| Invalid planner JSON | Planner output invalid |
+| Validator reject | Operation plan rejected |
+| Apply/validate/generate fail | Existing error steps |
+| Preview unchanged | Implicit via `toolResult.ok: false` |
+
+Expose `plannerPath` in tool result for UI if needed (activity card subtitle optional).
+
+---
+
+## 14. UI behavior
+
+Minimal changes:
 
 | Area | Change |
 |------|--------|
-| `BuilderClient` | Persist `activeBlueprint` from `toolResult`; send in chat body |
-| `BuilderPreviewPanel` | No structural change if blocks + blueprint stay in sync |
-| Activity | Refinement-specific steps via `builderActivityFromRefine.ts` |
-| Header | Optional: show last refinement in `lastOperationSummary` |
-| Failure | Preview + blueprint unchanged |
-| Success | Replace both `generatedStructure` and `activeBlueprint` |
+| Activity card | Show deterministic vs LLM plan step when present |
+| Preview | Update only on `toolResult.ok` (unchanged) |
+| Assistant | Explains actual applied edits or limitation |
+| Loading | Refinement turns may take longer (planner call) — keep existing tool-loading placeholder |
+| Layout | No redesign |
 
-Update stale chat panel copy in `BuilderChatPanel.tsx` if it still says “static preview until blueprint generation connects.”
-
----
-
-## 12. Activity events (refinement)
-
-Success path:
-
-| id | label |
-|----|--------|
-| `parsed` | Parsed refinement request |
-| `blueprint` | Using current v2 blueprint |
-| `plan` | Planned operation: … (one per op) |
-| `apply` | Applied operations to blueprint |
-| `validate` | Validated updated blueprint |
-| `generate` | Regenerated voxel structure (N blocks) |
-| `preview` | Updated builder preview |
-
-Unsupported path:
-
-| id | label |
-|----|--------|
-| `parsed` | Parsed refinement request |
-| `unsupported` | Could not map to a supported operation |
-| (no preview step) | |
-
-Extend `buildActivityEventsFromToolResult` or add `buildRefinementActivityEvents`.
+Optional: show `rationaleSummary` in activity detail tooltip — low priority.
 
 ---
 
-## 13. Tests
+## 15. Tests
 
-### New unit tests
+All tests use **mocked** planner — no live Workers AI in CI.
 
-| File | Covers |
-|------|--------|
-| `applyBlueprintOperationsV2.test.ts` | clone safety, room width, palette, roof kind, invalid id |
-| `mapRefinementPromptToOperations.test.ts` | phrasing → ops, unsupported |
-| `shouldRunRefinementTool.test.ts` | blueprint required, vs generate |
-| `refineBuildingPreview.test.ts` | integration on `simple_cabin_v2` blueprint |
+### New test files
 
-### Keep green
+| Module | Cases |
+|--------|-------|
+| `summarizeBlueprintForPlanner.test.ts` | All component types; stable text snapshot |
+| `validatePlannerOperations.test.ts` | Valid ops; unknown id; wrong type; too many ops; invalid materials; extra keys |
+| `buildPlannerPrompt.test.ts` | Allowlist + ranges present; no full blueprint blob |
+| `planBlueprintOperationsWithLlm.test.ts` | Mock fetch: valid JSON, invalid JSON, repair, unsupported |
+| `planAndRefineBuildingPreview.test.ts` | Auto: deterministic wins; mapper miss → mock planner; full fail |
+| `shouldRunRefinementTool.test.ts` | Extend for broadened natural-language gate |
+
+### Existing tests
+
+- Keep all current mapper/apply/refine tests passing.
+- `refineBuildingPreview.test.ts` may use `plannerMode: "deterministic"` explicitly.
+
+### Verification commands
 
 ```bash
 pnpm exec tsc --noEmit
 pnpm lint
 pnpm test:generator
 pnpm run build
-pnpm vitest run src/lib/builder/__tests__
 ```
 
-### Manual (deployed or `preview:cloudflare`)
-
-1. “Make me a stone workshop” → preview updates  
-2. “Make it taller” → taller workshop, same preset family  
-3. “Make the roof dark wood” → palette roof material change (honest wording)  
-4. “Add more windows” on cabin → front window count +1  
-5. “Move the chimney to the left” on cabin → placement change  
-6. “Make the porch wider” on porch house → **unsupported** message, preview unchanged  
-7. Normal question → still streams  
-8. Image-only → chat-only  
-9. `/preview`, `/generic-lab` unchanged  
+Manual: generate workshop → “make it taller” (deterministic) → “make it more rustic” (LLM) → invalid request → preview unchanged.
 
 ---
 
-## 14. Cloudflare / OpenNext
+## 16. Cloudflare / OpenNext considerations
 
-- No new bindings, D1, R2, Agents, AI Gateway
-- Same route handler pattern (no Edge runtime)
-- Refine responses include full blueprint JSON — monitor response size; still acceptable for single-building presets
-- Workers AI only for explanation after tool runs
-
----
-
-## 15. Out of scope
-
-- LLM-authored operations (unless explicitly approved later)
-- Full free-form blueprint from model JSON
-- `addComponent` / `removeComponent`
-- Multiple rooms, interiors, region selection
-- Persistence, auth, canonical screenshots
-- Cloudflare platform expansion
-- Generator/compiler changes except as forced by validation
+- **No new infrastructure** — another Workers AI HTTP call only.
+- Planner runs **server-side** in existing Next.js route handlers.
+- No Cloudflare Agents, D1, R2, AI Gateway.
+- No route `runtime` changes.
+- Avoid Node-only APIs (`structuredClone` already used — OK on modern Workers).
+- Keep planner prompt **concise** (summary + schema, not full blueprint).
+- Two Workers AI calls per ambiguous refine turn (planner + summary) — acceptable for dev; monitor latency.
 
 ---
 
-## 16. Implementation phases
+## 17. Out of scope
 
-### Phase A — Audit + operation types
+Do **not** implement in this step:
 
-- `blueprintOperationsV2.ts` types
-- `blueprintComponentIndex.ts` helpers
-- Extend `builderToolTypes` (`toolKind`, refine request types)
-
-### Phase B — `applyBlueprintOperationsV2` + tests
-
-- Pure apply with clamp/reject
-- No API wiring yet
-
-### Phase C — `mapRefinementPromptToOperations` + tests
-
-- Supported matrix from §5
-- Unsupported messages
-
-### Phase D — `refineBuildingPreview` + `POST /api/builder/refine`
-
-- Full validate → generate pipeline
-
-### Phase E — Chat orchestration
-
-- `shouldRunRefinementTool`, `runBuilderRefinementChatTurn`
-- Extend `parseBuilderChatRequestBody` / chat route ordering
-- Update `formatToolResultForModel`, `BUILDER_SYSTEM_PROMPT`
-
-### Phase F — Client state + UI
-
-- `activeBlueprint` on `BuilderChat`
-- Send `currentBlueprint` in chat POST
-- Activity + chat panel copy
-
-### Phase G — `CHANGE.md`
-
-- Document supported refinements and limitations
+- Full blueprint generation from LLM JSON  
+- Add/remove components  
+- Multiple rooms / interiors / zones  
+- Selected-region editing  
+- Canonical render screenshots  
+- Persistence / auth  
+- Cloudflare Agents  
+- AI Gateway  
+- R2 / D1  
+- Raw voxel coordinate generation  
+- Direct `ComponentPlan` edits  
+- `setMaterialOverride` in planner (until tested)  
+- Porch width  
 
 ---
 
-## 17. Success criteria
+## 18. Implementation phases
 
-- [ ] At least **3–5** refinement types work on an existing build (materials, room size, roof, windows, chimney placement)
-- [ ] Edits apply to **current** blueprint, not a fresh preset
-- [ ] Validation runs **after** apply; preview updates only on `toolResult.ok`
-- [ ] Unsupported requests fail gracefully; preview unchanged
-- [ ] Model never receives blocks/ComponentPlan to edit
-- [ ] Streaming chat + image chat still work
-- [ ] All automated tests pass
+### Phase A — Audit + blueprint summary
 
----
+- Confirm operation allowlist against `applyBlueprintOperationsV2`
+- Implement `summarizeBlueprintForPlanner` + text renderer
+- Unit tests with three v2 presets
 
-## 18. Files likely to create/edit
+### Phase B — Planner schema + validator
 
-| Action | Path |
-|--------|------|
-| Create | `src/lib/builder/blueprintOperationsV2.ts` |
-| Create | `src/lib/builder/applyBlueprintOperationsV2.ts` |
-| Create | `src/lib/builder/blueprintComponentIndex.ts` |
-| Create | `src/lib/builder/mapRefinementPromptToOperations.ts` |
-| Create | `src/lib/builder/refineBuildingPreview.ts` |
-| Create | `src/lib/builder/shouldRunRefinementTool.ts` |
-| Create | `src/lib/builder/runBuilderRefinementChatTurn.ts` |
-| Create | `src/app/api/builder/refine/route.ts` |
-| Create | `src/lib/builder/__tests__/applyBlueprintOperationsV2.test.ts` |
-| Create | `src/lib/builder/__tests__/mapRefinementPromptToOperations.test.ts` |
-| Create | `src/lib/builder/__tests__/shouldRunRefinementTool.test.ts` |
-| Create | `src/lib/builder/__tests__/refineBuildingPreview.test.ts` |
-| Edit | `src/lib/builder/builderToolTypes.ts` |
-| Edit | `src/lib/builder/builderChatTypes.ts` |
-| Edit | `src/lib/builder/validateChatRequest.ts` (optional blueprint validation) |
-| Edit | `src/lib/builder/runBuilderChatTurn.ts` |
-| Edit | `src/app/api/builder/chat/route.ts` |
-| Edit | `src/lib/builder/formatToolResultForModel.ts` |
-| Edit | `src/lib/builder/builderSystemPrompt.ts` |
-| Edit | `src/lib/builder/builderActivityFromTool.ts` |
-| Edit | `src/app/builder/mockBuilderData.ts` |
-| Edit | `src/app/builder/BuilderClient.tsx` |
-| Edit | `src/app/builder/components/BuilderChatPanel.tsx` (stale copy) |
-| Edit | `CHANGE.md` |
+- Define planner JSON response types
+- Implement `validatePlannerOperations` (strict)
+- Unit tests for rejection cases
 
-**Do not edit:** `src/lib/generation/components/v2/*` compiler internals unless validation forces a fix.
+### Phase C — Planner prompt + Workers AI call
 
----
+- `buildPlannerPrompt` (summary + schema + user request)
+- `callWorkersAiJsonPlanner` with parse + one repair retry
+- `planBlueprintOperationsWithLlm` orchestration
+- Mocked tests only
 
-## 19. Key risks
+### Phase D — Hybrid integration
 
-| Risk | Mitigation |
-|------|------------|
-| Blueprint not stored client-side | Phase F requirement; block refine until present |
-| Generate vs refine classifier collision | Explicit precedence rules; tests for “make me X” vs “make it wider” |
-| Preset missing component (porch/chimney) | Index helpers return unsupported, not throw |
-| Validation fails after apply | Surface validator errors; do not update preview |
-| Large JSON payloads | Accept for MVP; only send blueprint on refine/generate turns |
-| Mapper false positives | Conservative regex; prefer unsupported over wrong edit |
+- `planAndRefineBuildingPreview` with `plannerMode`
+- Wire into `runBuilderRefinementChatTurn` (`auto`)
+- Extend `/api/builder/refine` with `plannerMode`
+- Broaden `shouldRunRefinementTool` / edit heuristic
+- Keep deterministic mapper as first pass
+
+### Phase E — Activity + tool result formatting
+
+- New activity events and `plannerPath` on tool result
+- Update `formatToolResultForModel` and `builderSystemPrompt`
+- Minimal UI activity labels
+
+### Phase F — Tests + docs
+
+- Complete test coverage (§15)
+- Update `CHANGE.md`
+- Manual smoke on `/builder`
+
+**Phase 2 (optional, separate approval):** image context summary → planner input.
 
 ---
 
-## 20. Approval questions (before implementation)
+## 19. Success criteria
 
-1. **Store full `activeBlueprint` on client** and POST it on refine/generate follow-ups — OK?
-2. **“Make the porch wider”** → unsupported in v1 (only depth supported) — acceptable?
-3. **Fresh generate when user says “make me a workshop”** even if a blueprint exists — should that **replace** the current build (recommended) or be treated as refine?
-4. **Refine all `window_group` components** vs **front only** for “more windows” — prefer front-only first?
-5. **Separate `POST /api/builder/refine`** for tests — approved?
+- [ ] Natural refinement requests not covered by regex produce **valid** operations via LLM planner  
+- [ ] Preview updates **only** after validate + generate succeed  
+- [ ] Deterministic mapper still handles exact commands (no regression)  
+- [ ] Invalid planner JSON fails safely; preview unchanged  
+- [ ] Model never outputs voxels, full blueprint, or ComponentPlan in planner path  
+- [ ] Normal chat streaming still works  
+- [ ] Image chat still works (summary path)  
+- [ ] `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm test:generator`, `pnpm run build` pass  
 
 ---
 
-*Stop here until review. Do not implement until approved.*
+## 20. Approval questions
+
+Before implementation, confirm:
+
+1. **Hybrid strategy** — deterministic first, LLM planner on mapper miss (`auto` mode)?  
+2. **Max operations per turn** — recommend **3**; approve or change?  
+3. **Image context** — defer to Phase 2 (planner text-only; image still on summary LLM)?  
+4. **Same Workers AI model** for JSON planner as chat/vision (`WORKERS_AI_MODEL`)?  
+5. **`/api/builder/refine` exposes `plannerMode`** (`auto` | `deterministic` | `llm`)?  
+6. **Broadened refinement gate** — allow natural-language edit requests when `activeBlueprint` exists (with conversation exclusions)?  
+7. **`setMaterialOverride`** — exclude from planner v1?  
+
+---
+
+**Stop here.** No implementation until review.

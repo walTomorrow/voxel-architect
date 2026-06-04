@@ -39,6 +39,8 @@ export interface BuilderChat {
   readonly blueprintId?: string;
   readonly blueprintVersion?: number;
   readonly lastOperationSummary?: string;
+  readonly lastRejectionCode?: string;
+  readonly lastRejectionDetail?: string;
 }
 
 export const BUILDER_DEFAULT_PRESET_ID = DEFAULT_GENERIC_V2_PRESET_ID;

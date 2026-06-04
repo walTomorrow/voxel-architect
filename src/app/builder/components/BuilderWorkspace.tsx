@@ -85,6 +85,16 @@ export function BuilderWorkspace({
           messages={messages}
           isLoading={isLoading}
           onSendMessage={onSendMessage}
+          exportMeta={{
+            chatId: chat.id,
+            chatTitle: chat.title,
+            presetId: chat.presetId,
+            status: chat.status,
+            hasActiveBlueprint: chat.activeBlueprint != null,
+            lastOperationSummary: chat.lastOperationSummary,
+            lastRejectionCode: chat.lastRejectionCode,
+            lastRejectionDetail: chat.lastRejectionDetail,
+          }}
         />
       </section>
     </div>

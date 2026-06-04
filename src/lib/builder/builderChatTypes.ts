@@ -40,6 +40,7 @@ export type BuilderChatRequestBody = {
   readonly messages: readonly BuilderChatMessageInput[];
   readonly attachment: BuilderImageAttachmentInput | null;
   readonly currentBlueprint: import("@/src/lib/blueprints/types/genericBuildingV2").GenericBuildingBlueprintV2 | null;
+  readonly currentBlockCount?: number;
 };
 
 export type BuilderChatSuccessResponse = {

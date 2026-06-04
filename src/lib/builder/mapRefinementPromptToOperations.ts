@@ -21,21 +21,22 @@ function bump(current: number, delta: number): number {
   return current + delta;
 }
 
-function buildMaterialPalettePatch(text: string): Partial<BlueprintMaterialPalette> {
+function buildExplicitMaterialPalettePatch(text: string): Partial<BlueprintMaterialPalette> {
   let wall: BlueprintMaterialPalette["wall"] | undefined;
   let roof: BlueprintMaterialPalette["roof"] | undefined;
   let window: BlueprintMaterialPalette["window"] | undefined;
-  let door: BlueprintMaterialPalette["door"] | undefined;
 
   if (/\b(stone walls?|walls? stone|cobblestone walls?)\b/.test(text)) {
     wall = "cobblestone";
   } else if (/\b(brick walls?|limestone brick)\b/.test(text)) {
     wall = "limestone_bricks";
-  } else if (/\b(more stone|stone building)\b/.test(text)) {
-    wall = "cobblestone";
   }
 
-  if (/\b(dark wood roof|roof dark wood|wooden roof|wood roof|dark roof)\b/.test(text)) {
+  if (
+    /\b(dark wood roof|roof dark wood|wooden roof|wood roof|dark roof|oak roof|make the roof oak)\b/.test(
+      text,
+    )
+  ) {
     roof = "oak_planks";
   } else if (/\b(slate roof)\b/.test(text)) {
     roof = "slate_tiles";
@@ -45,16 +46,35 @@ function buildMaterialPalettePatch(text: string): Partial<BlueprintMaterialPalet
     window = "glass";
   }
 
-  if (/\b(more wooden|wooden building|wood walls?)\b/.test(text)) {
-    wall = "oak_planks";
-    door = "oak_planks";
+  if (
+    /\b(make the|make)\s+(roof|wall|walls|floor|door|window|windows)\s+(oak|cobblestone|stone|slate|glass|brick|limestone|wood)\b/.test(
+      text,
+    )
+  ) {
+    if (/\broof\b/.test(text) && (/\boak\b/.test(text) || /\bwood\b/.test(text))) {
+      roof = "oak_planks";
+    }
+    if (/\b(wall|walls)\b/.test(text) && /\b(stone|cobblestone)\b/.test(text)) {
+      wall = "cobblestone";
+    }
+    if (/\b(wall|walls)\b/.test(text) && /\b(brick|limestone)\b/.test(text)) {
+      wall = "limestone_bricks";
+    }
+    if (/\b(wall|walls)\b/.test(text) && /\boak\b/.test(text)) {
+      wall = "oak_planks";
+    }
+    if (/\bwindow/.test(text) && /\bglass\b/.test(text)) {
+      window = "glass";
+    }
+    if (/\broof\b/.test(text) && /\bslate\b/.test(text)) {
+      roof = "slate_tiles";
+    }
   }
 
   return {
     ...(wall !== undefined ? { wall } : {}),
     ...(roof !== undefined ? { roof } : {}),
     ...(window !== undefined ? { window } : {}),
-    ...(door !== undefined ? { door } : {}),
   };
 }
 
@@ -64,23 +84,7 @@ export function mapRefinementPromptToOperations(
 ): MapRefinementResult {
   const text = lower(prompt);
 
-  if (/\b(wider porch|porch wider)\b/.test(text)) {
-    return {
-      ok: false,
-      reason:
-        "Making the porch wider is not supported yet. You can ask to make the porch deeper.",
-    };
-  }
-
-  if (/\b(remove porch|remove chimney|add porch|add a porch)\b/.test(text)) {
-    return {
-      ok: false,
-      reason: "Adding or removing components is not supported yet.",
-    };
-  }
-
-  // --- Materials (palette) ---
-  const palettePatch = buildMaterialPalettePatch(text);
+  const palettePatch = buildExplicitMaterialPalettePatch(text);
   if (Object.keys(palettePatch).length > 0) {
     const labels = Object.keys(palettePatch).join(", ");
     return {
@@ -90,10 +94,48 @@ export function mapRefinementPromptToOperations(
     };
   }
 
-  // --- Room dimensions ---
+  const porch = findPorch(blueprint);
+  if (porch && /\bporch\b/.test(text)) {
+    if (
+      /\b(deeper|more deep)\b/.test(text) ||
+      /\bextend the porch\b/.test(text) ||
+      /\bextend porch\b/.test(text)
+    ) {
+      return {
+        ok: true,
+        operations: [
+          {
+            op: "updateComponent",
+            id: porch.id,
+            componentType: "porch",
+            patch: { type: "porch", depth: porch.depth + 1 },
+          },
+        ],
+        planLabel: "Increase porch depth",
+      };
+    }
+    if (/\b(shallower|less deep)\b/.test(text)) {
+      return {
+        ok: true,
+        operations: [
+          {
+            op: "updateComponent",
+            id: porch.id,
+            componentType: "porch",
+            patch: { type: "porch", depth: porch.depth - 1 },
+          },
+        ],
+        planLabel: "Decrease porch depth",
+      };
+    }
+  }
+
   const room = findRootRoom(blueprint);
   if (room) {
-    if (/\b(make it )?(wider|more wide)\b/.test(text) || /\bwider\b/.test(text)) {
+    if (
+      (/\b(make it )?(wider|more wide)\b/.test(text) || /\bwider\b/.test(text)) &&
+      !/\bporch\b/.test(text)
+    ) {
       return {
         ok: true,
         operations: [
@@ -121,7 +163,7 @@ export function mapRefinementPromptToOperations(
         planLabel: "Decrease room width",
       };
     }
-    if (/\b(deeper|more deep)\b/.test(text)) {
+    if (/\b(deeper|more deep)\b/.test(text) && !/\bporch\b/.test(text)) {
       return {
         ok: true,
         operations: [
@@ -135,7 +177,7 @@ export function mapRefinementPromptToOperations(
         planLabel: "Increase room depth",
       };
     }
-    if (/\b(shallower|less deep)\b/.test(text)) {
+    if (/\b(shallower|less deep)\b/.test(text) && !/\bporch\b/.test(text)) {
       return {
         ok: true,
         operations: [
@@ -215,7 +257,6 @@ export function mapRefinementPromptToOperations(
     }
   }
 
-  // --- Roof ---
   const roof = findMainRoof(blueprint);
   if (roof) {
     if (/\b(shed roof)\b/.test(text)) {
@@ -236,7 +277,7 @@ export function mapRefinementPromptToOperations(
         planLabel: "Switch to shed roof",
       };
     }
-    if (/\b(gable roof|pitched roof|peaked roof)\b/.test(text)) {
+    if (/\b(gable roof|gabled roof|a gabled roof|give it a gable|give it a gabled|pitched roof|peaked roof)\b/.test(text)) {
       return {
         ok: true,
         operations: [
@@ -282,7 +323,6 @@ export function mapRefinementPromptToOperations(
     }
   }
 
-  // --- Front windows ---
   const windows = findPrimaryFrontWindowGroup(blueprint);
   if (windows) {
     if (/\b(more windows|add windows|extra windows)\b/.test(text)) {
@@ -315,24 +355,6 @@ export function mapRefinementPromptToOperations(
     }
   }
 
-  // --- Porch depth ---
-  const porch = findPorch(blueprint);
-  if (porch && /\b(deeper porch|porch deeper|extend porch|extend the porch)\b/.test(text)) {
-    return {
-      ok: true,
-      operations: [
-        {
-          op: "updateComponent",
-          id: porch.id,
-          componentType: "porch",
-          patch: { type: "porch", depth: porch.depth + 1 },
-        },
-      ],
-      planLabel: "Increase porch depth",
-    };
-  }
-
-  // --- Chimney ---
   const chimney = findChimney(blueprint);
   if (chimney) {
     if (/\b(chimney.*left|move chimney.*left)\b/.test(text)) {
@@ -382,6 +404,6 @@ export function mapRefinementPromptToOperations(
   return {
     ok: false,
     reason:
-      "I couldn't map that request to a supported refinement yet. Try material changes, making the building taller/wider, roof adjustments, front windows, porch depth, or chimney placement.",
+      "I couldn't map that request to a supported literal refinement. Try explicit dimension, roof, window, porch depth, chimney, or material commands.",
   };
 }

@@ -133,5 +133,25 @@ export function parseBuilderChatRequestBody(
     currentBlueprint = bp.blueprint;
   }
 
-  return { ok: true, data: { messages, attachment, currentBlueprint: currentBlueprint ?? null } };
+  let currentBlockCount: number | undefined;
+  if (body.currentBlockCount != null) {
+    if (
+      typeof body.currentBlockCount !== "number" ||
+      !Number.isFinite(body.currentBlockCount) ||
+      body.currentBlockCount < 0
+    ) {
+      return { ok: false, error: "currentBlockCount must be a non-negative number when provided." };
+    }
+    currentBlockCount = Math.floor(body.currentBlockCount);
+  }
+
+  return {
+    ok: true,
+    data: {
+      messages,
+      attachment,
+      currentBlueprint: currentBlueprint ?? null,
+      ...(currentBlockCount != null ? { currentBlockCount } : {}),
+    },
+  };
 }

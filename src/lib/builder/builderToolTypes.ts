@@ -32,6 +32,10 @@ export type RefineBuildingPreviewRequest = {
   readonly blueprint: GenericBuildingBlueprintV2;
 };
 
+import type { PlannerRejectionCode } from "@/src/lib/builder/plannerRejection";
+
+export type BuilderPlannerPath = "deterministic" | "llm" | "none";
+
 export type BuilderToolResult = {
   readonly ok: boolean;
   readonly toolKind: BuilderToolKind;
@@ -45,6 +49,10 @@ export type BuilderToolResult = {
   readonly validationIssues?: readonly BuilderValidationIssueView[];
   readonly activityEvents: readonly BuilderActivityEvent[];
   readonly appliedOperations?: readonly string[];
+  readonly plannerPath?: BuilderPlannerPath;
+  readonly rationaleSummary?: string;
+  readonly rejectionCode?: PlannerRejectionCode;
+  readonly rejectionDetail?: string;
   readonly error?: string;
 };
 

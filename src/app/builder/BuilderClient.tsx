@@ -245,6 +245,9 @@ export function BuilderClient() {
             messages: prepared.messages,
             attachment: attachmentPayload,
             currentBlueprint: activeChat.activeBlueprint,
+            ...(activeChat.generatedStructure?.blocks.length != null
+              ? { currentBlockCount: activeChat.generatedStructure.blocks.length }
+              : {}),
           }),
         });
 
@@ -330,6 +333,8 @@ export function BuilderClient() {
             generatedStructure: structure,
             activeBlueprint: toolResult.blueprint ?? c.activeBlueprint,
             lastOperationSummary: toolResult.assistantSummary,
+            lastRejectionCode: undefined,
+            lastRejectionDetail: undefined,
           }));
           setValidationWarnings(
             (toolResult.validationIssues ?? [])
@@ -339,6 +344,11 @@ export function BuilderClient() {
           setPreviewGenerationNonce((n) => n + 1);
         } else if (toolResult && !toolResult.ok) {
           setValidationWarnings([]);
+          updateChat(chatId, (c) => ({
+            ...c,
+            lastRejectionCode: toolResult.rejectionCode,
+            lastRejectionDetail: toolResult.rejectionDetail,
+          }));
         }
 
         patchAssistant({
