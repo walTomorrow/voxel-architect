@@ -13,7 +13,9 @@ import type {
 import { parseBuilderChatRequestBody } from "@/src/lib/builder/validateChatRequest";
 import {
   runBuilderGenerationChatTurn,
+  runBuilderRefinementChatTurn,
   shouldUseGenerationJsonTurn,
+  shouldUseRefinementJsonTurn,
 } from "@/src/lib/builder/runBuilderChatTurn";
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -39,9 +41,32 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError(parsed.error, "VALIDATION", 400);
   }
 
-  const { messages, attachment } = parsed.data;
+  const { messages, attachment, currentBlueprint } = parsed.data;
 
-  if (shouldUseGenerationJsonTurn(messages, attachment)) {
+  if (
+    shouldUseRefinementJsonTurn(messages, currentBlueprint, attachment) &&
+    currentBlueprint != null
+  ) {
+    const turn = await runBuilderRefinementChatTurn(
+      messages,
+      attachment,
+      currentBlueprint,
+    );
+    if (!turn.ok) {
+      const status = upstreamHttpStatus(turn);
+      return jsonError(turn.error, turn.code, status);
+    }
+    const payload: BuilderChatWithToolSuccessResponse = turn.payload;
+    return Response.json(payload, {
+      headers: {
+        "X-Builder-Chat-Mode": "json",
+        "X-Builder-Tool-Ran": "true",
+        "X-Builder-Tool-Kind": "refine",
+      },
+    });
+  }
+
+  if (shouldUseGenerationJsonTurn(messages, currentBlueprint, attachment)) {
     const turn = await runBuilderGenerationChatTurn(messages, attachment);
     if (!turn.ok) {
       const status = upstreamHttpStatus(turn);
@@ -52,6 +77,7 @@ export async function POST(request: Request): Promise<Response> {
       headers: {
         "X-Builder-Chat-Mode": "json",
         "X-Builder-Tool-Ran": "true",
+        "X-Builder-Tool-Kind": "generate",
       },
     });
   }

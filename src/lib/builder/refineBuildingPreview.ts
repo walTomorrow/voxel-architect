@@ -1,18 +1,17 @@
-import { clonePresetBlueprintV2 } from "@/src/lib/blueprints/clonePresetBlueprint";
-import { getGenericBuildingPresetV2 } from "@/src/lib/blueprints/sampleGenericBuildingBlueprintsV2";
+import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
 import {
   isBlueprintValidationResultV2,
   validateBlueprint,
 } from "@/src/lib/blueprints/validateBlueprint";
 import type { BlueprintValidationResultV2 } from "@/src/lib/blueprints/types/validationResult";
 import { generateStructure } from "@/src/lib/generation/generateStructure";
+import { applyBlueprintOperationsV2 } from "@/src/lib/builder/applyBlueprintOperationsV2";
 import type {
   BuilderActivityEvent,
-  BuilderToolResult,
   BuilderValidationIssueView,
-  GenerateBuildingPreviewRequest,
+  BuilderToolResult,
 } from "@/src/lib/builder/builderToolTypes";
-import { resolvePresetFromPrompt } from "@/src/lib/builder/resolvePresetFromPrompt";
+import { mapRefinementPromptToOperations } from "@/src/lib/builder/mapRefinementPromptToOperations";
 
 function mapValidationIssues(
   result: BlueprintValidationResultV2,
@@ -37,7 +36,7 @@ function failResult(
 ): BuilderToolResult {
   return {
     ok: false,
-    toolKind: "generate",
+    toolKind: "refine",
     assistantSummary,
     schemaVersion: 2,
     error,
@@ -45,84 +44,86 @@ function failResult(
   };
 }
 
-/**
- * Server-controlled deterministic tool: v2 preset → validate → generate.
- */
-export function generateBuildingPreview(
-  request: GenerateBuildingPreviewRequest,
+export type RefineBuildingPreviewRequest = {
+  readonly prompt: string;
+  readonly blueprint: GenericBuildingBlueprintV2;
+};
+
+export function refineBuildingPreview(
+  request: RefineBuildingPreviewRequest,
 ): BuilderToolResult {
   const baseEvents: BuilderActivityEvent[] = [
-    { id: "parsed", label: "Parsed building request", status: "success" },
+    { id: "parsed", label: "Parsed refinement request", status: "success" },
+    { id: "blueprint", label: "Using current v2 blueprint", status: "success" },
   ];
 
-  if (request.mode === "modify_current") {
+  const mapped = mapRefinementPromptToOperations(request.prompt, request.blueprint);
+  if (!mapped.ok) {
     return failResult(
-      "Modifying the current building is not available yet.",
-      "I can't modify the current building yet. Ask me to create a new building (for example, a small stone cottage), and I'll generate a fresh preview.",
+      mapped.reason,
+      `${mapped.reason} The preview was not updated.`,
       [
         ...baseEvents,
         {
-          id: "modify",
-          label: "Modify current building — not available yet",
+          id: "unsupported",
+          label: "Could not map to a supported operation",
           status: "error",
         },
       ],
     );
   }
 
-  const presetId = resolvePresetFromPrompt(request.prompt);
-  const presetMeta = getGenericBuildingPresetV2(presetId);
-  const presetLabel = presetMeta?.label ?? presetId;
-
   baseEvents.push({
-    id: "target",
-    label: `Chose v2 preset: ${presetLabel}`,
+    id: "plan",
+    label: `Planned: ${mapped.planLabel}`,
     status: "success",
   });
 
-  let blueprint;
-  try {
-    blueprint = clonePresetBlueprintV2(presetId);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Could not load preset blueprint.";
-    return failResult(msg, `Generation failed: ${msg}`, [
-      ...baseEvents,
-      { id: "blueprint", label: "Load v2 preset blueprint", status: "error" },
-    ]);
+  const applied = applyBlueprintOperationsV2(request.blueprint, mapped.operations);
+  if (!applied.ok) {
+    return failResult(
+      applied.error,
+      `Could not apply the change: ${applied.error} The preview was not updated.`,
+      [
+        ...baseEvents,
+        { id: "apply", label: "Apply operations", status: "error" },
+      ],
+    );
   }
 
   baseEvents.push({
-    id: "blueprint",
-    label: "Loaded v2 component blueprint (preset)",
+    id: "apply",
+    label: `Applied: ${applied.appliedLabels.join("; ")}`,
     status: "success",
   });
 
+  const blueprint = applied.blueprint!;
   const validation = validateBlueprint(blueprint);
   if (!isBlueprintValidationResultV2(validation)) {
     return failResult(
-      "Unexpected validation result for v2 blueprint.",
+      "Unexpected validation result.",
       "Blueprint validation failed unexpectedly. The preview was not updated.",
-      [
-        ...baseEvents,
-        { id: "validate", label: "Validate blueprint", status: "error" },
-      ],
+      [{ ...baseEvents[0]!, id: "validate", label: "Validate blueprint", status: "error" }],
     );
   }
 
   const validationIssues = mapValidationIssues(validation);
   if (!validation.ok) {
-    const err =
-      validation.errors[0]?.message ?? "Blueprint validation failed.";
-    return failResult(err, `I couldn't validate the building plan: ${err} The preview was not updated.`, [
-      ...baseEvents,
-      { id: "validate", label: "Validate blueprint", status: "error" },
-    ]);
+    const err = validation.errors[0]?.message ?? "Blueprint validation failed.";
+    return failResult(
+      err,
+      `Validation failed after the edit: ${err} The preview was not updated.`,
+      [
+        ...baseEvents,
+        { id: "validate", label: "Validate updated blueprint", status: "error" },
+      ],
+    );
   }
 
   const normalized = validation.normalized ?? blueprint;
   baseEvents.push({
     id: "validate",
-    label: "Validated blueprint",
+    label: "Validated updated blueprint",
     status: "success",
   });
 
@@ -131,27 +132,31 @@ export function generateBuildingPreview(
     blocks = generateStructure(normalized);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Generation failed.";
-    return failResult(msg, `Voxel generation failed: ${msg} The preview was not updated.`, [
-      ...baseEvents,
-      { id: "generate", label: "Generate voxel structure", status: "error" },
-    ]);
+    return failResult(
+      msg,
+      `Regeneration failed: ${msg} The preview was not updated.`,
+      [
+        ...baseEvents,
+        { id: "generate", label: "Regenerate voxel structure", status: "error" },
+      ],
+    );
   }
 
   const blockCount = blocks.length;
   if (blockCount === 0) {
     return failResult(
-      "Generator produced no blocks.",
-      "Generation produced an empty structure. The preview was not updated.",
+      "Empty structure.",
+      "Regeneration produced no blocks. The preview was not updated.",
       [
         ...baseEvents,
-        { id: "generate", label: "Generate voxel structure", status: "error" },
+        { id: "generate", label: "Regenerate voxel structure", status: "error" },
       ],
     );
   }
 
   baseEvents.push({
     id: "generate",
-    label: `Generated voxel structure (${blockCount.toLocaleString()} blocks)`,
+    label: `Regenerated voxel structure (${blockCount.toLocaleString()} blocks)`,
     status: "success",
   });
   baseEvents.push({
@@ -167,11 +172,10 @@ export function generateBuildingPreview(
 
   return {
     ok: true,
-    toolKind: "generate",
-    assistantSummary: `Generated "${presetLabel}" using a v2 component blueprint preset (${blockCount.toLocaleString()} blocks)${warningNote}.`,
+    toolKind: "refine",
+    assistantSummary: `${mapped.planLabel} (${blockCount.toLocaleString()} blocks)${warningNote}.`,
     blueprint: normalized,
-    presetId,
-    presetLabel,
+    appliedOperations: [...applied.appliedLabels],
     schemaVersion: 2,
     blocks,
     blockCount,

@@ -1,527 +1,659 @@
-# Plan — Builder agent tools (bare-minimum generator bridge)
+# Plan — Builder v2 refinement operations
 
-**Branch:** `feature/builder-agent-tools`  
+**Branch:** `feature/builder-agent-tools` (continued)  
 **Status:** Planning only — **no implementation** until review.  
-**Type:** Product integration — connects `/builder` chat to the **existing deterministic** generator; not a full autonomous agent.
+**Prerequisite:** Preset-based `generate_building_preview` tool bridge is implemented and verified on this branch.
 
-**Live app (reference):** https://voxel-architect.wlc562.workers.dev/  
-**Infra:** Cloudflare Workers + OpenNext (`docs/deployment/CLOUDFLARE.md`).
+**Live app:** https://voxel-architect.wlc562.workers.dev/
 
-**Goal:** Move from “user chats while preview is static” to “user chats → controlled tool run → validated blueprint → voxel generation → preview updates → activity log reflects real steps.”
+**Goal:** Extend the builder tool path from **“select v2 preset → generate”** to **“apply simple semantic edits to the current `GenericBuildingBlueprintV2` → validate → regenerate → update preview.”**
 
-This is the **middle layer** between the top-end chat UI and the generator. It is **not** Cloudflare Agents SDK, **not** D1/R2 persistence, and **not** full v2 semantic refinement / operation grammar yet.
+Still **not** a full autonomous agent. Boundaries unchanged:
+
+| Layer | Responsibility |
+|-------|----------------|
+| **Server (code)** | Detect refine vs generate vs chat; map user text to typed operations; `applyBlueprintOperationsV2`; validate; generate blocks |
+| **LLM** | User-facing explanation only; summarizes compact tool result |
+| **Never** | Model authors blueprint JSON, edits `ComponentPlan`, outputs voxel coordinates, or claims preview update without `toolResult.ok` |
 
 ---
 
 ## 1. Summary
 
-`/builder` already has Workers AI chat (streaming text, image references) and a **static** voxel preview driven by a fixed **v1 preset id** on the active chat. The assistant is instructed not to claim it changed the building.
+After a successful generation (e.g. “Make me a stone workshop”), the preview shows the correct v2 preset build, but every follow-up that asks to **change** the current building still hits the **create** path or returns **“modify not available yet.”**
 
-This branch adds a **server-side builder tool** (`generate_building_preview`) that:
+This plan adds a **small, typed, testable operation system** on top of the existing pipeline:
 
-1. Selects or receives a **valid generic building blueprint** (initially from **v2 presets**, not model-invented JSON).
-2. Runs **`validateBlueprint` → `generateStructure`** (existing pipeline).
-3. Returns **blocks + summary + validation issues + activity events** to the client.
-4. Updates the preview from **tool output**, not from a frozen preset alone.
+```text
+current GenericBuildingBlueprintV2 (in memory)
+  + user refinement request (deterministic parse)
+  → BlueprintOperationV2[] (server-produced)
+  → applyBlueprintOperationsV2()
+  → validateBlueprint()
+  → generateStructure()
+  → toolResult + preview update + activity log
+```
 
-The model may **request** generation via a controlled orchestration path; it must **not** output raw voxel coordinates or edit `ComponentPlan` IR.
+**Recommended strategy:** **Option A** — deterministic rule-based operation mapper first. **No** LLM JSON planner in this step. Add Option B only after `applyOperations` and validation integration are stable and tested.
 
 ---
 
-## 2. Current implementation status survey
+## 2. Current status audit
 
-### 2.1 `/builder` UI (exists)
+### 2.1 Builder tool files (this branch)
 
-| Path | Role |
+| File | Role |
 |------|------|
-| `src/app/builder/page.tsx` | Route shell |
-| `src/app/builder/BuilderClient.tsx` | Chat state, `fetch("/api/builder/chat")`, streaming via `consumeBuilderChatSse`, mock activity on every assistant turn |
-| `src/app/builder/mockBuilderData.ts` | `BuilderChat`: `presetId`, `status`, messages; default preset `simple_rustic_cabin` (v1); **no** stored blocks/blueprint |
-| `src/app/builder/components/BuilderWorkspace.tsx` | Layout; header shows preset label + **“Static preview”** |
-| `src/app/builder/components/BuilderPreviewPanel.tsx` | **Client-side** `clonePresetBlueprint(presetId)` → `validateBlueprint` → `generateStructure` in `useMemo`; badge **“Static preset”** |
-| `src/app/builder/components/BuilderChatPanel.tsx` | Message list + prompt |
-| `src/app/builder/components/BuilderActivityCard.tsx` | Renders `BuilderActivityStep[]` |
-| `src/lib/builder/mockBuilderActivity.ts` | **Mock-only** steps; ends with “Preview unchanged — static preset” |
+| `src/lib/builder/builderToolTypes.ts` | `GenerateBuildingPreviewRequest/Result`, activity types |
+| `src/lib/builder/generateBuildingPreview.ts` | Preset clone → validate → generate |
+| `src/lib/builder/resolvePresetFromPrompt.ts` | Keyword → `simple_cabin_v2` \| `stone_workshop_v2` \| `porch_house_v2` |
+| `src/lib/builder/shouldRunGenerationTool.ts` | Generation verb gate; image-only excluded |
+| `src/lib/builder/runBuilderChatTurn.ts` | `runBuilderGenerationChatTurn` + `shouldUseGenerationJsonTurn` |
+| `src/lib/builder/formatToolResultForModel.ts` | Injects tool summary for Workers AI |
+| `src/lib/builder/builderActivityFromTool.ts` | Activity steps from tool result |
+| `src/lib/blueprints/clonePresetBlueprint.ts` | `clonePresetBlueprintV2` |
+| `src/app/api/builder/generate/route.ts` | Standalone preset tool POST |
+| `src/lib/builder/__tests__/*` | Preset tool + classifier tests |
 
-**Preview data flow today:** `presetId` from chat → `genericLabUtils.clonePresetBlueprint` (**v1 only**) → `generateStructure` → `VoxelViewer`. Preview **does not** react to chat content.
+### 2.2 What already works
 
-### 2.2 `/api/builder/chat` (exists)
+- **`POST /api/builder/chat`**
+  - **Generation intent** → non-streaming JSON `{ message, model, toolResult }` (`X-Builder-Chat-Mode: json`, `X-Builder-Tool-Ran: true`)
+  - **Normal text** → SSE streaming (unchanged)
+  - **Image-only** (no build verbs) → JSON chat, no tool
+- **`generateBuildingPreview`**
+  - Modes: `create_from_prompt` / `select_preset` (same path), `modify_current` → **hard fail** with friendly message
+  - Always starts from **fresh v2 preset clone**, not from an edited blueprint
+- **Client (`BuilderClient`)**
+  - On `toolResult.ok`: stores `generatedStructure` (blocks), `presetId`, `status: preview_ready`, validation warnings
+  - Preview uses `generatedStructure` when present; else default v2 preset render
+  - Header: “Not saved after refresh”
+- **v2 stack in `src/`** (not docs-only): types, validator, resolver, generator, 3 presets, tests
 
-| Path | Role |
-|------|------|
-| `src/app/api/builder/chat/route.ts` | `POST`; no `runtime = "edge"` (OpenNext Node on Workers) |
-| `src/lib/builder/callWorkersAiChat.ts` | Workers AI REST; streaming for text-only |
-| `src/lib/builder/validateChatRequest.ts` | JSON + image validation |
-| `src/lib/builder/builderChatTypes.ts` | Request/response types; **no** tool result types yet |
-| `src/lib/builder/builderSystemPrompt.ts` | Tells model preview is **static**; no tool vocabulary |
-| `src/lib/builder/consumeBuilderChatStream.ts` | Client SSE parser (`chunk` / `done` / `error`) |
-| `src/lib/builder/builderChatGuardrails.ts` | Message prep, friendly errors |
+### 2.3 Critical gap for refinement
 
-**No** tool invocation, **no** blueprint/generation in chat route today.
+| Stored today | Needed for refine |
+|--------------|-------------------|
+| `generatedStructure` (blocks only) | Yes for preview |
+| `presetId` | Label only |
+| **`activeBlueprint` JSON** | **Missing** — tool returns `blueprint` in `toolResult` but **client does not persist it** |
 
-### 2.3 Generator & validation (exists, production-quality)
+Without persisting and resending the blueprint, refinement would incorrectly re-clone a preset or have nothing to edit.
 
-| Entry | Path | Notes |
-|-------|------|--------|
-| Unified validate + generate | `src/lib/generation/generateStructure.ts` | Dispatches `schemaVersion` 1 vs 2 |
-| v1 validate | `src/lib/blueprints/validateBlueprint.ts` → `validateGenericBuilding` | Returns `resolved` for v1 |
-| v2 validate | `validateGenericBuildingBlueprintV2` | Returns `normalized` blueprint |
-| v1 generate | `generateGenericBuilding` | From resolved v1 |
-| v2 generate | `generateGenericBuildingV2` | After `resolveGenericBuildingV2` |
-| v2 compiler IR | `src/lib/generation/components/v2/*` | `ComponentPlan` v2 — **internal**, not for UI/model |
+### 2.4 v2 blueprint shape (authoring)
 
-**Presets:**
+Defined in `src/lib/blueprints/types/genericBuildingV2.ts`:
 
-| Version | Catalog | Count (repo) | IDs (examples) |
-|---------|---------|----------------|----------------|
-| v1 | `sampleGenericBuildingBlueprints.ts` | 2 | `simple_rustic_cabin`, `shed_roof_workshop` |
-| v2 | `sampleGenericBuildingBlueprintsV2.ts` | 3 | `simple_cabin_v2`, `stone_workshop_v2`, `porch_house_v2` |
+- **Root:** `structureType`, `schemaVersion: 2`, `metadata`, `materials` (full palette), `constraints`, `components[]`
+- **Component types:** `room`, `roof`, `door`, `window_group`, `porch`, `chimney`, `step`
+- **Attachments:** `SurfaceAttachment` (`targetSurface` + optional `placement.horizontal`), `DoorAttachment`
 
-`previewPresetCatalog.ts` lists both v1 and v2 for `/preview` lab sources.
+**Preset component IDs (stable across presets):**
 
-### 2.4 GenericBuildingBlueprint v2 — **implemented in `src/`, not docs-only**
+| Preset | Notable ids |
+|--------|-------------|
+| `simple_cabin_v2` | `main-room`, `main-roof`, `front-door`, `front-windows`, `chimney`, `front-step` |
+| `stone_workshop_v2` | `main-room`, `main-roof`, `front-door`, `front-windows`, `left-windows` (no porch/chimney) |
+| `porch_house_v2` | `main-room`, `main-roof`, `front-door`, `front-windows`, `front-porch`, `front-step` |
 
-**In code today:**
+Refinement mapper must **resolve components by id/type** on the **current** blueprint, not assume every preset has a porch or chimney.
 
-- Types: `src/lib/blueprints/types/genericBuildingV2.ts`
-- Validator: `validateGenericBuildingV2.ts` + tests
-- Resolver: `resolveGenericBuildingV2.ts` + tests
-- Generator: `generateGenericBuildingV2.ts`, `compileGenericBuildingV2Plan.ts`, emitters + tests
-- UI: `/generic-lab` v2 client (`GenericLabV2Client.tsx`, component tree editor)
-- Invariant tests: `generatorGenericPresetInvariantsV2.test.ts`
+### 2.5 Validation limits (use for clamping in `applyOperations`)
 
-**Not implemented (docs/planned, out of this branch):**
+From `validateGenericBuildingV2.ts` (representative):
 
-- LLM-authored full v2 blueprints from free-form prompts
-- Semantic **refine** operations (`add window`, `widen porch`) as first-class tool ops
-- Automatic v1→v2 conversion
-- Canonical render / screenshot self-evaluation loop
+| Field | Range / rules |
+|-------|----------------|
+| `room.width` | 5–17 |
+| `room.depth` | 5–13 |
+| `room.wallHeight` | 4–9 |
+| `roof.kind` | `pitched_gable` \| `shed` \| `none` |
+| `roof.layers` | 1–3 (clamped) |
+| `window_group.count` | 0–12 (façade capacity checks) |
+| `porch.depth` | 1–8 |
+| `attach.placement.horizontal` | `left` \| `center` \| `right` |
+| Materials | Must be valid classic pack local keys |
 
-`docs/plans/GENERIC_BUILDING_V2.md` is a **broader** product plan; the **executable v2 preset + generator path already exists**.
+### 2.6 `modify_current` today
 
-### 2.5 Builder vs v2 gap
-
-- Builder preview uses **v1-only** `clonePresetBlueprint` in `genericLabUtils.ts`.
-- Default builder preset is **v1** `simple_rustic_cabin`.
-- Chat/model have **no** path to v2 presets yet.
-
-### 2.6 Other routes (unchanged this branch)
-
-- `/preview` — `PreviewInspectionClient.tsx`; preset catalog v1/v2
-- `/generic-lab` — v1 lab + v2 lab; human blueprint editing
-
-### 2.7 Relevant tests (keep green)
-
-- `pnpm test:generator` — v1/v2 preset invariants, compile tests, validation tests
-- No builder tool tests yet
+`generateBuildingPreview({ mode: "modify_current" })` returns `ok: false` immediately. No blueprint input accepted.
 
 ---
 
-## 3. Recommended first tool scope
+## 3. Recommended next scope
 
-### Option A — v1 preset bridge
+### Options
 
-| Criterion | Assessment |
-|-----------|------------|
-| Speed | Fastest (builder already uses v1 `clonePresetBlueprint`) |
-| Architecture | **Misaligned** with long-term v2 + semantic components target |
-| Demo value | Good for “see preview move” |
-| Risk | Low technically; **high** product debt if refinement is built on v1 |
-| Code touched | Builder preview utils, tool mapping to 2 v1 presets |
+| Option | Description | Speed | Risk | Demo value |
+|--------|-------------|-------|------|------------|
+| **A** | Deterministic text → operations | Fastest | Lowest | Good for scripted demos |
+| **B** | LLM strict JSON → operations | Slower | Parse/schema failures, model drift | Broader phrasing |
+| **C** | Hybrid rules + LLM fallback | Medium | Medium | Best long-term, more scope |
 
-### Option B — v2 as first executable target (preset selection, not free-form authoring)
+### Recommendation: **Option A only** (this step)
 
-| Criterion | Assessment |
-|-----------|------------|
-| Speed | **Still fast** — reuse `getGenericBuildingPresetV2` + `generateStructure` (v2 path already wired) |
-| Architecture | **Correct** direction; matches generic-lab v2 and PLAN in `docs/plans/GENERIC_BUILDING_V2.md` |
-| Demo value | Strong (“cottage” → `simple_cabin_v2`, “workshop” → `stone_workshop_v2`, etc.) |
-| Risk | Low if scope is **preset pick + validate + generate**, not LLM JSON blueprint |
-| Code touched | New `clonePresetBlueprintV2` (or shared preset helper), tool module, builder state, preview props |
+- Implement **`applyBlueprintOperationsV2`** + tests first.
+- Implement **`mapRefinementPromptToOperations`** (deterministic) with an explicit **supported / unsupported** matrix.
+- LLM continues to **summarize** tool results only (extend `formatToolResultForModel` with refinement fields).
+- **Defer** LLM operation planner to a follow-up after 3–5 edit types work end-to-end.
 
-### Recommendation: **Option B — minimal v2 executable path (preset selection)**
-
-**Phase-1 tool behavior (`generate_building_preview`):**
-
-- **Modes implemented first:**
-  - `select_preset` — map user/assistant intent to one of **3 v2 preset ids** (deterministic keyword table + default `simple_cabin_v2`).
-  - `create_from_prompt` — **alias** of `select_preset` in phase 1 (honest activity copy: “Matched request to v2 preset …”).
-- **Deferred in phase 1:**
-  - `modify_current` — needs stable in-memory blueprint + safe patch rules (semantic ops) → later branch.
-  - LLM-emitted full `GenericBuildingBlueprintV2` JSON.
-
-**v1:** Do **not** build refinement on v1. Optional **fallback** only if v2 generation throws (log + single retry with `simple_cabin_v2`), not a parallel product path.
-
-**Honesty in UI/activity:** Say “v2 component blueprint (preset)” not “AI designed every component.”
+**Explicit non-goals for this step:** `addComponent`, `removeComponent`, remove porch, multiple rooms, free-form LLM blueprint patches.
 
 ---
 
-## 4. Tool contract (refined from repo types)
+## 4. Operation model
 
-### 4.1 Request (server-internal first)
+New module: `src/lib/builder/blueprintOperationsV2.ts` (types + apply).
+
+### 4.1 Operation union (refined from repo types)
+
+Use **typed patches**, not `Record<string, unknown>`:
 
 ```ts
-/** Tool name: generate_building_preview */
-type GenerateBuildingPreviewRequest = {
-  /** Latest user message text (trimmed). */
-  prompt: string;
-  mode: "select_preset" | "create_from_prompt" | "modify_current";
-  /** Phase 1: preset id hint from classifier; phase 2+: sanitized blueprint. */
-  presetId?: string;
-  /** Phase 2+ only — never accept raw ComponentPlan. */
-  blueprint?: import("@/src/lib/blueprints/types").StructureBlueprint;
-  /** Optional: last successful blueprint in session (for modify_current later). */
-  currentBlueprint?: import("@/src/lib/blueprints/types").StructureBlueprint;
-  /** High-level image note only — not raw base64 in tool (chat route already handled image). */
-  imageContextSummary?: string;
-};
-```
+import type {
+  GenericBuildingBlueprintV2,
+  GenericBuildingComponentTypeV2,
+  RoofKindV2,
+  RoomFace,
+} from "@/src/lib/blueprints/types/genericBuildingV2";
+import type {
+  BlueprintMaterialPalette,
+  ComponentMaterialOverride,
+} from "@/src/lib/blueprints/types/materials";
 
-Phase 1 implementation: only `select_preset` / `create_from_prompt` with **v2 preset ids**.
-
-### 4.2 Result
-
-```ts
-type BuilderActivityEvent = {
-  readonly id: string;
-  readonly label: string;
-  readonly status: "pending" | "success" | "error";
-};
-
-type BuilderValidationIssueView = {
-  readonly severity: "error" | "warning" | "note";
-  readonly message: string;
-  readonly code?: string;
-};
-
-type GenerateBuildingPreviewResult = {
-  readonly ok: boolean;
-  /** Shown in chat + activity; must reflect actual tool outcome. */
-  readonly assistantSummary: string;
-  /** Public blueprint JSON safe for UI/debug panel — schemaVersion 2 preset clone. */
-  readonly blueprint?: import("@/src/lib/blueprints/types").GenericBuildingBlueprintV2;
-  readonly presetId?: string;
-  readonly presetLabel?: string;
-  readonly schemaVersion: 2;
-  readonly blocks?: import("@/src/lib/voxel/types").VoxelBlock[];
-  readonly blockCount?: number;
-  readonly validationIssues?: readonly BuilderValidationIssueView[];
-  readonly activityEvents: readonly BuilderActivityEvent[];
-  readonly error?: string;
-};
-```
-
-**Never expose:** `ComponentPlan`, `ComponentPlanV2`, resolved compiler internals, raw coordinate arrays for the model to edit.
-
-**Size guard:** Reject or warn if `blockCount` exceeds blueprint `constraints.maxBlockCount` after generation (validator should already catch most issues).
-
-### 4.3 Core function (new)
-
-`src/lib/builder/generateBuildingPreview.ts`:
-
-1. Resolve preset id (`resolvePresetFromPrompt(prompt)`).
-2. `structuredClone(getGenericBuildingPresetV2(id).blueprint)`.
-3. `validateBlueprint(blueprint)` — if `!ok`, return `ok: false` with issues, **no** blocks.
-4. `generateStructure(blueprint)` → blocks.
-5. Build `activityEvents` + `assistantSummary` from actual steps.
-
-Unit-test: each v2 preset id produces `ok: true` and `blockCount > 0`.
-
----
-
-## 5. LLM / tool integration design
-
-### Approaches considered
-
-| Approach | Summary | Risk |
-|----------|---------|------|
-| **1** Single model call returns text + tool JSON | Fragile parsing; stream incompatible | High |
-| **2** Backend rules classify intent → run tool | Predictable; may miss nuance | Low–medium |
-| **3** Strict JSON planner call → tool → final response | More accurate; extra latency/cost | Medium |
-
-### Recommendation: **Approach 2 (rules) + optional single non-stream “summary” call**
-
-**Phase 1 orchestration (`runBuilderChatTurn` in `src/lib/builder/`):**
-
-1. Parse chat request (existing validation).
-2. **`shouldRunGenerationTool(lastUserMessage)`** — keyword/heuristic table, e.g. `make`, `build`, `create`, `generate`, `cottage`, `cabin`, `house`, `workshop`, `porch`, `preview` (tunable list in code).
-3. If **false:** existing Workers AI stream path only (unchanged).
-4. If **true:**
-   - Run `generateBuildingPreview` **before** assistant text.
-   - If tool **`ok: false`:** return assistant message that states failure (no claim of preview update); SSE or JSON includes `toolFailed: true`.
-   - If tool **`ok: true`:** inject **tool summary** into a **short augmented user context** for Workers AI (preset chosen, block count, validation warnings count) — **non-streaming** assistant reply for that turn **or** stream only the explanation after tool completes.
-5. Response to client includes **`toolResult`** payload (blocks or block count + preset id; see API shape).
-
-**Image turns:** Phase 1 — run tool only if text also triggers generation keywords; image-only interpretation stays chat-only. Phase 2 — extend classifier with vision summary stub.
-
-### Guardrails (required)
-
-| Risk | Mitigation |
-|------|------------|
-| Model claims preview changed when tool failed | System prompt + server only attaches `toolResult.ok` metadata; UI only updates preview on `ok: true` |
-| Raw voxel coordinates | Prompt + validator rejects non-blueprint payloads; tool never accepts coordinate arrays |
-| Bypass validation | Tool always calls `validateBlueprint` before `generateStructure` |
-| Edit ComponentPlan | Tool API does not import compiler IR; blueprint only via preset clone |
-| Unconstrained JSON from model | Phase 1: **no** model-produced blueprint JSON; preset id from **server** classifier only |
-| Huge payloads | Cap blocks returned to client (full blocks OK for dev sizes ~ tens of thousands); consider omitting full `blueprint` in SSE and sending `presetId` only |
-
-**Update `BUILDER_SYSTEM_PROMPT`:** Preview **can** update when the server reports a successful generation tool run; assistant must not claim success without `toolResult.ok`.
-
----
-
-## 6. UI integration (minimal)
-
-| Area | Change |
-|------|--------|
-| `BuilderPreviewPanel` | Accept `structure: VoxelStructure \| null` prop; when set, use it instead of regenerating from static `presetId` only; badge: **“Generated preview”** vs initial **“Default preset”** |
-| `BuilderClient` | Hold per-chat: `generatedStructure`, `lastToolResult`, `activePresetId`; on successful tool response, update state and `status: "preview_ready"` |
-| Chat message | Show assistant text as today; attach **real** `activitySteps` from server when tool ran |
-| Validation | Compact strip or activity lines for warnings (v2 `ValidationIssue`); errors block preview update |
-| Failure | Preview unchanged; assistant error friendly; activity shows failed step |
-| `BuilderWorkspace` header | Remove “Static preview” when `preview_ready`; show preset label from tool |
-| **No** full UI redesign |
-
----
-
-## 7. State model (client-only)
-
-Per `BuilderChat` (extend `mockBuilderData.ts` types or parallel `BuilderSessionState`):
-
-```ts
-type BuilderPreviewState = {
-  readonly presetId: string;
-  readonly schemaVersion: 1 | 2;
-  readonly structure: VoxelStructure | null; // null until first successful tool
-  readonly lastToolResult?: GenerateBuildingPreviewResult;
-};
-```
-
-- **New chat / reset:** structure `null`, preview shows default v2 preset (change default to `simple_cabin_v2`) until first generation.
-- **Switch chat:** restore that chat’s last structure from React state (in-memory map).
-- **Refresh:** all generation state lost — **no** misleading “saved build” copy; optional subtle “Not saved” in header (one line).
-- **No** D1/R2.
-
----
-
-## 8. Activity events (tool-driven)
-
-Replace mock steps when `toolResult` present:
-
-| Step id (example) | Label (example) |
-|-------------------|-----------------|
-| `parsed` | Parsed building request |
-| `target` | Chose v2 preset: Simple cabin (v2) |
-| `blueprint` | Loaded v2 component blueprint (preset) |
-| `validate` | Validated blueprint |
-| `generate` | Generated voxel structure (N blocks) |
-| `preview` | Updated builder preview |
-| `assistant` | Assistant response ready |
-
-On failure: mark `validate` or `generate` as `error`; **no** `preview` success step.
-
-Keep `buildMockActivitySteps` only for **chat-only** turns (no tool).
-
----
-
-## 9. Server / API shape
-
-### Recommendation: **separate endpoint + orchestration helper**
-
-| Endpoint | Role |
-|----------|------|
-| `POST /api/builder/chat` | Remains chat + optional **orchestrated** turn: internally may call tool, then Workers AI; extends SSE/JSON with tool metadata |
-| `POST /api/builder/generate` | **Deterministic tool only** — same auth/env as chat; usable for testing and explicit “regenerate” later |
-
-**Why separate `/api/builder/generate`:**
-
-- Keeps generator logic testable without Workers AI tokens.
-- Avoids tangling SSE stream parser with large block payloads in every chat request.
-- Chat route **calls** `generateBuildingPreview()` in-process (shared lib), not only via HTTP self-fetch.
-
-**Client flow (phase 1):**
-
-1. `POST /api/builder/chat` with messages (+ image).
-2. Response:
-   - **Stream path:** new SSE events `tool_start`, `tool_result` (summary + presetId + blockCount; **blocks** in final `done` payload or separate JSON field after stream) — **or**
-   - **Simpler phase 1:** if generation intent, use **JSON response** (no stream) with `{ message, toolResult, model }`; non-generation turns keep streaming.
-
-**Preference alignment:** Start with **non-stream chat response when tool runs** (lowest risk); preserve streaming for non-generation messages.
-
-### Response type extension (sketch)
-
-```ts
-type BuilderChatResponse =
-  | { mode: "stream"; /* existing SSE */ }
+export type BlueprintOperationV2 =
   | {
-      mode: "json";
-      message: string;
-      model: string;
-      toolResult?: GenerateBuildingPreviewResult;
+      op: "updateComponent";
+      id: string;
+      componentType: GenericBuildingComponentTypeV2;
+      patch: ComponentPatchV2;
+    }
+  | {
+      op: "setMaterialPalette";
+      patch: Partial<BlueprintMaterialPalette>;
+    }
+  | {
+      op: "setMaterialOverride";
+      id: string;
+      materials: ComponentMaterialOverride;
+    };
+
+/** Discriminated per-type allowed fields only. */
+export type ComponentPatchV2 =
+  | { type: "room"; width?: number; depth?: number; wallHeight?: number }
+  | {
+      type: "roof";
+      kind?: RoofKindV2;
+      layers?: number;
+      overhang?: number;
+      orientation?: "front_back" | "left_right";
+    }
+  | { type: "window_group"; count?: number; layout?: "symmetric" | "even" }
+  | { type: "porch"; depth?: number; widthMode?: "door_only" | "full_facade" }
+  | {
+      type: "chimney";
+      placementHorizontal?: "left" | "center" | "right";
+      targetFace?: RoomFace; // only non-front faces allowed by validator
+    }
+  | { type: "door"; width?: number; height?: number };
+  // door/step patches optional in v1 of refine — defer unless easy
+```
+
+**Deferred ops:** `addComponent`, `removeComponent`, raw coordinate ops, metadata-only edits.
+
+### 4.2 Apply result
+
+```ts
+export type ApplyOperationsResult =
+  | { ok: true; blueprint: GenericBuildingBlueprintV2; appliedLabels: string[] }
+  | {
+      ok: false;
+      error: string;
+      code:
+        | "UNKNOWN_COMPONENT"
+        | "TYPE_MISMATCH"
+        | "UNSUPPORTED_FIELD"
+        | "INVALID_VALUE";
     };
 ```
 
-Client: if `toolResult?.ok`, apply blocks to preview.
+### 4.3 Pure function contract
+
+```ts
+export function applyBlueprintOperationsV2(
+  blueprint: GenericBuildingBlueprintV2,
+  operations: readonly BlueprintOperationV2[],
+): ApplyOperationsResult;
+```
+
+Rules:
+
+- `structuredClone` input; never mutate argument
+- Match `id` + `componentType` on each op
+- Clamp numeric fields to validator ranges **before** apply (or reject with `INVALID_VALUE`)
+- Reject unknown ids / wrong types / forbidden fields (e.g. porch on workshop preset)
+- **Never** accept `ComponentPlan` or `VoxelBlock[]`
 
 ---
 
-## 10. Cloudflare / runtime
+## 5. Allowed first refinements (deterministic mapper)
 
-- Route handlers stay **OpenNext Workers**-compatible (no Edge runtime).
-- Secrets unchanged (`CLOUDFLARE_*`, `WORKERS_AI_MODEL`).
-- Tool path: `fetch` only inside existing Workers AI module; generator is **pure TS** (no `fs`, no `Buffer` required).
-- **Do not** add Agents, D1, R2, AI Gateway.
-- Streaming for **non-tool** turns must remain working; image JSON mode unchanged.
-- Worker bundle: returning full block arrays in JSON increases response size — acceptable for preset-scale builds; monitor limits.
+Mapper: `mapRefinementPromptToOperations(prompt, blueprint) → { ok, operations } | { ok: false, reason }`.
+
+Helper: `src/lib/builder/blueprintComponentIndex.ts` — `findRoom`, `findRoof`, `findWindowGroups`, `findPorch`, `findChimney` on current blueprint.
+
+### 5.1 Materials (palette — `setMaterialPalette`)
+
+| User phrasing (examples) | Operation |
+|--------------------------|-----------|
+| “stone walls”, “more stone” | `materials.wall` → `cobblestone` or `limestone_bricks` |
+| “wooden”, “wood roof” | `materials.roof` → `oak_planks` |
+| “dark wood roof” | `materials.roof` → `oak_planks` (document as approximate) |
+| “glass windows” | `materials.window` → `glass` |
+| “slate roof” | `materials.roof` → `slate_tiles` |
+
+Use allowlist from `CLASSIC_BLOCK_PACK` / `CLASSIC_MATERIAL_KEYS` (same as generic-lab).
+
+### 5.2 Room dimensions (`updateComponent` on `main-room`)
+
+| Phrasing | Patch |
+|----------|--------|
+| “wider” / “make it wider” | `width += 1` (clamp max 17) |
+| “narrower” | `width -= 1` |
+| “deeper” | `depth += 1` (max 13) |
+| “shallower” | `depth -= 1` |
+| “taller” / “higher” | `wallHeight += 1` (max 9) |
+| “shorter” | `wallHeight -= 1` |
+| “larger” / “bigger” | `width += 1; depth += 1` |
+| “smaller” | `width -= 1; depth -= 1` |
+
+### 5.3 Roof (`updateComponent` on roof where `targetRoom === main-room`)
+
+| Phrasing | Patch |
+|----------|--------|
+| “steeper roof” / “more layers” | `layers += 1` (max 3) |
+| “flatter roof” / “fewer layers” | `layers -= 1` (min 1 unless kind none) |
+| “shed roof” | `kind: "shed"` (+ default `orientation` if missing) |
+| “gable roof” / “pitched roof” | `kind: "pitched_gable"` |
+
+### 5.4 Windows (`updateComponent` on first/front `window_group` or all groups — start with **front** only)
+
+| Phrasing | Patch |
+|----------|--------|
+| “more windows” / “add windows” | `count += 1` (max 12, façade check deferred to validator) |
+| “fewer windows” | `count -= 1` (min 0) |
+
+### 5.5 Porch (`front-porch` if present)
+
+| Phrasing | Patch |
+|----------|--------|
+| “wider porch” | **Unsupported** in v1 (no width field; only `depth`, `widthMode`) — return friendly message |
+| “deeper porch” / “extend porch” | `depth += 1` (max 8) |
+
+### 5.6 Chimney (if `chimney` component exists)
+
+| Phrasing | Patch |
+|----------|--------|
+| “move chimney left/right” | `attach.placement.horizontal` on chimney |
+| “move chimney to the back” | change `targetSurface` to `main-room.back` (validator disallows front) |
+
+### 5.7 Unsupported (explicit)
+
+- Remove porch / remove chimney / add porch
+- “move the door” (attachment surface changes — defer)
+- Arbitrary component creation
+- Raw voxel / coordinate language
+
+Return `ok: false` with **preview unchanged** and clear assistant summary template.
 
 ---
 
-## 11. Testing plan
+## 6. Current blueprint state (client + API)
 
-### Automated
+### 6.1 Client (`BuilderChat`)
+
+Extend `src/app/builder/mockBuilderData.ts`:
+
+```ts
+readonly activeBlueprint: GenericBuildingBlueprintV2 | null;
+```
+
+**On successful generate/refine `toolResult`:**
+
+- Set `activeBlueprint` from `toolResult.blueprint` (structured clone on client)
+- Keep `generatedStructure`, `presetId`, `preview_ready`
+
+**On reset / new chat:**
+
+- Clear `activeBlueprint` and `generatedStructure`
+
+**UI copy:** Keep “Not saved after refresh” (already present).
+
+### 6.2 API request body
+
+Extend `BuilderChatRequestBody` in `builderChatTypes.ts`:
+
+```ts
+readonly currentBlueprint?: GenericBuildingBlueprintV2 | null;
+```
+
+Validate server-side:
+
+- `schemaVersion === 2`, `structureType === generic_building`
+- Reasonable size cap (reuse chat body limit)
+- Strip unknown top-level keys if needed
+
+`POST /api/builder/refine` body:
+
+```ts
+{ prompt: string; blueprint: GenericBuildingBlueprintV2 }
+```
+
+### 6.3 Server flow
+
+Never refine from preset id alone when `currentBlueprint` is provided. Clone blueprint server-side before apply.
+
+---
+
+## 7. Operation application + generation
+
+New tool: `refineBuildingPreview` in `src/lib/builder/refineBuildingPreview.ts`:
+
+```text
+blueprint in
+  → mapRefinementPromptToOperations
+  → if unsupported: fail early
+  → applyBlueprintOperationsV2
+  → validateBlueprint (v2)
+  → if !ok: fail with validation errors
+  → generateStructure(normalized)
+  → return GenerateBuildingPreviewResult (reuse type; add toolKind?: "generate" | "refine")
+```
+
+Reuse `GenerateBuildingPreviewResult`; optional field `toolKind: "refine"` and `appliedOperations?: string[]` for activity/model context.
+
+**Do not skip validation** after apply.
+
+---
+
+## 8. Refinement request handling (server routing)
+
+New: `src/lib/builder/shouldRunRefinementTool.ts`
+
+```ts
+export function shouldRunRefinementTool(
+  userText: string,
+  hasActiveBlueprint: boolean,
+  hasImageAttachment: boolean,
+): boolean;
+```
+
+**Rules (deterministic, order matters in orchestrator):**
+
+1. If **no** `activeBlueprint` / `currentBlueprint` → refinement **off** (assistant can say “generate a building first”).
+2. If image-only without refinement verbs → **off** (chat-only).
+3. If text matches **new-building** preset intent (`workshop`, `cottage`, `make me a …`) **and** strong **create** phrasing → **generate** path (fresh preset), not refine.
+4. If text matches **refinement** patterns (`wider`, `taller`, `change`, `switch`, `more windows`, `dark wood`, `move chimney`, `make the roof`, `make it`) **and** blueprint exists → **refine**.
+5. Else → normal chat stream.
+
+Refinement patterns (separate from `shouldRunGenerationTool`):
+
+```ts
+const REFINE_VERBS = /\b(change|switch|move|wider|narrower|deeper|taller|shorter|steeper|flatter|more|fewer|add|use|make it|make the)\b/i;
+```
+
+Orchestrator in `runBuilderChatTurn.ts`:
+
+```ts
+if (shouldRunRefinementTool(...)) return runBuilderRefinementChatTurn(...)
+else if (shouldUseGenerationJsonTurn(...)) return runBuilderGenerationChatTurn(...)
+else stream
+```
+
+---
+
+## 9. LLM involvement
+
+**This phase:**
+
+- LLM **does not** produce `BlueprintOperationV2[]`.
+- Deterministic mapper is the **only** operation author.
+- LLM receives updated `formatToolResultForModel` including:
+  - `TOOL_KIND: refine`
+  - `OPERATIONS_APPLIED: ...`
+  - `PREVIEW_UPDATED: yes|no`
+- System prompt addition: on refine success, describe **specific** change (material/roof/size), not “rebuilt from scratch.”
+
+**If unsupported mapper result:**
+
+- Still call LLM with `PREVIEW_UPDATED: no` and `UNSUPPORTED_REASON: ...` so the assistant explains limitation honestly.
+
+**Future (not this step):** Option B strict JSON planner behind feature flag, with schema validation and whitelist — only after Option A tests pass.
+
+---
+
+## 10. API design
+
+| Endpoint | Role |
+|----------|------|
+| `POST /api/builder/chat` | Add refinement branch; accept optional `currentBlueprint` |
+| `POST /api/builder/generate` | Unchanged (preset create) |
+| **`POST /api/builder/refine`** | **New** — `{ prompt, blueprint }` → `{ toolResult }` for tests/debug |
+
+Shared libs:
+
+- `refineBuildingPreview()`
+- `runBuilderRefinementChatTurn()` (refine + Workers AI + JSON response)
+
+Chat route calls **in-process** refine function (no self-HTTP).
+
+**Response:** Same JSON shape as generation turn: `{ message, model, toolResult }`, non-streaming.
+
+---
+
+## 11. UI integration (minimal)
+
+| Area | Change |
+|------|--------|
+| `BuilderClient` | Persist `activeBlueprint` from `toolResult`; send in chat body |
+| `BuilderPreviewPanel` | No structural change if blocks + blueprint stay in sync |
+| Activity | Refinement-specific steps via `builderActivityFromRefine.ts` |
+| Header | Optional: show last refinement in `lastOperationSummary` |
+| Failure | Preview + blueprint unchanged |
+| Success | Replace both `generatedStructure` and `activeBlueprint` |
+
+Update stale chat panel copy in `BuilderChatPanel.tsx` if it still says “static preview until blueprint generation connects.”
+
+---
+
+## 12. Activity events (refinement)
+
+Success path:
+
+| id | label |
+|----|--------|
+| `parsed` | Parsed refinement request |
+| `blueprint` | Using current v2 blueprint |
+| `plan` | Planned operation: … (one per op) |
+| `apply` | Applied operations to blueprint |
+| `validate` | Validated updated blueprint |
+| `generate` | Regenerated voxel structure (N blocks) |
+| `preview` | Updated builder preview |
+
+Unsupported path:
+
+| id | label |
+|----|--------|
+| `parsed` | Parsed refinement request |
+| `unsupported` | Could not map to a supported operation |
+| (no preview step) | |
+
+Extend `buildActivityEventsFromToolResult` or add `buildRefinementActivityEvents`.
+
+---
+
+## 13. Tests
+
+### New unit tests
+
+| File | Covers |
+|------|--------|
+| `applyBlueprintOperationsV2.test.ts` | clone safety, room width, palette, roof kind, invalid id |
+| `mapRefinementPromptToOperations.test.ts` | phrasing → ops, unsupported |
+| `shouldRunRefinementTool.test.ts` | blueprint required, vs generate |
+| `refineBuildingPreview.test.ts` | integration on `simple_cabin_v2` blueprint |
+
+### Keep green
 
 ```bash
 pnpm exec tsc --noEmit
 pnpm lint
 pnpm test:generator
 pnpm run build
+pnpm vitest run src/lib/builder/__tests__
 ```
 
-**New unit tests (Vitest):**
+### Manual (deployed or `preview:cloudflare`)
 
-- `generateBuildingPreview` — each v2 preset succeeds.
-- `resolvePresetFromPrompt` — keyword → id mapping.
-- `shouldRunGenerationTool` — positive/negative cases.
-- Optional: `POST /api/builder/generate` route test with mocked env (minimal).
-
-### Manual (deployed or `pnpm run preview:cloudflare`)
-
-| Check | Expected |
-|-------|----------|
-| `/builder` loads | Default v2 preset preview |
-| Chat without build verbs | Streams as today |
-| Image prompt | Works; no false preview update unless keywords |
-| “Make me a small stone cottage” | Tool runs → preview updates → real activity |
-| Tool failure path | Friendly error; preview unchanged |
-| `/preview`, `/generic-lab` | Unchanged |
+1. “Make me a stone workshop” → preview updates  
+2. “Make it taller” → taller workshop, same preset family  
+3. “Make the roof dark wood” → palette roof material change (honest wording)  
+4. “Add more windows” on cabin → front window count +1  
+5. “Move the chimney to the left” on cabin → placement change  
+6. “Make the porch wider” on porch house → **unsupported** message, preview unchanged  
+7. Normal question → still streams  
+8. Image-only → chat-only  
+9. `/preview`, `/generic-lab` unchanged  
 
 ---
 
-## 12. Out of scope (this branch)
+## 14. Cloudflare / OpenNext
 
-- Cloudflare Agents SDK, Durable Objects, D1, R2, AI Gateway
-- Full v2 **authoring** from LLM JSON
-- Semantic **refine** / `modify_current` beyond stub
-- Canonical render evaluation, long-term memory, auth
-- Model outputting voxel coordinates
-- Public import/export format
-- Major `/builder` UI redesign
-- Generator/blueprint **logic** changes unless required for tool safety
+- No new bindings, D1, R2, Agents, AI Gateway
+- Same route handler pattern (no Edge runtime)
+- Refine responses include full blueprint JSON — monitor response size; still acceptable for single-building presets
+- Workers AI only for explanation after tool runs
 
 ---
 
-## 13. Implementation phases
+## 15. Out of scope
 
-### Phase A — Audit & types
-
-- Add `builderToolTypes.ts`, `generateBuildingPreview.ts` stubs.
-- Preset classifier table + tests.
-- Document preset ids in plan/CHANGE.
-
-### Phase B — Deterministic tool
-
-- Implement `generateBuildingPreview` (v2 presets only).
-- `clonePresetBlueprintV2` in `src/lib/blueprints/` or extend catalog helper.
-- Unit tests.
-
-### Phase C — API
-
-- `POST /api/builder/generate/route.ts`.
-- `runBuilderChatTurn.ts` orchestration; wire into `chat/route.ts` for generation intents.
-- Extend SSE or JSON response contract + `consumeBuilderChatStream` if SSE events added.
-
-### Phase D — Client state & preview
-
-- Extend `BuilderChat` / client state with `structure` + `toolResult`.
-- `BuilderPreviewPanel` driven by generated structure.
-- Default preset → v2.
-
-### Phase E — Activity & prompts
-
-- Real activity from tool; update `BUILDER_SYSTEM_PROMPT`.
-- Validation warnings in UI (compact).
-
-### Phase F — Docs
-
-- `docs/development/CHANGE.md` entry.
-- Short note in `docs/deployment/CLOUDFLARE.md` only if env/API behavior changes (unlikely).
+- LLM-authored operations (unless explicitly approved later)
+- Full free-form blueprint from model JSON
+- `addComponent` / `removeComponent`
+- Multiple rooms, interiors, region selection
+- Persistence, auth, canonical screenshots
+- Cloudflare platform expansion
+- Generator/compiler changes except as forced by validation
 
 ---
 
-## 14. Success criteria
+## 16. Implementation phases
 
-- [ ] User can ask to create/build a cottage-like structure and **see preview change** after a **validated** generation.
-- [ ] Activity log shows **real** tool steps (not mock “Preview unchanged”).
-- [ ] Assistant does **not** claim preview updated on tool failure.
-- [ ] Model is **not** given raw voxel coordinates or ComponentPlan IR.
-- [ ] Streaming chat still works for non-generation messages.
-- [ ] Image chat still works.
-- [ ] `pnpm test:generator` and existing checks pass.
-- [ ] No persistence / Cloudflare platform expansion.
+### Phase A — Audit + operation types
+
+- `blueprintOperationsV2.ts` types
+- `blueprintComponentIndex.ts` helpers
+- Extend `builderToolTypes` (`toolKind`, refine request types)
+
+### Phase B — `applyBlueprintOperationsV2` + tests
+
+- Pure apply with clamp/reject
+- No API wiring yet
+
+### Phase C — `mapRefinementPromptToOperations` + tests
+
+- Supported matrix from §5
+- Unsupported messages
+
+### Phase D — `refineBuildingPreview` + `POST /api/builder/refine`
+
+- Full validate → generate pipeline
+
+### Phase E — Chat orchestration
+
+- `shouldRunRefinementTool`, `runBuilderRefinementChatTurn`
+- Extend `parseBuilderChatRequestBody` / chat route ordering
+- Update `formatToolResultForModel`, `BUILDER_SYSTEM_PROMPT`
+
+### Phase F — Client state + UI
+
+- `activeBlueprint` on `BuilderChat`
+- Send `currentBlueprint` in chat POST
+- Activity + chat panel copy
+
+### Phase G — `CHANGE.md`
+
+- Document supported refinements and limitations
 
 ---
 
-## 15. Files likely to create/edit
+## 17. Success criteria
+
+- [ ] At least **3–5** refinement types work on an existing build (materials, room size, roof, windows, chimney placement)
+- [ ] Edits apply to **current** blueprint, not a fresh preset
+- [ ] Validation runs **after** apply; preview updates only on `toolResult.ok`
+- [ ] Unsupported requests fail gracefully; preview unchanged
+- [ ] Model never receives blocks/ComponentPlan to edit
+- [ ] Streaming chat + image chat still work
+- [ ] All automated tests pass
+
+---
+
+## 18. Files likely to create/edit
 
 | Action | Path |
 |--------|------|
-| Create | `src/lib/builder/builderToolTypes.ts` |
-| Create | `src/lib/builder/generateBuildingPreview.ts` |
-| Create | `src/lib/builder/resolvePresetFromPrompt.ts` |
-| Create | `src/lib/builder/shouldRunGenerationTool.ts` |
-| Create | `src/lib/builder/runBuilderChatTurn.ts` |
-| Create | `src/lib/builder/builderActivityFromTool.ts` |
-| Create | `src/lib/blueprints/clonePresetBlueprint.ts` (v1+v2 unified) or `clonePresetBlueprintV2.ts` |
-| Create | `src/app/api/builder/generate/route.ts` |
-| Edit | `src/app/api/builder/chat/route.ts` |
+| Create | `src/lib/builder/blueprintOperationsV2.ts` |
+| Create | `src/lib/builder/applyBlueprintOperationsV2.ts` |
+| Create | `src/lib/builder/blueprintComponentIndex.ts` |
+| Create | `src/lib/builder/mapRefinementPromptToOperations.ts` |
+| Create | `src/lib/builder/refineBuildingPreview.ts` |
+| Create | `src/lib/builder/shouldRunRefinementTool.ts` |
+| Create | `src/lib/builder/runBuilderRefinementChatTurn.ts` |
+| Create | `src/app/api/builder/refine/route.ts` |
+| Create | `src/lib/builder/__tests__/applyBlueprintOperationsV2.test.ts` |
+| Create | `src/lib/builder/__tests__/mapRefinementPromptToOperations.test.ts` |
+| Create | `src/lib/builder/__tests__/shouldRunRefinementTool.test.ts` |
+| Create | `src/lib/builder/__tests__/refineBuildingPreview.test.ts` |
+| Edit | `src/lib/builder/builderToolTypes.ts` |
 | Edit | `src/lib/builder/builderChatTypes.ts` |
+| Edit | `src/lib/builder/validateChatRequest.ts` (optional blueprint validation) |
+| Edit | `src/lib/builder/runBuilderChatTurn.ts` |
+| Edit | `src/app/api/builder/chat/route.ts` |
+| Edit | `src/lib/builder/formatToolResultForModel.ts` |
 | Edit | `src/lib/builder/builderSystemPrompt.ts` |
-| Edit | `src/lib/builder/consumeBuilderChatStream.ts` (if new SSE events) |
-| Edit | `src/app/builder/BuilderClient.tsx` |
+| Edit | `src/lib/builder/builderActivityFromTool.ts` |
 | Edit | `src/app/builder/mockBuilderData.ts` |
-| Edit | `src/app/builder/components/BuilderPreviewPanel.tsx` |
-| Edit | `src/app/builder/components/BuilderWorkspace.tsx` |
-| Edit | `src/lib/builder/mockBuilderActivity.ts` (chat-only fallback) |
-| Test | `src/lib/builder/__tests__/generateBuildingPreview.test.ts` |
-| Test | `src/lib/builder/__tests__/resolvePresetFromPrompt.test.ts` |
-| Docs | `docs/development/CHANGE.md` |
+| Edit | `src/app/builder/BuilderClient.tsx` |
+| Edit | `src/app/builder/components/BuilderChatPanel.tsx` (stale copy) |
+| Edit | `CHANGE.md` |
 
-**Do not edit** (unless build forces): `src/lib/generation/**` compiler internals, `/generic-lab` editor logic, `/preview` page.
+**Do not edit:** `src/lib/generation/components/v2/*` compiler internals unless validation forces a fix.
 
 ---
 
-## 16. Approval checklist (before implementation)
-
-Please confirm:
-
-1. **v2 preset selection** is acceptable as phase-1 “create_from_prompt” (no LLM blueprint JSON yet).
-2. **Non-streaming** chat response when the tool runs is acceptable for v1 integration (streaming stays for normal chat).
-3. **Separate** `POST /api/builder/generate` plus in-process call from chat is acceptable.
-4. **Default builder preview** should switch to **`simple_cabin_v2`** (not v1 cabin).
-5. Keyword list for `shouldRunGenerationTool` is sufficient for first demo (vs extra JSON planner call).
-
----
-
-## 17. Main risks
+## 19. Key risks
 
 | Risk | Mitigation |
 |------|------------|
-| False-positive tool triggers on casual chat | Tunable keyword list; require build verbs |
-| Assistant contradicts tool outcome | Strict prompt + server-built summary from `toolResult` only |
-| Large JSON responses (blocks) | Accept for MVP; later return presetId + regen client-side |
-| SSE complexity | Phase 1 JSON for tool turns |
-| User expects persistence | Copy: “Not saved after refresh” |
-| `modify_current` requested but not ready | Honest “can’t edit yet” + new preset selection |
+| Blueprint not stored client-side | Phase F requirement; block refine until present |
+| Generate vs refine classifier collision | Explicit precedence rules; tests for “make me X” vs “make it wider” |
+| Preset missing component (porch/chimney) | Index helpers return unsupported, not throw |
+| Validation fails after apply | Surface validator errors; do not update preview |
+| Large JSON payloads | Accept for MVP; only send blueprint on refine/generate turns |
+| Mapper false positives | Conservative regex; prefer unsupported over wrong edit |
 
 ---
 
-*After review approval, implement phase A → F on `feature/builder-agent-tools` without expanding scope.*
+## 20. Approval questions (before implementation)
+
+1. **Store full `activeBlueprint` on client** and POST it on refine/generate follow-ups — OK?
+2. **“Make the porch wider”** → unsupported in v1 (only depth supported) — acceptable?
+3. **Fresh generate when user says “make me a workshop”** even if a blueprint exists — should that **replace** the current build (recommended) or be treated as refine?
+4. **Refine all `window_group` components** vs **front only** for “more windows” — prefer front-only first?
+5. **Separate `POST /api/builder/refine`** for tests — approved?
+
+---
+
+*Stop here until review. Do not implement until approved.*

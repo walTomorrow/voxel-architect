@@ -1,4 +1,5 @@
 import { prepareMessagesForChatApi } from "@/src/lib/builder/builderChatGuardrails";
+import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
 import {
   BUILDER_IMAGE_MIME_TYPES,
   BUILDER_MAX_CHAT_MESSAGES,
@@ -9,6 +10,7 @@ import {
   type BuilderImageAttachmentInput,
   type BuilderImageMimeType,
 } from "@/src/lib/builder/builderChatTypes";
+import { parseCurrentBlueprintV2 } from "@/src/lib/builder/parseCurrentBlueprint";
 
 const MAX_NAME_CHARS = 200;
 
@@ -122,5 +124,14 @@ export function parseBuilderChatRequestBody(
     return { ok: false, error: "The last message must be from the user." };
   }
 
-  return { ok: true, data: { messages, attachment } };
+  let currentBlueprint: GenericBuildingBlueprintV2 | null = null;
+  if (body.currentBlueprint != null) {
+    const bp = parseCurrentBlueprintV2(body.currentBlueprint);
+    if (!bp.ok) {
+      return { ok: false, error: bp.error };
+    }
+    currentBlueprint = bp.blueprint;
+  }
+
+  return { ok: true, data: { messages, attachment, currentBlueprint: currentBlueprint ?? null } };
 }

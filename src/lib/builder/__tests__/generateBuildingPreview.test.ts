@@ -29,6 +29,7 @@ describe("generateBuildingPreview", () => {
       expect(result.blockCount).toBeGreaterThan(0);
       expect(result.blocks?.length).toBe(result.blockCount);
       expect(result.schemaVersion).toBe(2);
+      expect(result.toolKind).toBe("generate");
     });
   }
 });

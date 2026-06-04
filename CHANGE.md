@@ -1,3 +1,52 @@
+# Change report — Builder v2 refinement layer
+
+## Branch
+
+`feature/builder-agent-tools` (refinement extension)
+
+## Scope
+
+Deterministic semantic edits on an active v2 blueprint: client stores full `activeBlueprint`, POSTs it on refinement turns, server maps phrases to `setMaterialPalette` / `updateComponent`, validates, and regenerates. No LLM-authored operations, no add/remove components, no persistence.
+
+## Behavior
+
+- **Refinement intent** (e.g. “make it taller”, “dark wood roof”, “more windows”, “deeper porch”): JSON chat response with `toolResult.toolKind: "refine"`; preview updates only when `toolResult.ok`.
+- **Strong create** (e.g. “make me a workshop”) with an active blueprint: replaces build via existing generate path.
+- **Wider porch**: unsupported — clear error, preview unchanged.
+- **More windows**: front/primary `window_group` only.
+- **`POST /api/builder/refine`**: standalone debug endpoint; `/api/builder/chat` calls the same `refineBuildingPreview` in-process.
+- **Normal chat**: SSE streaming unchanged.
+
+## Files created (refinement)
+
+- `src/lib/builder/blueprintOperationsV2.ts` — operation types
+- `src/lib/builder/blueprintComponentIndex.ts` — component lookup helpers
+- `src/lib/builder/applyBlueprintOperationsV2.ts` — pure apply + clamp
+- `src/lib/builder/mapRefinementPromptToOperations.ts` — phrase → operations
+- `src/lib/builder/shouldRunRefinementTool.ts` — refinement + strong-create gates
+- `src/lib/builder/refineBuildingPreview.ts` — map → apply → validate → generate
+- `src/lib/builder/parseCurrentBlueprint.ts` — request blueprint validation
+- `src/app/api/builder/refine/route.ts` — debug refine endpoint
+- `src/lib/builder/__tests__/shouldRunRefinementTool.test.ts`
+- `src/lib/builder/__tests__/mapRefinementPromptToOperations.test.ts`
+- `src/lib/builder/__tests__/applyBlueprintOperationsV2.test.ts`
+- `src/lib/builder/__tests__/refineBuildingPreview.test.ts`
+
+## Files updated (refinement)
+
+- `src/lib/builder/builderToolTypes.ts` — unified `BuilderToolResult` with `toolKind`
+- `src/lib/builder/runBuilderChatTurn.ts` — refine → generate → stream orchestration
+- `src/app/api/builder/chat/route.ts` — refinement branch
+- `src/lib/builder/validateChatRequest.ts` — parse `currentBlueprint`
+- `src/lib/builder/builderChatTypes.ts` — `currentBlueprint` on request body
+- `src/lib/builder/formatToolResultForModel.ts` — refine vs generate context
+- `src/lib/builder/builderSystemPrompt.ts` — refinement instructions
+- `src/app/builder/mockBuilderData.ts` — `activeBlueprint` state
+- `src/app/builder/BuilderClient.tsx` — store/resend blueprint, tool routing UX
+- `src/app/builder/components/BuilderChatPanel.tsx` — header copy
+
+---
+
 # Change report — Builder agent tools (deterministic bridge)
 
 ## Branch

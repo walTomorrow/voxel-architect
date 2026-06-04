@@ -1,10 +1,10 @@
 import type {
   BuilderActivityEvent,
-  GenerateBuildingPreviewResult,
+  BuilderToolResult,
 } from "@/src/lib/builder/builderToolTypes";
 
 export function buildActivityEventsFromToolResult(
-  result: GenerateBuildingPreviewResult,
+  result: BuilderToolResult,
   hasImage: boolean,
 ): readonly BuilderActivityEvent[] {
   const events: BuilderActivityEvent[] = [

@@ -33,7 +33,7 @@ export function BuilderChatPanel({
       <div className="shrink-0 border-b border-zinc-800/90 px-4 py-3">
         <h2 className="text-sm font-semibold text-zinc-200">Conversation</h2>
         <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
-          Multimodal assistant — static preview until blueprint generation connects.
+          Multimodal assistant — generate a building, then refine materials, size, roof, and windows.
         </p>
       </div>
       <div

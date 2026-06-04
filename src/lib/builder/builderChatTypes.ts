@@ -39,6 +39,7 @@ export type BuilderImageAttachmentInput = {
 export type BuilderChatRequestBody = {
   readonly messages: readonly BuilderChatMessageInput[];
   readonly attachment: BuilderImageAttachmentInput | null;
+  readonly currentBlueprint: import("@/src/lib/blueprints/types/genericBuildingV2").GenericBuildingBlueprintV2 | null;
 };
 
 export type BuilderChatSuccessResponse = {
@@ -46,11 +47,10 @@ export type BuilderChatSuccessResponse = {
   readonly model: string;
 };
 
-/** Non-streaming chat turn when the server ran generate_building_preview. */
 export type BuilderChatWithToolSuccessResponse = {
   readonly message: string;
   readonly model: string;
-  readonly toolResult: import("@/src/lib/builder/builderToolTypes").GenerateBuildingPreviewResult;
+  readonly toolResult: import("@/src/lib/builder/builderToolTypes").BuilderToolResult;
 };
 
 export type BuilderChatErrorCode = "CONFIG" | "VALIDATION" | "UPSTREAM" | "LICENSE";

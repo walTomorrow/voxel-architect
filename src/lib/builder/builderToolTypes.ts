@@ -6,6 +6,8 @@ export type BuilderToolMode =
   | "create_from_prompt"
   | "modify_current";
 
+export type BuilderToolKind = "generate" | "refine";
+
 export type BuilderActivityStatus = "pending" | "success" | "error";
 
 export type BuilderActivityEvent = {
@@ -25,8 +27,14 @@ export type GenerateBuildingPreviewRequest = {
   readonly mode: BuilderToolMode;
 };
 
-export type GenerateBuildingPreviewResult = {
+export type RefineBuildingPreviewRequest = {
+  readonly prompt: string;
+  readonly blueprint: GenericBuildingBlueprintV2;
+};
+
+export type BuilderToolResult = {
   readonly ok: boolean;
+  readonly toolKind: BuilderToolKind;
   readonly assistantSummary: string;
   readonly blueprint?: GenericBuildingBlueprintV2;
   readonly presetId?: string;
@@ -36,11 +44,15 @@ export type GenerateBuildingPreviewResult = {
   readonly blockCount?: number;
   readonly validationIssues?: readonly BuilderValidationIssueView[];
   readonly activityEvents: readonly BuilderActivityEvent[];
+  readonly appliedOperations?: readonly string[];
   readonly error?: string;
 };
+
+/** @deprecated Use BuilderToolResult */
+export type GenerateBuildingPreviewResult = BuilderToolResult;
 
 export type BuilderChatToolSuccessResponse = {
   readonly message: string;
   readonly model: string;
-  readonly toolResult: GenerateBuildingPreviewResult;
+  readonly toolResult: BuilderToolResult;
 };

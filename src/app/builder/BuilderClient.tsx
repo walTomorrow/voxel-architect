@@ -16,6 +16,10 @@ import { buildActivityEventsFromToolResult } from "@/src/lib/builder/builderActi
 import { buildMockActivitySteps } from "@/src/lib/builder/mockBuilderActivity";
 import { shouldRunGenerationTool } from "@/src/lib/builder/shouldRunGenerationTool";
 import {
+  shouldRunRefinementTool,
+  shouldStrongCreatePrompt,
+} from "@/src/lib/builder/shouldRunRefinementTool";
+import {
   cloneChatMessages,
   createEmptyBuilderChat,
   DEFAULT_BUILDER_CHAT_ID,
@@ -193,7 +197,12 @@ export function BuilderClient() {
 
       const assistantId = newMessageId();
       const hasImage = image != null;
-      const willRunTool = shouldRunGenerationTool(content, hasImage);
+      const hasBlueprint = activeChat.activeBlueprint != null;
+      const willRunRefine = shouldRunRefinementTool(content, hasBlueprint, hasImage);
+      const willRunGenerate =
+        shouldRunGenerationTool(content, hasImage) &&
+        (!hasBlueprint || shouldStrongCreatePrompt(content));
+      const willRunTool = willRunRefine || willRunGenerate;
       const activitySteps = buildMockActivitySteps(hasImage);
 
       const patchAssistant = (patch: Partial<BuilderMessageView>) => {
@@ -235,6 +244,7 @@ export function BuilderClient() {
           body: JSON.stringify({
             messages: prepared.messages,
             attachment: attachmentPayload,
+            currentBlueprint: activeChat.activeBlueprint,
           }),
         });
 
@@ -318,6 +328,7 @@ export function BuilderClient() {
             presetId,
             status: "preview_ready",
             generatedStructure: structure,
+            activeBlueprint: toolResult.blueprint ?? c.activeBlueprint,
             lastOperationSummary: toolResult.assistantSummary,
           }));
           setValidationWarnings(
@@ -348,7 +359,7 @@ export function BuilderClient() {
         setIsLoading(false);
       }
     },
-    [activeChatId, appendAssistantError, syncViews, updateChat],
+    [activeChat.activeBlueprint, activeChatId, activeChat.presetId, appendAssistantError, syncViews, updateChat],
   );
 
   const handleResetChat = useCallback(() => {
@@ -359,6 +370,7 @@ export function BuilderClient() {
       ...c,
       messages: restored,
       generatedStructure: null,
+      activeBlueprint: null,
       status: "empty",
     }));
     syncViews(activeChatId, restored);
