@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { clonePresetBlueprint } from "@/src/app/generic-lab/genericLabUtils";
 import { BuilderPreviewBreakdown } from "@/src/app/builder/components/BuilderPreviewBreakdown";
 import { BuilderPreviewLayerBar } from "@/src/app/builder/components/BuilderPreviewLayerBar";
@@ -14,15 +14,120 @@ import {
   filterBlocksForLayerView,
 } from "@/src/lib/voxel/layerView";
 import { VoxelViewer } from "@/src/components/voxel/VoxelViewer";
+import type { VoxelStructure } from "@/src/lib/voxel/types";
 
 type Props = {
   readonly presetId: string;
 };
 
+type PreviewViewportProps = {
+  readonly hasStructure: boolean;
+  readonly displayStructure: VoxelStructure | null;
+  readonly visibleStructure: VoxelStructure;
+  readonly cameraResetNonce: number;
+  readonly error: string | null;
+  readonly layerViewMode: LayerViewMode;
+  readonly onLayerViewModeChange: (mode: LayerViewMode) => void;
+  readonly layerExtents: { readonly yMin: number; readonly yMax: number } | null;
+  readonly effectiveLayer: number;
+  readonly onSelectedLayerChange: (y: number) => void;
+  readonly visibleCount: number;
+  readonly totalCount: number;
+  readonly onRefitCamera: () => void;
+  readonly showExpand?: boolean;
+  readonly onExpand?: () => void;
+};
+
+function PreviewViewport({
+  hasStructure,
+  displayStructure,
+  visibleStructure,
+  error,
+  layerViewMode,
+  onLayerViewModeChange,
+  layerExtents,
+  effectiveLayer,
+  onSelectedLayerChange,
+  visibleCount,
+  totalCount,
+  onRefitCamera,
+  cameraResetNonce,
+  showExpand,
+  onExpand,
+}: PreviewViewportProps) {
+  return (
+    <div className="relative min-h-0 flex-1">
+      {hasStructure && displayStructure ? (
+        <VoxelViewer
+          className="absolute inset-0 h-full w-full"
+          structure={visibleStructure}
+          boundsStructure={displayStructure}
+          cameraResetNonce={cameraResetNonce}
+        />
+      ) : (
+        <div className="flex h-full items-center justify-center p-8 text-center text-sm text-zinc-500">
+          {error ?? "Preview unavailable"}
+        </div>
+      )}
+
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 p-2">
+        {showExpand && onExpand ? (
+          <button
+            type="button"
+            className="pointer-events-auto rounded-lg border border-zinc-600/80 bg-zinc-950/90 px-2.5 py-1 text-[10px] font-medium text-zinc-200 shadow-lg backdrop-blur-sm transition hover:border-zinc-500 hover:bg-zinc-900"
+            onClick={onExpand}
+            aria-label="Expand building preview"
+          >
+            Expand
+          </button>
+        ) : (
+          <span />
+        )}
+        <span className="rounded-full border border-zinc-600/50 bg-zinc-950/85 px-2.5 py-0.5 text-[10px] font-medium text-zinc-400 backdrop-blur-sm">
+          Static preset
+        </span>
+      </div>
+
+      {hasStructure ? (
+        <div className="absolute inset-x-3 bottom-3 z-10">
+          <BuilderPreviewLayerBar
+            hasStructure={hasStructure}
+            layerViewMode={layerViewMode}
+            onLayerViewModeChange={onLayerViewModeChange}
+            layerExtents={layerExtents}
+            selectedLayer={effectiveLayer}
+            onSelectedLayerChange={onSelectedLayerChange}
+            visibleCount={visibleCount}
+            totalCount={totalCount}
+            onRefitCamera={onRefitCamera}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function BuilderPreviewPanel({ presetId }: Props) {
   const [layerViewMode, setLayerViewMode] = useState<LayerViewMode>("full");
   const [selectedLayer, setSelectedLayer] = useState(0);
   const [cameraResetNonce, setCameraResetNonce] = useState(0);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const closeExpanded = useCallback(() => setIsExpanded(false), []);
+
+  useEffect(() => {
+    if (!isExpanded) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeExpanded();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isExpanded, closeExpanded]);
 
   const generated = useMemo(() => {
     try {
@@ -79,49 +184,97 @@ export function BuilderPreviewPanel({ presetId }: Props) {
 
   const totalCount = generated.displayStructure?.blocks.length ?? 0;
 
-  return (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-zinc-950">
-      <div className="relative min-h-0 flex-1">
-        {hasStructure ? (
-          <VoxelViewer
-            className="absolute inset-0 h-full w-full"
-            structure={visibleStructure}
-            boundsStructure={generated.displayStructure!}
-            cameraResetNonce={cameraResetNonce}
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center p-8 text-center text-sm text-zinc-500">
-            {generated.error ?? "Preview unavailable"}
-          </div>
-        )}
+  const refitCamera = useCallback(() => setCameraResetNonce((n) => n + 1), []);
 
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-end p-2">
-          <span className="rounded-full border border-amber-500/30 bg-zinc-950/85 px-2.5 py-0.5 text-[10px] font-medium text-amber-200/90 backdrop-blur-sm">
-            Demo — AI not connected
-          </span>
+  const viewportProps: PreviewViewportProps = {
+    hasStructure,
+    displayStructure: generated.displayStructure,
+    visibleStructure,
+    cameraResetNonce,
+    error: generated.error,
+    layerViewMode,
+    onLayerViewModeChange: setLayerViewMode,
+    layerExtents,
+    effectiveLayer,
+    onSelectedLayerChange: setSelectedLayer,
+    visibleCount: visibleStructure.blocks.length,
+    totalCount,
+    onRefitCamera: refitCamera,
+  };
+
+  return (
+    <>
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-zinc-950">
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <PreviewViewport
+            {...viewportProps}
+            showExpand={hasStructure}
+            onExpand={() => setIsExpanded(true)}
+          />
         </div>
 
-        {hasStructure ? (
-          <div className="absolute inset-x-3 bottom-3 z-10">
-            <BuilderPreviewLayerBar
-              hasStructure={hasStructure}
-              layerViewMode={layerViewMode}
-              onLayerViewModeChange={setLayerViewMode}
-              layerExtents={layerExtents}
-              selectedLayer={effectiveLayer}
-              onSelectedLayerChange={setSelectedLayer}
-              visibleCount={visibleStructure.blocks.length}
-              totalCount={totalCount}
-              onRefitCamera={() => setCameraResetNonce((n) => n + 1)}
-            />
-          </div>
-        ) : null}
+        <BuilderPreviewBreakdown
+          breakdown={fullStructureBreakdown}
+          totalCount={totalCount}
+        />
       </div>
 
-      <BuilderPreviewBreakdown
-        breakdown={fullStructureBreakdown}
-        totalCount={totalCount}
-      />
-    </div>
+      {isExpanded ? (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 p-2 backdrop-blur-[2px] sm:p-3"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Building preview expanded"
+          onClick={closeExpanded}
+        >
+          <div
+            className="relative flex h-full w-full flex-col overflow-hidden rounded-xl border border-zinc-700/90 bg-zinc-950 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800/90 px-4 py-2.5">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-100">Building preview</h3>
+                <p className="text-[11px] text-zinc-500">
+                  Click outside, Close, or Esc to exit
+                </p>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg border border-zinc-600 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800"
+                onClick={closeExpanded}
+              >
+                Close
+              </button>
+            </div>
+            <div className="relative min-h-0 flex-1">
+              <VoxelViewer
+                className="absolute inset-0 h-full w-full"
+                structure={visibleStructure}
+                boundsStructure={generated.displayStructure!}
+                cameraResetNonce={cameraResetNonce}
+              />
+              <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-end p-3">
+                <span className="rounded-full border border-zinc-600/50 bg-zinc-950/85 px-2.5 py-0.5 text-[10px] font-medium text-zinc-400 backdrop-blur-sm">
+                  Static preset
+                </span>
+              </div>
+              <div className="absolute inset-x-4 bottom-4 z-10">
+                <BuilderPreviewLayerBar
+                  hasStructure={hasStructure}
+                  layerViewMode={layerViewMode}
+                  onLayerViewModeChange={setLayerViewMode}
+                  layerExtents={layerExtents}
+                  selectedLayer={effectiveLayer}
+                  onSelectedLayerChange={setSelectedLayer}
+                  visibleCount={visibleStructure.blocks.length}
+                  totalCount={totalCount}
+                  onRefitCamera={refitCamera}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
