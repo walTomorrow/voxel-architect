@@ -29,12 +29,6 @@ export default function PreviewPage() {
             Preset inspection
           </span>
           <Link
-            href="/builder"
-            className="rounded border border-zinc-700 px-2 py-1 text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
-          >
-            Builder →
-          </Link>
-          <Link
             href="/generic-lab"
             className="rounded border border-zinc-700 px-2 py-1 text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
           >
