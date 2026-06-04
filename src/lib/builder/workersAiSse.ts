@@ -1,8 +1,19 @@
+import { applyChatOnlyResponseSafety } from "@/src/lib/builder/applyChatOnlyResponseSafety";
+
 /** Our builder chat SSE events (server → browser). */
 export type BuilderChatStreamEvent =
   | { readonly event: "chunk"; readonly text: string }
-  | { readonly event: "done"; readonly model: string }
+  | {
+      readonly event: "done";
+      readonly model: string;
+      readonly text?: string;
+      readonly guarded?: boolean;
+    }
   | { readonly event: "error"; readonly error: string; readonly code: string };
+
+export type BuilderStreamGuardOptions = {
+  readonly hasActiveBlueprint?: boolean;
+};
 
 export function encodeBuilderChatSse(event: BuilderChatStreamEvent): string {
   const { event: name, ...data } = event;
@@ -32,10 +43,33 @@ export function extractWorkersAiStreamToken(data: string): string | null {
 export function transformWorkersAiStreamToBuilderSse(
   upstream: ReadableStream<Uint8Array>,
   model: string,
+  guardOptions?: BuilderStreamGuardOptions,
 ): ReadableStream<Uint8Array> {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let lineBuffer = "";
+  let accumulated = "";
+  let doneEmitted = false;
+
+  const emitDone = (controller: TransformStreamDefaultController<Uint8Array>) => {
+    if (doneEmitted) return;
+    doneEmitted = true;
+    const safe = applyChatOnlyResponseSafety({
+      assistantText: accumulated,
+      hasToolResult: false,
+      hasActiveBlueprint: guardOptions?.hasActiveBlueprint,
+    });
+    controller.enqueue(
+      encoder.encode(
+        encodeBuilderChatSse({
+          event: "done",
+          model,
+          text: safe.text,
+          guarded: safe.guarded,
+        }),
+      ),
+    );
+  };
 
   return upstream.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
@@ -49,13 +83,12 @@ export function transformWorkersAiStreamToBuilderSse(
           if (!trimmed.startsWith("data:")) continue;
           const data = trimmed.slice(5).trim();
           if (data === "[DONE]") {
-            controller.enqueue(
-              encoder.encode(encodeBuilderChatSse({ event: "done", model })),
-            );
+            emitDone(controller);
             continue;
           }
           const token = extractWorkersAiStreamToken(data);
           if (token) {
+            accumulated += token;
             controller.enqueue(
               encoder.encode(encodeBuilderChatSse({ event: "chunk", text: token })),
             );
@@ -68,12 +101,11 @@ export function transformWorkersAiStreamToBuilderSse(
           if (trimmed.startsWith("data:")) {
             const data = trimmed.slice(5).trim();
             if (data === "[DONE]") {
-              controller.enqueue(
-                encoder.encode(encodeBuilderChatSse({ event: "done", model })),
-              );
+              emitDone(controller);
             } else {
               const token = extractWorkersAiStreamToken(data);
               if (token) {
+                accumulated += token;
                 controller.enqueue(
                   encoder.encode(
                     encodeBuilderChatSse({ event: "chunk", text: token }),
@@ -82,6 +114,9 @@ export function transformWorkersAiStreamToBuilderSse(
               }
             }
           }
+        }
+        if (!doneEmitted) {
+          emitDone(controller);
         }
       },
     }),

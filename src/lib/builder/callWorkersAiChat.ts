@@ -1,5 +1,5 @@
 import { friendlyWorkersAiError } from "@/src/lib/builder/builderChatGuardrails";
-import { BUILDER_SYSTEM_PROMPT } from "@/src/lib/builder/builderSystemPrompt";
+import { buildBuilderSystemPromptWithContext } from "@/src/lib/builder/augmentChatWithBuildContext";
 import {
   encodeBuilderChatSse,
   transformWorkersAiStreamToBuilderSse,
@@ -8,9 +8,18 @@ import type {
   BuilderChatMessageInput,
   BuilderImageAttachmentInput,
 } from "@/src/lib/builder/builderChatTypes";
+import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
+import { extractWorkersAiResponseText } from "@/src/lib/builder/workersAiResponseExtract";
+import { applyChatOnlyResponseSafety } from "@/src/lib/builder/applyChatOnlyResponseSafety";
 
 const DEFAULT_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 const MAX_TOKENS = 1024;
+
+export type BuilderChatAiContext = {
+  readonly currentBlueprint?: GenericBuildingBlueprintV2 | null;
+  readonly presetId?: string;
+  readonly currentBlockCount?: number;
+};
 
 type WorkersAiChatMessage = {
   role: "system" | "user" | "assistant";
@@ -64,9 +73,16 @@ export function workersAiRunUrl(accountId: string, model: string): string {
 
 function buildChatMessages(
   history: readonly BuilderChatMessageInput[],
+  context?: BuilderChatAiContext,
 ): WorkersAiChatMessage[] {
   return [
-    { role: "system", content: BUILDER_SYSTEM_PROMPT },
+    {
+      role: "system",
+      content: buildBuilderSystemPromptWithContext(context?.currentBlueprint, {
+        presetId: context?.presetId,
+        generatedBlockCount: context?.currentBlockCount,
+      }),
+    },
     ...history.map((m) => ({ role: m.role, content: m.content })),
   ];
 }
@@ -75,8 +91,9 @@ export function buildRequestBody(
   history: readonly BuilderChatMessageInput[],
   attachment: BuilderImageAttachmentInput | null,
   stream: boolean,
+  context?: BuilderChatAiContext,
 ): Record<string, unknown> {
-  const messages = buildChatMessages(history);
+  const messages = buildChatMessages(history, context);
   const body: Record<string, unknown> = { messages, max_tokens: MAX_TOKENS, stream };
   if (attachment) {
     body.image = `data:${attachment.mimeType};base64,${attachment.dataBase64}`;
@@ -91,15 +108,8 @@ export function shouldStreamBuilderChat(
   return attachment == null;
 }
 
-function extractAssistantText(json: CloudflareAiEnvelope): string | null {
-  const result = json.result;
-  if (typeof result === "string" && result.trim().length > 0) {
-    return result.trim();
-  }
-  if (isRecord(result) && typeof result.response === "string" && result.response.trim().length > 0) {
-    return result.response.trim();
-  }
-  return null;
+function extractAssistantText(json: CloudflareAiEnvelope, rawBodyLength = 0): string | null {
+  return extractWorkersAiResponseText(json, 200, rawBodyLength).text;
 }
 
 function collectErrorMessages(json: CloudflareAiEnvelope, bodyText: string): string[] {
@@ -232,7 +242,7 @@ async function runWorkersAiSync(
         upstreamStatus: response.status,
       };
     }
-    const message = extractAssistantText(json);
+    const message = extractAssistantText(json, rawText.length);
     if (!message) {
       const mapped = mapUpstreamFailure(response.status, apiMessages);
       return {
@@ -262,11 +272,12 @@ function sseErrorStream(
 
 export async function streamWorkersAiChat(
   history: readonly BuilderChatMessageInput[],
+  context?: BuilderChatAiContext,
 ): Promise<StreamWorkersAiResult> {
   const config = getWorkersAiConfig();
   if (!config) return configError();
 
-  const body = buildRequestBody(history, null, true);
+  const body = buildRequestBody(history, null, true, context);
   const fetched = await fetchWorkersAi(config, body);
   if (!("response" in fetched)) return fetched;
   const response = fetched.response;
@@ -302,7 +313,9 @@ export async function streamWorkersAiChat(
   if (contentType.includes("text/event-stream")) {
     return {
       ok: true,
-      stream: transformWorkersAiStreamToBuilderSse(response.body, config.model),
+      stream: transformWorkersAiStreamToBuilderSse(response.body, config.model, {
+        hasActiveBlueprint: context?.currentBlueprint != null,
+      }),
       model: config.model,
     };
   }
@@ -318,7 +331,7 @@ export async function streamWorkersAiChat(
       error: "Workers AI returned an unexpected response format.",
     };
   }
-  const message = extractAssistantText(json);
+  const message = extractAssistantText(json, rawText.length);
   if (!message) {
     const mapped = mapUpstreamFailure(
       response.status,
@@ -332,13 +345,25 @@ export async function streamWorkersAiChat(
     };
   }
   const encoder = new TextEncoder();
+  const safe = applyChatOnlyResponseSafety({
+    assistantText: message,
+    hasToolResult: false,
+    hasActiveBlueprint: context?.currentBlueprint != null,
+  });
   const fallback = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(
         encoder.encode(encodeBuilderChatSse({ event: "chunk", text: message })),
       );
       controller.enqueue(
-        encoder.encode(encodeBuilderChatSse({ event: "done", model: config.model })),
+        encoder.encode(
+          encodeBuilderChatSse({
+            event: "done",
+            model: config.model,
+            text: safe.text,
+            guarded: safe.guarded,
+          }),
+        ),
       );
       controller.close();
     },
@@ -349,11 +374,12 @@ export async function streamWorkersAiChat(
 export async function callWorkersAiChat(
   history: readonly BuilderChatMessageInput[],
   attachment: BuilderImageAttachmentInput | null,
+  context?: BuilderChatAiContext,
 ): Promise<CallWorkersAiResult> {
   const config = getWorkersAiConfig();
   if (!config) return configError();
 
-  const body = buildRequestBody(history, attachment, false);
+  const body = buildRequestBody(history, attachment, false, context);
   return runWorkersAiSync(config, body);
 }
 

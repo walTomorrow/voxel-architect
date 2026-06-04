@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { BuilderChat } from "@/src/app/builder/mockBuilderData";
 import { statusLabel } from "@/src/app/builder/mockBuilderData";
-import { getGenericBuildingPreset } from "@/src/lib/blueprints/sampleGenericBuildingBlueprints";
+import { getGenericBuildingPresetV2 } from "@/src/lib/blueprints/sampleGenericBuildingBlueprintsV2";
 import { BuilderPreviewPanel } from "@/src/app/builder/components/BuilderPreviewPanel";
 import { BuilderChatPanel } from "@/src/app/builder/components/BuilderChatPanel";
 import type { BuilderMessageView } from "@/src/app/builder/components/BuilderMessage";
@@ -13,6 +13,8 @@ type Props = {
   readonly chat: BuilderChat;
   readonly messages: readonly BuilderMessageView[];
   readonly isLoading: boolean;
+  readonly validationWarnings: readonly string[];
+  readonly previewGenerationNonce: number;
   readonly onSendMessage: (text: string, image: PendingImageReference | null) => void;
   readonly onResetChat: () => void;
 };
@@ -23,8 +25,12 @@ export function BuilderWorkspace({
   isLoading,
   onSendMessage,
   onResetChat,
+  validationWarnings,
+  previewGenerationNonce,
 }: Props) {
-  const preset = getGenericBuildingPreset(chat.presetId);
+  const preset = getGenericBuildingPresetV2(chat.presetId);
+  const hasGenerated =
+    chat.generatedStructure != null && chat.generatedStructure.blocks.length > 0;
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:flex-row">
@@ -35,7 +41,11 @@ export function BuilderWorkspace({
             <p className="truncate text-[11px] text-zinc-500">
               {statusLabel(chat.status)}
               {preset ? ` · ${preset.label}` : ""}
-              <span className="text-zinc-600"> · Static preview</span>
+              <span className="text-zinc-600">
+                {" "}
+                · {hasGenerated ? "Generated preview" : "Default preset"}
+              </span>
+              <span className="text-zinc-700"> · Not saved after refresh</span>
             </p>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -63,13 +73,28 @@ export function BuilderWorkspace({
             </button>
           </div>
         </header>
-        <BuilderPreviewPanel presetId={chat.presetId} />
+        <BuilderPreviewPanel
+          presetId={chat.presetId}
+          generatedStructure={chat.generatedStructure}
+          validationWarnings={validationWarnings}
+          previewGenerationNonce={previewGenerationNonce}
+        />
       </section>
       <section className="flex min-h-[min(52vh,28rem)] w-full shrink-0 flex-col border-t border-zinc-800/90 lg:h-full lg:min-h-0 lg:max-w-[22rem] lg:flex-1 lg:flex-none lg:border-l lg:border-t-0 xl:max-w-[24rem]">
         <BuilderChatPanel
           messages={messages}
           isLoading={isLoading}
           onSendMessage={onSendMessage}
+          exportMeta={{
+            chatId: chat.id,
+            chatTitle: chat.title,
+            presetId: chat.presetId,
+            status: chat.status,
+            hasActiveBlueprint: chat.activeBlueprint != null,
+            lastOperationSummary: chat.lastOperationSummary,
+            lastRejectionCode: chat.lastRejectionCode,
+            lastRejectionDetail: chat.lastRejectionDetail,
+          }}
         />
       </section>
     </div>

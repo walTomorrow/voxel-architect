@@ -1,353 +1,623 @@
-# Plan — OpenNext migration (Cloudflare)
+# Plan — LLM operation planner for v2 refinement
 
-**Branch:** `feature/opennext-migration`  
-**Status:** Complete — live app at https://voxel-architect.wlc562.workers.dev/ (see `docs/deployment/CLOUDFLARE.md`).  
-**Type:** Infrastructure migration — **not** a product feature branch.
+> **Post-QA fix plan (routing, rejections, chat context):** see [docs/plans/BUILDER_PLANNER_ROUTING_FIX.md](docs/plans/BUILDER_PLANNER_ROUTING_FIX.md) — planning only, awaiting approval.
 
-**Goal:** Replace the deprecated `@cloudflare/next-on-pages` build/deploy path with the current **OpenNext Cloudflare adapter** (`@opennextjs/cloudflare`), while keeping the deployed app and existing routes working.
+**Branch:** `feature/builder-agent-tools`  
+**Status:** Planning only — **no implementation** until review.  
+**Prerequisite:** Preset generation bridge and deterministic refinement layer are implemented and verified on this branch.
 
-**Official references (verify before implementing):**
-
-- [OpenNext — Cloudflare get started](https://opennext.js.org/cloudflare/get-started)
-- [OpenNext — Cloudflare CLI](https://opennext.js.org/cloudflare/cli)
-- [OpenNext — Cloudflare environment variables](https://opennext.js.org/cloudflare/howtos/env-vars)
-- [Cloudflare Workers — Next.js framework guide](https://developers.cloudflare.com/workers/framework-guides/web-apps/nextjs/)
-- [Cloudflare blog — OpenNext on Workers](https://blog.cloudflare.com/deploying-nextjs-apps-to-cloudflare-workers-with-the-opennext-adapter/)
-
-**Live site:** https://voxel-architect.wlc562.workers.dev/ (Cloudflare **Workers** via OpenNext).
+**Live app:** https://voxel-architect.wlc562.workers.dev/
 
 ---
 
 ## 1. Summary
 
-This branch migrates **how** Voxel Architect is built and run on Cloudflare. It does **not** change generator/blueprint logic, `/preview` behavior, `/generic-lab` editing, or builder product UX except where the platform requires it (e.g. removing unsupported Edge runtime exports).
+This plan upgrades `/builder` refinement from **deterministic keyword mapping** to a **hybrid**: keep the existing fast mapper for exact commands, and add a **strict, schema-constrained LLM operation planner** for natural, stylistic, and ambiguous edit requests.
 
-The deprecated adapter warned in build logs:
+The AI/code boundary is unchanged:
+
+| Layer | Responsibility |
+|-------|----------------|
+| **LLM (planner)** | Propose **typed `BlueprintOperationV2[]` only**, from user request + compact blueprint summary + allowed schema |
+| **Server (code)** | Validate planner JSON; apply via `applyBlueprintOperationsV2`; `validateBlueprint`; `generateStructure`; decide preview update |
+| **LLM (chat)** | User-facing explanation only; summarizes compact tool result after server work |
+| **Never** | Model authors full blueprints, edits `ComponentPlan`, outputs voxel coordinates, or claims preview update without `toolResult.ok` |
+
+Target pipeline:
 
 ```text
-@cloudflare/next-on-pages@1.13.16: Please use the OpenNext adapter instead: https://opennext.js.org/cloudflare
+user request
++ compact blueprint summary (code-generated)
++ allowed operation schema (code-generated)
+→ LLM proposes strict JSON operations (when deterministic mapper does not match)
+→ server validates operation JSON
+→ applyBlueprintOperationsV2
+→ validateBlueprint
+→ generateStructure
+→ preview update (client)
+→ assistant summarizes actual result
 ```
 
-**Current production workaround:** `/api/builder/chat` was made Edge-compatible under `next-on-pages` and deploys successfully. This migration addresses **long-term technical debt** before expanding Cloudflare infrastructure (bindings, caching, etc.).
-
-**Success means:** same user-visible routes (`/builder`, `/preview`, `/generic-lab`), same builder chat behavior (streaming text, image prompts), secrets stay server-side, and the `next-on-pages` build command is gone from the deployment path.
+This is **not** a full autonomous agent. No Cloudflare Agents, D1/R2 persistence, AI Gateway, canonical screenshots, interiors, region selection, or LLM full-blueprint generation in this step.
 
 ---
 
-## 2. Current state survey
+## 2. Current status audit
 
-### Package scripts (`package.json`)
+### 2.1 What exists — generation bridge
 
-| Script | Command |
-|--------|---------|
-| `dev` | `next dev` |
-| `build` | `next build` |
-| `start` | `next start` (Node — not used on Cloudflare today) |
-| `lint` | `eslint` |
-| `test:generator` | `vitest run` |
+| Piece | Location | Notes |
+|-------|----------|-------|
+| Intent gate | `shouldRunGenerationTool.ts` | Generation verbs; image-only stays chat-only |
+| Preset resolver | `resolvePresetFromPrompt.ts` | Keywords → `simple_cabin_v2`, `stone_workshop_v2`, `porch_house_v2` |
+| Tool | `generateBuildingPreview.ts` | Clone preset → validate → generate; returns `toolKind: "generate"` |
+| Standalone API | `POST /api/builder/generate` | Debug/direct tool access |
+| Chat orchestration | `runBuilderGenerationChatTurn` | Tool then Workers AI summary |
+| Strong create override | `shouldStrongCreatePrompt` | “Make me a workshop” replaces active build via generate |
 
-- **Package manager:** `pnpm@10.33.3`
-- **Was:** `@cloudflare/next-on-pages` only in the dashboard; **now:** `@opennextjs/cloudflare` and `wrangler` in `package.json`.
-- **No** `setupDevPlatform()`, `getRequestContext`, or other `next-on-pages` references in source.
+### 2.2 What exists — deterministic refinement
 
-### Previous build (replaced)
+| Piece | Location | Notes |
+|-------|----------|-------|
+| Refinement gate | `shouldRunRefinementTool.ts` | Requires `activeBlueprint` + `REFINE_VERBS` regex; defers strong-create |
+| Phrase mapper | `mapRefinementPromptToOperations.ts` | ~370 lines of regex → `BlueprintOperationV2[]` |
+| Apply layer | `applyBlueprintOperationsV2.ts` | Pure apply + clamp; uses `structuredClone` |
+| Component index | `blueprintComponentIndex.ts` | Find room, roof, porch, chimney, front windows |
+| Refine tool | `refineBuildingPreview.ts` | **Sync**; mapper-only; validate → generate |
+| Standalone API | `POST /api/builder/refine` | `{ prompt, blueprint }` → `{ toolResult }` |
+| Chat orchestration | `runBuilderRefinementChatTurn` | Refine tool then Workers AI summary |
+| Blueprint parse | `parseCurrentBlueprint.ts` | Structural checks on incoming JSON |
+| Request body | `validateChatRequest.ts` | Parses `currentBlueprint` on chat POST |
 
-| Setting | Was |
-|---------|-----|
-| Build command | `npx @cloudflare/next-on-pages@1` (deprecated) |
-| Platform | Cloudflare Pages + Edge runtime |
+### 2.3 Operation types (`blueprintOperationsV2.ts`)
 
-**Now:** Workers Builds / `pnpm run deploy:cloudflare` → `.open-next/`.
+**Allowed op kinds today:**
 
-### Wrangler / OpenNext config in repo
+- `setMaterialPalette` — partial palette patch
+- `updateComponent` — typed component patch
+- `setMaterialOverride` — per-component materials (**implemented in apply, not used by mapper**)
 
-| File | Present? |
-|------|----------|
-| `wrangler.toml` | **No** |
-| `wrangler.jsonc` | **No** |
-| `open-next.config.ts` | **No** |
-| `.dev.vars` | **No** (gitignored pattern may apply via `.env*`) |
-| `public/_headers` | **No** |
+**Supported component patches (apply layer):**
 
-### Next.js version
+| Component | Patch fields | Clamps (apply) |
+|-----------|--------------|----------------|
+| `room` | `width`, `depth`, `wallHeight` | 5–17, 5–13, 4–9 |
+| `roof` | `kind`, `layers`, `overhang`, `orientation` | layers 1–3 |
+| `window_group` | `count`, `layout` | count 0–12 |
+| `porch` | `depth` only | depth 1–8 |
+| `chimney` | `targetFace`, `placementHorizontal` | — |
 
-- **`next`:** `16.2.6` (App Router)
-- OpenNext documents support for **Next.js 16** minor/patch versions via `@opennextjs/cloudflare`.
+**Not supported in patches:** door dimensions, porch width, add/remove components, metadata/constraints edits.
 
-### `next.config.ts`
+**Deterministic mapper coverage (examples):**
 
-- Redirect: `/visualizer` → `/generic-lab`
-- **No** OpenNext dev helper (`initOpenNextCloudflareForDev`) yet.
+- Materials: stone/brick/wood walls, dark wood/slate roof, glass windows, wooden building
+- Room: wider/narrower/deeper/shallower/taller/shorter/larger/smaller
+- Roof: shed/gable, steeper/flatter (layers)
+- Windows: more/fewer on **front primary** `window_group` only
+- Porch: **deeper only**; **wider explicitly rejected**
+- Chimney: left/right/back placement
 
-### App routes to preserve (no logic changes planned)
+**Known mapper gaps (observed in use):**
 
-| Route | Role |
+- “make the roof into wood” — no match (requires adjacent phrase like `wood roof` or `roof dark wood`)
+- Stylistic/semantic requests — no match at all
+
+### 2.4 Chat route orchestration (`/api/builder/chat`)
+
+Order today:
+
+1. `shouldUseRefinementJsonTurn` + `currentBlueprint` → `runBuilderRefinementChatTurn`
+2. `shouldUseGenerationJsonTurn` → `runBuilderGenerationChatTurn`
+3. Image or text → stream / sync chat
+
+Headers: `X-Builder-Tool-Kind: refine | generate`, `X-Builder-Chat-Mode: json | stream`.
+
+### 2.5 Client state
+
+| State | Location | Notes |
+|-------|----------|-------|
+| `activeBlueprint` | `mockBuilderData.ts`, `BuilderClient.tsx` | Full v2 JSON; in-memory; cleared on reset |
+| `generatedStructure` | same | Voxel blocks for preview |
+| POST body | `BuilderClient.tsx` | Sends `currentBlueprint` on chat |
+| Tool UX | `BuilderClient.tsx` | Uses `shouldRunRefinementTool` + `shouldStrongCreatePrompt` for loading state |
+
+Preview updates **only** when `toolResult.ok && toolResult.blocks.length > 0`.
+
+### 2.6 Tool result / activity flow
+
+| Piece | Role |
 |-------|------|
-| `/builder` | Product-facing AI builder UI (`src/app/builder/`) |
-| `/preview` | Structure preview (`src/app/preview/`) |
-| `/generic-lab` | Blueprint lab (`src/app/generic-lab/`) |
-| `/api/builder/chat` | Workers AI chat API |
+| `BuilderToolResult` | Unified generate/refine result; `appliedOperations`, `activityEvents` |
+| `formatToolResultForModel.ts` | Injects `[Server builder tool result]` for summary LLM |
+| `builderActivityFromTool.ts` | Maps tool events to activity card steps |
+| `builderSystemPrompt.ts` | Rules for generate vs refine summaries |
 
-No `middleware.ts` in repo. No other `export const runtime = "edge"` besides the builder chat route.
+Refine activity today: parsed → blueprint → planned (deterministic label) → apply → validate → generate → preview.
 
-### API route: `src/app/api/builder/chat/route.ts`
+### 2.7 Workers AI helpers
 
-- **`export const runtime = "edge"`** — required for `next-on-pages`; **OpenNext docs require removing Edge runtime** (Node.js runtime on Workers instead).
-- **POST** handler: JSON body validation → text-only **SSE streaming** or image **JSON** response.
-- **Imports:** `@/src/lib/builder/callWorkersAiChat`, `validateChatRequest`, types.
-- **No** filesystem, **no** `Buffer` in the route file.
+| Piece | Notes |
+|-------|-------|
+| `callWorkersAiChat.ts` | Sync + stream; default `@cf/meta/llama-3.2-11b-vision-instruct`; `max_tokens: 1024` |
+| Vision | Image passed as base64 on sync path |
+| Config | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `WORKERS_AI_MODEL` |
 
-### Builder chat library (`src/lib/builder/`)
+No dedicated JSON planner call exists. Chat and tool-summary share the same model and system prompt.
 
-| Module | Notes |
-|--------|--------|
-| `callWorkersAiChat.ts` | `process.env` for config; outbound `fetch` to Workers AI REST; streaming via `ReadableStream` |
-| `workersAiSse.ts` | `TextDecoder` / `TransformStream` / string `lineBuffer` (not Node `Buffer`) |
-| `validateChatRequest.ts` | JSON + base64 image size checks |
-| Others | Guardrails, system prompt, types, mock activity (UI-only) |
+### 2.8 Tests (builder)
 
-### Environment variables (builder chat)
+Included in `vitest.config.ts` under `src/lib/builder/__tests__/`:
 
-Documented in **`.env.example`** (placeholders only — safe to commit):
+- `shouldRunGenerationTool.test.ts`
+- `resolvePresetFromPrompt.test.ts`
+- `generateBuildingPreview.test.ts`
+- `shouldRunRefinementTool.test.ts`
+- `mapRefinementPromptToOperations.test.ts`
+- `applyBlueprintOperationsV2.test.ts`
+- `refineBuildingPreview.test.ts`
 
-| Variable | Purpose |
-|----------|---------|
-| `CLOUDFLARE_ACCOUNT_ID` | Workers AI REST account segment |
-| `CLOUDFLARE_API_TOKEN` | Bearer token (server-only secret) |
-| `WORKERS_AI_MODEL` | Default `@cf/meta/llama-3.2-11b-vision-instruct` |
+**165 tests** pass in `pnpm test:generator` (including builder). `pnpm exec tsc --noEmit` and `pnpm run build` pass.
 
-**`.env.local`:** exists locally for development; **do not** read, print, commit, or modify as part of this migration.
+### 2.9 What is still missing
 
-**Client exposure:** no `NEXT_PUBLIC_*` Cloudflare secrets in `src/` (grep confirms server-only names in builder lib).
-
-### Deployment documentation in repo
-
-- No root `CLOUDFLARE.md` in tree at plan time.
-- `docs/deployment/README.md` was listed in tooling but is **not** present on disk — plan to add **`docs/deployment/CLOUDFLARE.md`** as the canonical deployment doc for this migration.
-
-### Repo vs dashboard gap (historical)
-
-A prior deploy failed when only `route.ts` was pushed without `src/lib/builder/` and `src/app/builder/`. This migration branch should ensure **full builder tree** is committed before any deploy test.
-
----
-
-## 3. Migration decision
-
-### Recommended target: **Cloudflare Workers via `@opennextjs/cloudflare`**
-
-Official OpenNext and Cloudflare documentation describe deployment to **Cloudflare Workers** (Worker entry `.open-next/worker.js` + static assets in `.open-next/assets`), not a continued **`next-on-pages`** Pages Functions model.
-
-| Option | Fit for this repo |
-|--------|-------------------|
-| **Workers + OpenNext** (recommended) | Matches official adapter; supports **Route Handlers**, **response streaming**, Next **16**; uses `nodejs_compat` instead of Edge-constrained runtime. |
-| **Pages + OpenNext** | **Not** a supported target; production uses Workers + OpenNext only. |
-
-### Least disruptive deployment *workflow*
-
-1. **Keep** GitHub branch → preview → merge workflow.
-2. **Change** build/deploy mechanics to OpenNext + Wrangler (Worker + assets binding).
-3. **Host on Workers** at https://voxel-architect.wlc562.workers.dev/ (custom domain optional).
-
-**Outcome:** Workers Builds / `wrangler deploy` replaces the deprecated Pages `next-on-pages` pipeline.
-
-**Alternative bootstrap:** `npx @opennextjs/cloudflare migrate` automates dependency install, `wrangler.jsonc`, `open-next.config.ts`, `.dev.vars`, scripts, `_headers`, `.gitignore`, and `initOpenNextCloudflareForDev()`. **Review the diff carefully** (it may create R2 cache resources if R2 is enabled on the account). Manual steps from the get-started guide are equivalent.
-
-**Optional minimal OpenNext config:** `defineCloudflareConfig()` with **no** R2 incremental cache on first pass (defer R2 until caching is explicitly desired).
+- Blueprint summary helper for planner context
+- LLM operation planner (prompt, call, parse)
+- Strict planner output validator (separate from apply)
+- Hybrid routing (deterministic vs LLM)
+- Broadened refinement entry gate for natural language (see §9)
+- Async refine pipeline (planner requires network)
+- `plannerMode` on refine API
+- Activity events for planner path / failures
+- Planner-specific system prompt (separate from chat prompt)
+- Mocked planner tests
+- Image context summary fed into planner (deferred by default)
+- `setMaterialOverride` in planner allowlist (deferred)
 
 ---
 
-## 4. Files likely to change
+## 3. Why deterministic mapping is insufficient
 
-**Create**
+The keyword mapper is valuable for **speed, predictability, and zero extra API cost** on exact commands (“make it taller”, “add more windows”). It is the wrong long-term strategy for **language diversity**.
 
-| File | Purpose |
-|------|---------|
-| `wrangler.jsonc` | Worker name, `main`, `assets`, `compatibility_date`, `nodejs_compat` (and flags per docs) |
-| `open-next.config.ts` | `defineCloudflareConfig()` (minimal initially) |
-| `.dev.vars` | `NEXTJS_ENV=development` for local Worker preview (no secrets committed) |
-| `public/_headers` | Static asset cache headers for `/_next/static/*` |
-| `docs/deployment/CLOUDFLARE.md` | Build/deploy/env instructions for the team |
+**Examples the mapper cannot handle well (and regex expansion would not scale):**
 
-**Edit**
+| User request | Why mapper fails |
+|--------------|------------------|
+| “make it feel more medieval” | Style → multiple material/roof/dimension choices; no single regex |
+| “make it look more like the image” | Requires image semantics → typed ops |
+| “make the facade more welcoming” | Subjective → larger door/windows/material warmth |
+| “make the windows more balanced” | May mean count, symmetry layout, or spacing — context-dependent |
+| “make it less squat” | Implies taller walls and/or fewer layers — composite edit |
+| “make the roof dominate the silhouette” | Layers + height + maybe overhang |
+| “make it more rustic” | Palette + maybe roof kind |
+| “make the workshop look sturdier” | Stone walls, lower/wider proportions |
+| “make it brighter” | Glass/windows/light materials — ambiguous |
+| “more like a cabin but keep the stone walls” | Constraint + style blend |
 
-| File | Purpose |
-|------|---------|
-| `package.json` | Add `@opennextjs/cloudflare`, `wrangler`; add `preview` / `deploy` / `upload` / `cf-typegen` scripts |
-| `pnpm-lock.yaml` | Lockfile update |
-| `next.config.ts` | `initOpenNextCloudflareForDev()` from `@opennextjs/cloudflare` |
-| `.gitignore` | Ignore `.open-next/` |
-| `src/app/api/builder/chat/route.ts` | **Remove** `export const runtime = "edge"` per OpenNext requirement |
-| `README.md` | Update live URL / deploy instructions after cutover (optional, post-migration) |
-| `.env.example` | Placeholders only if OpenNext/Wrangler docs add vars (e.g. `NEXTJS_ENV` note); **never** real secrets |
-| `PLAN.md` | This document (replaced for migration) |
-
-**Do not edit (unless build proves otherwise)**
-
-- `src/lib/generation/**`, blueprint schemas, compiler
-- `src/app/preview/**`, `src/app/generic-lab/**` (except forced build fixes)
-- Builder **UX** beyond runtime export removal
-- `.env.local`
+Adding regex for each phrasing creates **fragile, overlapping rules** and still misses paraphrases. The LLM should **interpret intent** into **already-supported operations**; the server must **enforce** the schema.
 
 ---
 
-## 5. Build command changes
+## 4. Recommended next scope
 
-### Previous (removed)
+### Option A — Keep expanding deterministic mapper
 
-```bash
-npx @cloudflare/next-on-pages@1
+**Pros:** No extra Workers AI call; fully testable; fast.  
+**Cons:** Does not solve natural/stylistic/image-inspired edits; maintenance burden grows without bound.
+
+### Option B — Replace mapper with LLM planner only
+
+**Pros:** Maximum flexibility.  
+**Cons:** Slower; costs another API call on every edit; regresses reliability on exact commands; harder to debug.
+
+### Option C — Hybrid (recommended)
+
+**Pros:** Best of both: fast path for known commands; LLM for everything else; server validates all ops either way.  
+**Cons:** Two planning paths to maintain; need clear routing and activity labeling.
+
+**Recommendation: Option C**, aligned with branch direction and user preference.
+
+```text
+refinement request + activeBlueprint
+  → try deterministic mapper (confident match)
+  → else LLM operation planner
+  → validate planner JSON
+  → apply → validate blueprint → generate
+  → on total failure: friendly limitation, preview unchanged
 ```
 
-No longer used.
+---
 
-### Target (from official OpenNext + Cloudflare docs)
+## 5. Operation planner contract
 
-**Packages**
+### 5.1 Server-side function
 
-```bash
-pnpm add @opennextjs/cloudflare@latest
-pnpm add -D wrangler@latest
+```ts
+planBlueprintOperationsWithLlm(input: {
+  userRequest: string;
+  blueprintSummary: BlueprintPlannerSummary; // structured + renderable text
+  allowedOperations: AllowedOperationsSchema; // derived from blueprint + apply caps
+  imageContextSummary?: string; // Phase 2 optional
+}): Promise<PlannerResult>;
 ```
 
-Wrangler **≥ 3.99.0** required.
+### 5.2 Planner output shape
 
-**`package.json` scripts** (adapter invokes existing `build` → `next build`):
+```ts
+type PlannerResult =
+  | {
+      ok: true;
+      operations: BlueprintOperationV2[];
+      rationaleSummary: string; // short, for activity + tool result
+    }
+  | {
+      ok: false;
+      unsupportedReason: string;
+    };
+```
+
+### 5.3 Raw model response shape (before server validation)
+
+Use a **single JSON object** with no markdown fences:
 
 ```json
 {
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
-  }
+  "status": "ok",
+  "operations": [ /* BlueprintOperationV2[] */ ],
+  "rationaleSummary": "Raised walls and switched roof to slate for a taller profile."
 }
 ```
 
-Use `pnpm exec opennextjs-cloudflare …` if the binary is not on PATH.
+Or on failure:
 
-**What each step does**
-
-| Command | Role |
-|---------|------|
-| `opennextjs-cloudflare build` | Runs `pnpm run build` (`next build`), then transforms output to `.open-next/` |
-| `opennextjs-cloudflare preview` | Populates local cache + `wrangler dev` (production-like `workerd` runtime) |
-| `opennextjs-cloudflare deploy` | Populates remote cache + deploys Worker (use `-- --keep-vars` if dashboard vars must persist) |
-| `next dev` | Unchanged for day-to-day UI work |
-
-**Local full build (no deploy)**
-
-```bash
-pnpm exec opennextjs-cloudflare build
+```json
+{
+  "status": "unsupported",
+  "unsupportedReason": "Cannot add a second room with current operation set."
+}
 ```
 
-**Output artifacts (do not commit)**
+### 5.4 Hard rules
 
-| Path | Role |
-|------|------|
-| `.open-next/worker.js` | Wrangler `main` entry |
-| `.open-next/assets/` | Static assets (`assets.directory` in `wrangler.jsonc`) |
-
-**Cloudflare CI / dashboard (Workers Builds or equivalent)**
-
-- **Build + deploy command:** `pnpm install && pnpm run deploy` (or split build/upload per account conventions).
-- **Not** a Pages “output directory” upload of `.next/` — the adapter produces `.open-next/`.
-- Use **Workers Builds** (or `pnpm run deploy:cloudflare`) in the Cloudflare dashboard.
-
-**Windows note:** OpenNext documents limited Windows support; prefer **WSL**, Linux CI, or deploy-only validation on Windows if `preview`/`build` fails locally.
+- Planner returns **JSON only** — no prose outside the object.
+- No raw voxels, `ComponentPlan`, full blueprint, or metadata/constraints edits.
+- Component IDs must come from the provided summary allowlist.
+- Operation types must be whitelisted (`setMaterialPalette`, `updateComponent` initially).
+- Server **never** applies planner output without passing `validatePlannerOperations()`.
 
 ---
 
-## 6. Environment variables and secrets
+## 6. Blueprint summary design
 
-### Local development
+Do **not** send full raw blueprint JSON as primary planner context (token cost, distraction, temptation to emit full JSON).
 
-| File | Policy |
+### 6.1 Helper
+
+```ts
+summarizeBlueprintForPlanner(
+  blueprint: GenericBuildingBlueprintV2,
+  options?: { presetId?: string },
+): BlueprintPlannerSummary;
+```
+
+### 6.2 Structured type (internal)
+
+```ts
+type BlueprintPlannerSummary = {
+  schemaVersion: 2;
+  presetSource?: string; // from metadata.name or client presetId if passed
+  materials: Record<string, string>;
+  constraints: { maxBlockCount: number };
+  components: Array<{
+    id: string;
+    type: string;
+    label?: string;
+    // type-specific compact fields
+  }>;
+};
+```
+
+### 6.3 Text rendering (planner prompt)
+
+```text
+Current build:
+- schemaVersion: 2
+- source: stone_workshop_v2
+- components:
+  - room main-room: width 13, depth 9, wallHeight 5
+  - roof main-roof: kind shed, layers 2, orientation front_back
+  - door front-door: surface main-room.front, width 2, height 2
+  - window_group front-windows: count 2, surface main-room.front, layout symmetric
+  - chimney chimney: surface main-room.back, horizontal center
+- materials:
+  - wall cobblestone
+  - roof oak_planks
+  - window glass
+  - door oak_planks
+- constraints:
+  - maxBlockCount 80000
+```
+
+Implementation notes:
+
+- Generate from `GenericBuildingBlueprintV2` via `blueprintComponentIndex` + component-type formatters.
+- Include **every component id** present (planner allowlist).
+- Include attach surfaces for doors/windows/chimney.
+- Omit voxels, ComponentPlan, generator internals.
+
+---
+
+## 7. Allowed operation schema
+
+Planner allowlist must mirror **`applyBlueprintOperationsV2`** — no new op types in v1.
+
+### 7.1 Included in v1 planner
+
+| Op | Notes |
+|----|-------|
+| `setMaterialPalette` | Keys: `wall`, `floor`, `roof`, `window`, `door`, `accent` |
+| `updateComponent` | Patches listed in §2.3 |
+
+### 7.2 Excluded from v1 planner
+
+| Op / edit | Reason |
+|-----------|--------|
+| `setMaterialOverride` | Implemented but untested in mapper; skip until explicitly tested |
+| Add/remove components | Out of scope |
+| Porch width | Not in patch type; mapper rejects “wider porch” |
+| Door dimension patches | Not in `ComponentPatchV2` |
+| Metadata / constraints | Not in operation system |
+
+### 7.3 Schema payload for planner prompt
+
+Code-generated appendix:
+
+- **Component allowlist:** `{ id, type }[]` from summary
+- **Material keys:** `CLASSIC_MATERIAL_KEYS` from `genericLabUtils.ts`
+- **Roof kinds:** `pitched_gable`, `shed`, `none` (from v2 types)
+- **Numeric ranges:** same as apply clamps (§2.3)
+- **Unsupported list:** add/remove components, porch width, door resize, full blueprint rewrite, voxels
+
+---
+
+## 8. Planner validation
+
+New module: `validatePlannerOperations.ts` (name TBD).
+
+### 8.1 Checks (before apply)
+
+| Check | Action on fail |
+|-------|----------------|
+| JSON parses | Reject; optional one repair retry (§11) |
+| Top-level shape: `status`, `operations` or `unsupportedReason` | Reject |
+| `status: "unsupported"` | Return friendly limitation; no apply |
+| `operations` is array, length 1–**MAX_OPS** (default **3**) | Reject |
+| Each `op` whitelisted | Reject |
+| No unknown top-level or op-level keys | Reject (strict) |
+| `updateComponent.id` exists in blueprint | Reject |
+| `componentType` matches actual component | Reject |
+| Patch `type` matches component type | Reject |
+| Patch fields ⊆ allowed fields for type | Reject |
+| Material values ∈ `CLASSIC_MATERIAL_KEYS` | Reject |
+| Numeric values finite; optionally pre-clamp or reject out-of-range | Prefer **reject** if far out of range; apply layer clamps if within generous bounds |
+
+### 8.2 On validation failure
+
+- Do **not** apply operations.
+- Do **not** update preview.
+- Return `toolResult.ok: false` with clear error.
+- Activity: “Planner output invalid” or “Rejected unsupported edit”.
+- **Do not** fall back to deterministic mapper after invalid LLM JSON (unsafe). Fallback only when mapper simply did not match (see §9).
+
+---
+
+## 9. Integration with deterministic mapper
+
+### 9.1 Recommended routing (`plannerMode: "auto"`)
+
+```text
+1. Parse refinement request
+2. Build blueprint summary
+3. If plannerMode === "deterministic" → mapper only
+4. If plannerMode === "llm" → planner only (debug)
+5. If plannerMode === "auto":
+   a. Try mapRefinementPromptToOperations
+   b. If ok → use operations (activity: "Matched deterministic edit")
+   c. Else → planBlueprintOperationsWithLlm
+   d. If planner ok → validate → use (activity: "Planned semantic edit with LLM")
+   e. Else → fail (activity: "Rejected unsupported edit")
+6. applyBlueprintOperationsV2 → validateBlueprint → generateStructure
+7. Workers AI chat summary (unchanged)
+```
+
+**Do not** always call planner first — preserves speed and deterministic test coverage.
+
+### 9.2 Refinement entry gate (required change)
+
+Today `shouldRunRefinementTool` requires `REFINE_VERBS`, so requests like “make it feel more medieval” **never enter the refine path** — they fall through to streaming chat and the LLM hallucinates edits.
+
+**Plan:** Broaden gate when `activeBlueprint` exists:
+
+- Enter refinement JSON turn if: **not** strong-create **and** (`REFINE_VERBS` **or** `looksLikeEditRequest(text)`).
+- `looksLikeEditRequest`: lightweight heuristic — e.g. imperative mood, comparative adjectives (`more`, `less`, `-er`), style adjectives (`rustic`, `medieval`, `sturdy`), or reference to building parts (`roof`, `walls`, `windows`, `facade`, `porch`, `chimney`, `door`).
+- Still **exclude** pure conversation (“what do you think?”, “thanks”, “hello”) via negative patterns or short-message allowlist.
+
+Document and test the gate carefully — false positives trigger unnecessary planner calls; false negatives skip the tool.
+
+### 9.3 Activity path labels
+
+| Event id | Label |
+|----------|-------|
+| `plan-det` | Matched deterministic edit |
+| `plan-llm` | Planned semantic edit with LLM |
+| `plan-reject` | Rejected unsupported edit |
+| `plan-invalid` | Planner output invalid |
+
+---
+
+## 10. API and orchestration
+
+### 10.1 `refineBuildingPreview` → async pipeline
+
+Current function is **synchronous**. Planner requires async.
+
+**Recommended:** extract shared pipeline and add:
+
+```ts
+async function planAndRefineBuildingPreview(
+  request: RefineBuildingPreviewRequest & {
+    plannerMode?: "auto" | "deterministic" | "llm";
+    imageContextSummary?: string;
+  },
+): Promise<BuilderToolResult>;
+```
+
+Keep `refineBuildingPreview` as thin sync wrapper (`plannerMode: "deterministic"`) for unit tests, or migrate tests to inject mock planner.
+
+### 10.2 `/api/builder/refine`
+
+Extend body:
+
+```ts
+{
+  prompt: string;
+  blueprint: GenericBuildingBlueprintV2;
+  plannerMode?: "auto" | "deterministic" | "llm"; // default "auto"
+}
+```
+
+Response unchanged: `{ toolResult }`.
+
+### 10.3 `/api/builder/chat`
+
+- Pass `plannerMode: "auto"` implicitly inside `runBuilderRefinementChatTurn`.
+- `runBuilderRefinementChatTurn` becomes async planner-aware.
+- Generation and stream branches unchanged.
+
+### 10.4 Tool result extensions
+
+Add optional fields on `BuilderToolResult`:
+
+```ts
+plannerPath?: "deterministic" | "llm" | "none";
+rationaleSummary?: string; // from planner when used
+```
+
+Update `formatToolResultForModel` to include `PLANNER_PATH` for summary LLM.
+
+---
+
+## 11. Workers AI model usage
+
+### 11.1 Dedicated JSON planner call
+
+New helper: `callWorkersAiJsonPlanner(messages, { maxTokens })`:
+
+- Same `WORKERS_AI_MODEL` and credentials as chat (**recommend same multimodal model** — keeps one env var; text-only planner requests ignore image).
+- **Non-streaming** only.
+- Low `max_tokens` (e.g. **512** — operations JSON is small).
+- Separate **planner system prompt** — not `BUILDER_SYSTEM_PROMPT`.
+- Temperature low if exposed by API (or omit).
+
+### 11.2 Parse and repair
+
+1. Parse response as JSON (strip accidental markdown fences defensively).
+2. If parse fails: **one** repair request (“Return only valid JSON matching schema”).
+3. If still fails: `PlannerResult ok: false`, friendly message.
+
+### 11.3 Cost / latency
+
+Each ambiguous refinement adds **one** Workers AI call before the existing summary call. Keep summary compact; consider skipping summary model call on planner failure (return `assistantSummary` from tool only).
+
+---
+
+## 12. Image context
+
+**Current behavior:** Image attached on refine turn is passed to **summary** Workers AI call, not to operation planning.
+
+### Phase 1 (default — defer image-aware planning)
+
+- Image + refinement text enters refine path (with broadened gate).
+- Planner receives **text request + blueprint summary only**.
+- Summary LLM still sees image for user-facing reply.
+
+### Phase 2 (optional — if approved)
+
+1. If attachment present and user text references image (“like the photo”, “match the reference”):
+2. Call multimodal model for **short image context summary** (materials, roof shape, proportions, mood) — max ~200 tokens.
+3. Pass `imageContextSummary` into `planBlueprintOperationsWithLlm`.
+4. Do **not** pass raw image bytes to planner prompt builder twice; one vision call only.
+
+**Recommendation:** Defer Phase 2 to keep first implementation focused. Note in activity when image was ignored by planner.
+
+---
+
+## 13. Activity events
+
+### Success path (full)
+
+1. Parsed refinement request  
+2. Built current blueprint summary  
+3. Matched deterministic edit **OR** Planned semantic edit with LLM  
+4. Validated operation plan  
+5. Applied operations  
+6. Validated updated blueprint  
+7. Regenerated voxel structure  
+8. Ready to update builder preview  
+9. Assistant response ready  
+
+### Failure path
+
+| Condition | Activity |
+|-----------|----------|
+| Mapper + planner both unsupported | Rejected unsupported edit |
+| Invalid planner JSON | Planner output invalid |
+| Validator reject | Operation plan rejected |
+| Apply/validate/generate fail | Existing error steps |
+| Preview unchanged | Implicit via `toolResult.ok: false` |
+
+Expose `plannerPath` in tool result for UI if needed (activity card subtitle optional).
+
+---
+
+## 14. UI behavior
+
+Minimal changes:
+
+| Area | Change |
 |------|--------|
-| `.env.local` | **Do not** touch, print, inspect, or commit. User-managed secrets. |
-| `.env.example` | Placeholders only; may add non-secret notes (`NEXTJS_ENV`, license curl hints). |
-| `.dev.vars` | Commit **only** non-secret defaults, e.g. `NEXTJS_ENV=development`. **Do not** put API tokens in git. |
+| Activity card | Show deterministic vs LLM plan step when present |
+| Preview | Update only on `toolResult.ok` (unchanged) |
+| Assistant | Explains actual applied edits or limitation |
+| Loading | Refinement turns may take longer (planner call) — keep existing tool-loading placeholder |
+| Layout | No redesign |
 
-OpenNext recommends **Next.js `.env*` files** for vars available under `process.env` in both `next dev` and `wrangler dev` / deployed Worker. Existing `.env.local` pattern should continue to work for local `next dev`.
-
-### Production / preview deployments
-
-| Variable | Where to set | When needed |
-|----------|--------------|-------------|
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard → Worker **environment variables** or **secrets** | **Runtime** (API route) |
-| `CLOUDFLARE_API_TOKEN` | Dashboard **secrets** (preferred) | **Runtime** |
-| `WORKERS_AI_MODEL` | Dashboard env var | **Runtime** (optional override) |
-
-**Workers Builds:** If the CI build step runs `next build` only, builder secrets are primarily **runtime** vars. Follow [OpenNext env vars](https://opennext.js.org/cloudflare/howtos/env-vars): set **runtime** vars in the dashboard; use **Build variables and secrets** only if the build inlines env-dependent SSG (this app’s builder route is dynamic).
-
-**Deploy preservation:** `opennextjs-cloudflare deploy -- --keep-vars` if dashboard-defined vars must survive deploys.
-
-**Rules**
-
-- No `NEXT_PUBLIC_*` for Cloudflare credentials.
-- Tokens stay server-side (`process.env` in route handlers / lib only).
-
-### Future improvement (out of scope unless trivial)
-
-- **Workers AI binding** instead of REST `fetch` + API token — lower latency and no token in Worker env, but requires `wrangler.jsonc` AI binding and code changes in `callWorkersAiChat.ts`. Treat as **post-migration** unless docs show a zero-risk drop-in.
+Optional: show `rationaleSummary` in activity detail tooltip — low priority.
 
 ---
 
-## 7. Runtime compatibility audit
+## 15. Tests
 
-Execute during implementation; **preserve behavior** — rewrite only if preview/deploy proves breakage.
+All tests use **mocked** planner — no live Workers AI in CI.
 
-### `/api/builder/chat` (`route.ts`)
+### New test files
 
-| Check | Current state | OpenNext expectation |
-|-------|---------------|----------------------|
-| `runtime = "edge"` | Present | **Remove** — adapter uses Node.js runtime on Workers |
-| Request body | `request.json()`, 4 MB limit | Standard Web APIs — OK |
-| Responses | `Response.json`, SSE `ReadableStream` | [Supported — response streaming](https://developers.cloudflare.com/workers/framework-guides/web-apps/nextjs/) |
-| Dynamic route | No static generation of secrets | OK |
+| Module | Cases |
+|--------|-------|
+| `summarizeBlueprintForPlanner.test.ts` | All component types; stable text snapshot |
+| `validatePlannerOperations.test.ts` | Valid ops; unknown id; wrong type; too many ops; invalid materials; extra keys |
+| `buildPlannerPrompt.test.ts` | Allowlist + ranges present; no full blueprint blob |
+| `planBlueprintOperationsWithLlm.test.ts` | Mock fetch: valid JSON, invalid JSON, repair, unsupported |
+| `planAndRefineBuildingPreview.test.ts` | Auto: deterministic wins; mapper miss → mock planner; full fail |
+| `shouldRunRefinementTool.test.ts` | Extend for broadened natural-language gate |
 
-### `callWorkersAiChat.ts`
+### Existing tests
 
-| Check | Current state |
-|-------|---------------|
-| `process.env.*` | Used for account/token/model |
-| Outbound `fetch` | HTTPS to `api.cloudflare.com` — may need `global_fetch_strictly_public` in `wrangler.jsonc` per OpenNext template |
-| Streaming | `fetch` with `stream: true`, pipe through `transformWorkersAiStreamToBuilderSse` |
-| Image path | Non-streaming JSON body with top-level `image` + `messages` |
-| Node `Buffer` / `fs` / `child_process` | **Not used** |
+- Keep all current mapper/apply/refine tests passing.
+- `refineBuildingPreview.test.ts` may use `plannerMode: "deterministic"` explicitly.
 
-### `workersAiSse.ts`
-
-| Check | Current state |
-|-------|---------------|
-| Streams | `TransformStream`, `TextEncoder`/`TextDecoder` |
-| `lineBuffer` | JavaScript string, not Node Buffer |
-
-### `validateChatRequest.ts`
-
-| Check | Current state |
-|-------|---------------|
-| Parsing | Pure JSON validation, base64 size estimate |
-
-### App pages (`/builder`, `/preview`, `/generic-lab`)
-
-- Mostly client components + static/SSR Next patterns; **no** planned changes.
-- **Three.js** / R3F bundles: watch **Worker bundle size** (gzip limit matters; Wrangler reports compressed size).
-
-### Audit checklist (implementation phase)
-
-- [ ] Grep for `runtime = "edge"` and remove per OpenNext docs
-- [ ] Grep for `Buffer`, `fs`, `node:`, `child_process` under `src/app/api` and `src/lib/builder`
-- [ ] Run `pnpm run preview` and exercise streaming + image paths
-- [ ] Confirm `process.env` reads work in deployed Worker (dashboard vars)
-
----
-
-## 8. Testing plan
-
-### Baseline (before or after config, no deploy)
+### Verification commands
 
 ```bash
 pnpm exec tsc --noEmit
@@ -356,131 +626,112 @@ pnpm test:generator
 pnpm run build
 ```
 
-### OpenNext-specific (local)
-
-```bash
-pnpm run preview
-```
-
-Then verify in the **Worker runtime** (not only `next dev`):
-
-| Check | How |
-|-------|-----|
-| `/builder` loads | Browser |
-| Text-only chat | Send message → streaming tokens |
-| Streaming | SSE `chunk` / `done` events; send disabled while in flight |
-| Image prompt | Attach/paste image → JSON mode response (`X-Builder-Chat-Mode: json`) |
-| `/preview` | Loads 3D preview |
-| `/generic-lab` | Loads lab shell / v2 UI |
-| Secrets | DevTools network: no `CLOUDFLARE_API_TOKEN` in client bundles or responses |
-| Config missing | Temporarily unset vars locally → 503 CONFIG message (optional) |
-
-### Deployed branch preview
-
-Repeat the same browser checks on the **branch preview URL** after Cloudflare build succeeds.
-
-### Regression guard
-
-- `pnpm test:generator` must stay green (no generator edits planned).
+Manual: generate workshop → “make it taller” (deterministic) → “make it more rustic” (LLM) → invalid request → preview unchanged.
 
 ---
 
-## 9. Deployment plan
+## 16. Cloudflare / OpenNext considerations
 
-### Implementation sequence (after plan approval)
-
-1. Branch `feature/opennext-migration` from latest main (or current production base).
-2. Add dependencies and config (`wrangler.jsonc`, `open-next.config.ts`, scripts, `_headers`, `.gitignore`, `next.config.ts` dev helper).
-3. Remove `export const runtime = "edge"` from `src/app/api/builder/chat/route.ts`.
-4. Add `docs/deployment/CLOUDFLARE.md`.
-5. Run baseline tests (Section 8).
-6. Run `pnpm run preview` locally (WSL if Windows fails).
-7. Configure **Cloudflare Workers** (or Workers Builds) for the repo:
-   - Replace `npx @cloudflare/next-on-pages@1` with `pnpm install && pnpm run deploy` (or documented equivalent).
-   - Set **runtime** env vars / secrets for the three `CLOUDFLARE_*` / `WORKERS_AI_MODEL` vars.
-8. Deploy **branch preview**; run deployed checklist (Section 8).
-9. Merge to production branch only when branch preview passes.
-10. README and `docs/deployment/CLOUDFLARE.md` point to https://voxel-architect.wlc562.workers.dev/
-
-### Rollback plan
-
-- Revert the migration PR / reset branch to pre-migration commit.
-- Re-enable the previous `next-on-pages` build in dashboard history only if absolutely necessary (deprecated).
-- **Do not** mix generator features, blueprint v2, or UI overhauls into this branch.
+- **No new infrastructure** — another Workers AI HTTP call only.
+- Planner runs **server-side** in existing Next.js route handlers.
+- No Cloudflare Agents, D1, R2, AI Gateway.
+- No route `runtime` changes.
+- Avoid Node-only APIs (`structuredClone` already used — OK on modern Workers).
+- Keep planner prompt **concise** (summary + schema, not full blueprint).
+- Two Workers AI calls per ambiguous refine turn (planner + summary) — acceptable for dev; monitor latency.
 
 ---
 
-## 10. Out of scope
+## 17. Out of scope
 
-Do **not** implement on this branch:
+Do **not** implement in this step:
 
-- Cloudflare Agents
-- Durable Objects
-- D1 persistence
-- R2 uploads (except optional default R2 cache bucket created by `migrate` — prefer minimal config without R2 first)
-- AI Gateway
-- Workers AI **binding** migration (unless proven necessary for deploy)
-- Blueprint generation / v2 schema / compiler changes
-- Canonical render self-evaluation
-- UI feature changes beyond forced platform fixes
-- Generator / `test:generator` logic changes
-- GenericBuildingBlueprint v2 product plan (previous `PLAN.md` topic)
-
----
-
-## 11. Risks / things to confirm during implementation
-
-Answer these while executing the migration (not all are knowable from the repo alone):
-
-| # | Question | Where to confirm |
-|---|----------|------------------|
-| 1 | **Pages vs Workers:** Does the team migrate the existing Pages project to Workers, or create a new Worker + Workers Builds? | Cloudflare dashboard + account |
-| 2 | **Next.js 16.2.6:** Any OpenNext pin or adapter version caveats for this exact patch? | OpenNext releases / changelog |
-| 3 | **App Router + route handler + streaming:** Any known gaps with SSE through Route Handlers? | `pnpm run preview` + branch deploy |
-| 4 | **Env vars after migration:** Same dashboard fields, or separate Build vs Runtime secrets? | [OpenNext env vars](https://opennext.js.org/cloudflare/howtos/env-vars) |
-| 5 | **Worker build settings:** Confirm Workers Builds command and env vars | Cloudflare project settings |
-| 6 | **`nodejs_compat` + `compatibility_date`:** Minimum date and extra flags (`global_fetch_strictly_public`)? | `wrangler.jsonc` template in OpenNext get-started |
-| 7 | **`runtime = "edge"` removal:** Does chat still stream correctly under default Node route runtime? | Local preview + deploy |
-| 8 | **Worker size:** Does the Three.js client bundle + Next server bundle exceed paid/free compressed limits? | Wrangler deploy size line |
-| 9 | **Windows dev:** Does `opennextjs-cloudflare build` work on the primary dev OS, or only in CI/WSL? | OpenNext Windows note |
-| 10 | **Custom domain:** Optional; attach in Cloudflare DNS / Workers routes if desired | Cloudflare dashboard |
-| 11 | **R2 cache:** Skip R2 on first deploy or accept `migrate`-created bucket? | Account R2 enabled? |
-| 12 | **License flow:** Meta `{"prompt":"agree"}` still works unchanged via REST? | One manual curl per env |
+- Full blueprint generation from LLM JSON  
+- Add/remove components  
+- Multiple rooms / interiors / zones  
+- Selected-region editing  
+- Canonical render screenshots  
+- Persistence / auth  
+- Cloudflare Agents  
+- AI Gateway  
+- R2 / D1  
+- Raw voxel coordinate generation  
+- Direct `ComponentPlan` edits  
+- `setMaterialOverride` in planner (until tested)  
+- Porch width  
 
 ---
 
-## 12. Success criteria
+## 18. Implementation phases
 
-The migration is **done** when:
+### Phase A — Audit + blueprint summary
 
-- [x] Deprecated `@cloudflare/next-on-pages` is **not** used in Cloudflare build settings or repo scripts
-- [x] `@opennextjs/cloudflare` + `wrangler` are configured (`wrangler.jsonc`, `.open-next` gitignored)
-- [x] `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm test:generator`, `pnpm run build` pass
-- [x] Cloudflare Worker deployment succeeds
-- [x] Live URL: https://voxel-architect.wlc562.workers.dev/
-- [x] `/builder`, streaming chat, image prompts, `/preview`, `/generic-lab` verified on Worker deploy
-- [x] No Cloudflare secrets exposed via `NEXT_PUBLIC_*` or client bundles
-- [x] No unrelated generator/blueprint/product diffs in the migration PR
+- Confirm operation allowlist against `applyBlueprintOperationsV2`
+- Implement `summarizeBlueprintForPlanner` + text renderer
+- Unit tests with three v2 presets
+
+### Phase B — Planner schema + validator
+
+- Define planner JSON response types
+- Implement `validatePlannerOperations` (strict)
+- Unit tests for rejection cases
+
+### Phase C — Planner prompt + Workers AI call
+
+- `buildPlannerPrompt` (summary + schema + user request)
+- `callWorkersAiJsonPlanner` with parse + one repair retry
+- `planBlueprintOperationsWithLlm` orchestration
+- Mocked tests only
+
+### Phase D — Hybrid integration
+
+- `planAndRefineBuildingPreview` with `plannerMode`
+- Wire into `runBuilderRefinementChatTurn` (`auto`)
+- Extend `/api/builder/refine` with `plannerMode`
+- Broaden `shouldRunRefinementTool` / edit heuristic
+- Keep deterministic mapper as first pass
+
+### Phase E — Activity + tool result formatting
+
+- New activity events and `plannerPath` on tool result
+- Update `formatToolResultForModel` and `builderSystemPrompt`
+- Minimal UI activity labels
+
+### Phase F — Tests + docs
+
+- Complete test coverage (§15)
+- Update `CHANGE.md`
+- Manual smoke on `/builder`
+
+**Phase 2 (optional, separate approval):** image context summary → planner input.
 
 ---
 
-## Appendix — `wrangler.jsonc` starter (from OpenNext docs; adjust `name` / dates)
+## 19. Success criteria
 
-```jsonc
-{
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "main": ".open-next/worker.js",
-  "name": "voxel-architect",
-  "compatibility_date": "2024-12-30",
-  "compatibility_flags": [
-    "nodejs_compat",
-    "global_fetch_strictly_public"
-  ],
-  "assets": {
-    "directory": ".open-next/assets",
-    "binding": "ASSETS"
-  }
-}
-```
+- [ ] Natural refinement requests not covered by regex produce **valid** operations via LLM planner  
+- [ ] Preview updates **only** after validate + generate succeed  
+- [ ] Deterministic mapper still handles exact commands (no regression)  
+- [ ] Invalid planner JSON fails safely; preview unchanged  
+- [ ] Model never outputs voxels, full blueprint, or ComponentPlan in planner path  
+- [ ] Normal chat streaming still works  
+- [ ] Image chat still works (summary path)  
+- [ ] `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm test:generator`, `pnpm run build` pass  
 
-Optional `services` / `r2_buckets` / `images` blocks from the full get-started template should only be added when those features are intentionally enabled.
+---
+
+## 20. Approval questions
+
+Before implementation, confirm:
+
+1. **Hybrid strategy** — deterministic first, LLM planner on mapper miss (`auto` mode)?  
+2. **Max operations per turn** — recommend **3**; approve or change?  
+3. **Image context** — defer to Phase 2 (planner text-only; image still on summary LLM)?  
+4. **Same Workers AI model** for JSON planner as chat/vision (`WORKERS_AI_MODEL`)?  
+5. **`/api/builder/refine` exposes `plannerMode`** (`auto` | `deterministic` | `llm`)?  
+6. **Broadened refinement gate** — allow natural-language edit requests when `activeBlueprint` exists (with conversation exclusions)?  
+7. **`setMaterialOverride`** — exclude from planner v1?  
+
+---
+
+**Stop here.** No implementation until review.
