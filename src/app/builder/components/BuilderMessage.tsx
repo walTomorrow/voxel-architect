@@ -3,11 +3,13 @@
 import type { BuilderMessage as BuilderMessageType } from "@/src/app/builder/mockBuilderData";
 import { BuilderActivityCard } from "@/src/app/builder/components/BuilderActivityCard";
 import type { BuilderActivityStep } from "@/src/lib/builder/mockBuilderActivity";
+import type { BuilderToolStatusBanner } from "@/src/lib/builder/builderToolStatusBanner";
 
 export type BuilderMessageView = BuilderMessageType & {
   readonly activitySteps?: readonly BuilderActivityStep[];
   readonly isError?: boolean;
   readonly isStreaming?: boolean;
+  readonly toolStatusBanner?: BuilderToolStatusBanner;
 };
 
 type Props = {
@@ -18,6 +20,14 @@ export function BuilderMessageBubble({ message }: Props) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const isError = message.isError === true;
+  const banner = message.toolStatusBanner;
+
+  const bannerToneClass =
+    banner?.tone === "success"
+      ? "border-emerald-500/40 bg-emerald-950/50 text-emerald-100"
+      : banner?.tone === "failure"
+        ? "border-amber-500/40 bg-amber-950/40 text-amber-100"
+        : "border-zinc-600/60 bg-zinc-900/80 text-zinc-300";
 
   if (isSystem) {
     return (
@@ -45,6 +55,19 @@ export function BuilderMessageBubble({ message }: Props) {
               />
             ) : null,
           )}
+        </div>
+      ) : null}
+      {!isUser && banner ? (
+        <div
+          className={[
+            "max-w-[95%] rounded-xl border px-3 py-2 text-xs leading-snug",
+            bannerToneClass,
+          ].join(" ")}
+        >
+          <p className="font-medium">{banner.headline}</p>
+          {banner.detail ? (
+            <p className="mt-0.5 text-[11px] opacity-90">{banner.detail}</p>
+          ) : null}
         </div>
       ) : null}
       <div

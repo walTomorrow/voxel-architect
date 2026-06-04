@@ -2,7 +2,7 @@ import type { BuilderChatErrorCode } from "@/src/lib/builder/builderChatTypes";
 
 export type BuilderStreamCallbacks = {
   readonly onChunk: (text: string) => void;
-  readonly onDone: (model: string) => void;
+  readonly onDone: (model: string, finalText?: string, guarded?: boolean) => void;
   readonly onError: (error: string, code: BuilderChatErrorCode) => void;
 };
 
@@ -47,7 +47,9 @@ export async function consumeBuilderChatSse(
           callbacks.onChunk(json.text);
         } else if (parsed.event === "done" && typeof json.model === "string") {
           completed = true;
-          callbacks.onDone(json.model);
+          const finalText = typeof json.text === "string" ? json.text : undefined;
+          const guarded = json.guarded === true;
+          callbacks.onDone(json.model, finalText, guarded);
         } else if (parsed.event === "error" && typeof json.error === "string") {
           const code =
             typeof json.code === "string" &&

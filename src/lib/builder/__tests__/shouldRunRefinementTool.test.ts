@@ -74,4 +74,23 @@ describe("shouldRunRefinementTool", () => {
     expect(shouldRunRefinementTool("what do you think?", true, true)).toBe(false);
     expect(shouldRunRefinementTool("make it taller", true, true)).toBe(true);
   });
+
+  it("routes semantic sturdier and style prompts to refine", () => {
+    expect(shouldRunRefinementTool("I want it to be sturdier", true, false)).toBe(true);
+    expect(shouldRunRefinementTool("I want it sturdier", true, false)).toBe(true);
+    expect(shouldRunRefinementTool("Can you make it sturdier?", true, false)).toBe(true);
+    expect(shouldRunRefinementTool("Make the workshop sturdier", true, false)).toBe(true);
+    expect(shouldRunRefinementTool("I want it to feel more rustic", true, false)).toBe(true);
+    expect(shouldRunRefinementTool("I want it to look more medieval", true, false)).toBe(true);
+    expect(shouldRunRefinementTool("Can you make it brighter?", true, false)).toBe(true);
+  });
+
+  it("keeps design feedback chat-only", () => {
+    expect(shouldRunRefinementTool("what do you think of the build?", true, false)).toBe(
+      false,
+    );
+    expect(shouldRunRefinementTool("how does this look?", true, false)).toBe(false);
+    expect(shouldRunRefinementTool("do you like this design?", true, false)).toBe(false);
+    expect(shouldRunRefinementTool("what would you suggest?", true, false)).toBe(false);
+  });
 });

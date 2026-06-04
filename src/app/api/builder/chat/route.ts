@@ -1,15 +1,10 @@
+import { applyChatOnlyResponseSafety } from "@/src/lib/builder/applyChatOnlyResponseSafety";
 import {
-
   builderChatSseHeaders,
-
   callWorkersAiChat,
-
   shouldStreamBuilderChat,
-
   sseErrorStream,
-
   streamWorkersAiChat,
-
 } from "@/src/lib/builder/callWorkersAiChat";
 
 import type {
@@ -211,11 +206,15 @@ export async function POST(request: Request): Promise<Response> {
 
   }
 
-
+  const safe = applyChatOnlyResponseSafety({
+    assistantText: result.message,
+    hasToolResult: false,
+    hasActiveBlueprint: currentBlueprint != null,
+  });
 
   const payload: BuilderChatSuccessResponse = {
 
-    message: result.message,
+    message: safe.text,
 
     model: result.model,
 

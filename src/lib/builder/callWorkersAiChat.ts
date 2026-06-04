@@ -10,6 +10,7 @@ import type {
 } from "@/src/lib/builder/builderChatTypes";
 import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
 import { extractWorkersAiResponseText } from "@/src/lib/builder/workersAiResponseExtract";
+import { applyChatOnlyResponseSafety } from "@/src/lib/builder/applyChatOnlyResponseSafety";
 
 const DEFAULT_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 const MAX_TOKENS = 1024;
@@ -312,7 +313,9 @@ export async function streamWorkersAiChat(
   if (contentType.includes("text/event-stream")) {
     return {
       ok: true,
-      stream: transformWorkersAiStreamToBuilderSse(response.body, config.model),
+      stream: transformWorkersAiStreamToBuilderSse(response.body, config.model, {
+        hasActiveBlueprint: context?.currentBlueprint != null,
+      }),
       model: config.model,
     };
   }
@@ -342,13 +345,25 @@ export async function streamWorkersAiChat(
     };
   }
   const encoder = new TextEncoder();
+  const safe = applyChatOnlyResponseSafety({
+    assistantText: message,
+    hasToolResult: false,
+    hasActiveBlueprint: context?.currentBlueprint != null,
+  });
   const fallback = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(
         encoder.encode(encodeBuilderChatSse({ event: "chunk", text: message })),
       );
       controller.enqueue(
-        encoder.encode(encodeBuilderChatSse({ event: "done", model: config.model })),
+        encoder.encode(
+          encodeBuilderChatSse({
+            event: "done",
+            model: config.model,
+            text: safe.text,
+            guarded: safe.guarded,
+          }),
+        ),
       );
       controller.close();
     },

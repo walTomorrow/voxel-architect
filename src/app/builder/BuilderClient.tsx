@@ -4,6 +4,9 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { BuilderSidebar } from "@/src/app/builder/components/BuilderSidebar";
 import { BuilderWorkspace } from "@/src/app/builder/components/BuilderWorkspace";
 import type { BuilderMessageView } from "@/src/app/builder/components/BuilderMessage";
+import { applyChatOnlyResponseSafety } from "@/src/lib/builder/applyChatOnlyResponseSafety";
+import { buildToolResultStatusBanner } from "@/src/lib/builder/builderToolStatusBanner";
+import type { BuilderToolStatusBanner } from "@/src/lib/builder/builderToolStatusBanner";
 import type { PendingImageReference } from "@/src/app/builder/components/BuilderPromptInput";
 import { prepareMessagesForChatApi } from "@/src/lib/builder/builderChatGuardrails";
 import { consumeBuilderChatSse } from "@/src/lib/builder/consumeBuilderChatStream";
@@ -264,9 +267,13 @@ export function BuilderClient() {
               content += text;
               patchAssistant({ content, isStreaming: true });
             },
-            onDone: () => {
+            onDone: (_model, finalText) => {
+              const resolved =
+                finalText?.trim() ||
+                content.trim() ||
+                "No response from the assistant.";
               patchAssistant({
-                content: content.trim() || "No response from the assistant.",
+                content: resolved,
                 isStreaming: false,
                 activitySteps,
               });
@@ -282,8 +289,13 @@ export function BuilderClient() {
             },
           });
           if (!streamFailed && !completed && content.trim().length > 0) {
+            const safe = applyChatOnlyResponseSafety({
+              assistantText: content.trim(),
+              hasToolResult: false,
+              hasActiveBlueprint: hasBlueprint,
+            });
             patchAssistant({
-              content: content.trim(),
+              content: safe.text,
               isStreaming: false,
               activitySteps,
             });
@@ -351,10 +363,15 @@ export function BuilderClient() {
           }));
         }
 
+        const toolStatusBanner: BuilderToolStatusBanner | undefined = toolResult
+          ? buildToolResultStatusBanner(toolResult)
+          : undefined;
+
         patchAssistant({
           content: data.message,
           isStreaming: false,
           activitySteps: steps,
+          toolStatusBanner,
         });
       } catch {
         patchAssistant({

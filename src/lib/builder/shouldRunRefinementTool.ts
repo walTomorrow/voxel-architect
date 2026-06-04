@@ -23,7 +23,13 @@ const CASUAL_CHAT =
   /^(thanks|thank you|thx|hello|hi|hey|ok|okay|cool|nice|great|awesome|got it|sounds good|what do you think\??|how does (it|this) look\??|any thoughts\??)[\s!.?]*$/i;
 
 const DESIGN_FEEDBACK =
-  /\b(what do you think|how does (it|this) look|thoughts on|opinion on|feedback on|review (this|the|my)|of this design|about this design|this design|how is (it|this)|what do you (make|think) of)\b/i;
+  /\b(what do you think|how does (it|this) look|thoughts on|opinion on|feedback on|review (this|the|my)|of this design|about this design|this design|how is (it|this)|what do you (make|think) of|what would you suggest|do you like (this|the|my) design)\b/i;
+
+const WANT_EDIT =
+  /\bI want (?:it|the|this|the workshop|the building|the cabin)(?: to be| to feel| to look| to seem)?\b/i;
+
+const CAN_YOU_MAKE =
+  /\bcan you make (?:it|the|this|the workshop|the building|the cabin)\b/i;
 
 const STRONG_EDIT_SIGNAL =
   /\b(make|change|switch|turn|convert|adjust|tweak|refine|update|give (it|the|this)|add more|add a|remove|wider|narrower|deeper|taller|shorter)\b/i;
@@ -32,7 +38,7 @@ const BUILDING_PARTS =
   /\b(roof|wall|walls|window|windows|door|doors|porch|chimney|facade|floor|room|building|cabin|workshop|step|steps|silhouette|materials?|design)\b/i;
 
 const EDIT_STYLE =
-  /\b(rustic|medieval|sturdy|squat|welcoming|balanced|brighter|darker|warmer|colder|cozy|stone|wooden|wood|glass|slate|cobblestone)\b/i;
+  /\b(rustic|medieval|sturdy|sturdier|squat|squatter|welcoming|balanced|brighter|darker|warmer|colder|cozy|cozier|stone|wooden|wood|glass|slate|cobblestone|refined|heavy|heavier|solid|utilitarian|workshop-like|image-like)\b/i;
 
 const EDIT_COMPARATIVE =
   /\b(more|less|fewer|taller|shorter|wider|narrower|deeper|higher|lower|bigger|smaller|larger|dominate|extend)\b/i;
@@ -64,6 +70,12 @@ export function looksLikeEditRequest(userText: string): boolean {
   if (CASUAL_CHAT.test(text)) return false;
   if (looksLikeDesignFeedback(text)) return false;
   if (text.length < 8 && !BUILDING_PARTS.test(text) && !ROOF_KIND.test(text)) return false;
+
+  if (WANT_EDIT.test(text) && EDIT_STYLE.test(text)) return true;
+  if (/\bI want\b/.test(text) && EDIT_STYLE.test(text)) return true;
+  if (CAN_YOU_MAKE.test(text) && (EDIT_STYLE.test(text) || BUILDING_PARTS.test(text))) {
+    return true;
+  }
 
   if (GIVE_EDIT.test(text) && (BUILDING_PARTS.test(text) || ROOF_KIND.test(text))) {
     return true;
