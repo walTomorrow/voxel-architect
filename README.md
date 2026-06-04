@@ -4,7 +4,9 @@ Voxel Architect is a web app for creating Minecraft-like voxel buildings from st
 
 Instead of placing every block by hand, the project explores a workflow where a person describes a building, the system turns that idea into a clear building plan, and the app generates a 3D voxel structure from that plan.
 
-**Live demo:** https://voxel-architect.pages.dev
+**Live demo:** https://voxel-architect.wlc562.workers.dev/
+
+Hosted on **Cloudflare Workers** via OpenNext. See [`docs/deployment/CLOUDFLARE.md`](docs/deployment/CLOUDFLARE.md) for build and deploy details.
 
 ---
 
@@ -28,9 +30,7 @@ These parts are easier for a person or an AI assistant to understand than thousa
 
 ## Live demo
 
-You can try the project here:
-
-https://voxel-architect.pages.dev
+https://voxel-architect.wlc562.workers.dev/
 
 The demo includes:
 
@@ -178,7 +178,7 @@ I used **Cursor** to help implement code changes, refine the UI, generate concep
 
 ## Tech stack
 
-- Next.js
+- Next.js (deployed with [@opennextjs/cloudflare](https://opennext.js.org/cloudflare) on Cloudflare Workers)
 - React
 - TypeScript
 - React Three Fiber

@@ -1,0 +1,5 @@
+# Copy to .dev.vars for local `pnpm run preview:cloudflare` (Wrangler dev).
+# Non-secret defaults only — do not put API tokens here.
+# For secrets, use .env.local with `next dev` (see .env.example).
+
+NEXTJS_ENV=development

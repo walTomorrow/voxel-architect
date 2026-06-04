@@ -16,6 +16,10 @@
 # next.js
 /.next/
 /out/
+.open-next/
+
+# wrangler local overrides (secrets belong in .env.local, not here)
+.dev.vars
 
 # production
 /build
