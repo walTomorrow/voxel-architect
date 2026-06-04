@@ -7,8 +7,14 @@ import type { BuilderMessageView } from "@/src/app/builder/components/BuilderMes
 import type { PendingImageReference } from "@/src/app/builder/components/BuilderPromptInput";
 import { prepareMessagesForChatApi } from "@/src/lib/builder/builderChatGuardrails";
 import { consumeBuilderChatSse } from "@/src/lib/builder/consumeBuilderChatStream";
-import type { BuilderChatErrorResponse, BuilderChatSuccessResponse } from "@/src/lib/builder/builderChatTypes";
+import type {
+  BuilderChatErrorResponse,
+  BuilderChatSuccessResponse,
+  BuilderChatWithToolSuccessResponse,
+} from "@/src/lib/builder/builderChatTypes";
+import { buildActivityEventsFromToolResult } from "@/src/lib/builder/builderActivityFromTool";
 import { buildMockActivitySteps } from "@/src/lib/builder/mockBuilderActivity";
+import { shouldRunGenerationTool } from "@/src/lib/builder/shouldRunGenerationTool";
 import {
   cloneChatMessages,
   createEmptyBuilderChat,
@@ -61,6 +67,8 @@ export function BuilderClient() {
   const [activeChatId, setActiveChatId] = useState(DEFAULT_BUILDER_CHAT_ID);
   const [isLoading, setIsLoading] = useState(false);
   const [messageViews, setMessageViews] = useState<Record<string, BuilderMessageView[]>>({});
+  const [validationWarnings, setValidationWarnings] = useState<readonly string[]>([]);
+  const [previewGenerationNonce, setPreviewGenerationNonce] = useState(0);
   const resetSnapshots = useRef(
     new Map(INITIAL_BUILDER_CHATS.map((c) => [c.id, cloneChatMessages(c)])),
   );
@@ -97,7 +105,13 @@ export function BuilderClient() {
     setChats((prev) => [chat, ...prev]);
     setActiveChatId(id);
     syncViews(id, chat.messages);
+    setValidationWarnings([]);
   }, [syncViews]);
+
+  const handleSelectChat = useCallback((chatId: string) => {
+    setActiveChatId(chatId);
+    setValidationWarnings([]);
+  }, []);
 
   const appendAssistantError = useCallback(
     (
@@ -179,6 +193,7 @@ export function BuilderClient() {
 
       const assistantId = newMessageId();
       const hasImage = image != null;
+      const willRunTool = shouldRunGenerationTool(content, hasImage);
       const activitySteps = buildMockActivitySteps(hasImage);
 
       const patchAssistant = (patch: Partial<BuilderMessageView>) => {
@@ -196,7 +211,7 @@ export function BuilderClient() {
         role: "assistant",
         content: "",
         createdAtLabel: "Just now",
-        isStreaming: !hasImage,
+        isStreaming: !hasImage && !willRunTool,
       };
       const withAssistant = [...withUser, assistantPlaceholder];
       updateChat(chatId, (c) => ({ ...c, messages: withAssistant }));
@@ -272,6 +287,7 @@ export function BuilderClient() {
 
         const data = (await res.json()) as
           | BuilderChatSuccessResponse
+          | BuilderChatWithToolSuccessResponse
           | BuilderChatErrorResponse;
 
         if (!res.ok || !("message" in data) || typeof data.message !== "string") {
@@ -288,10 +304,36 @@ export function BuilderClient() {
           return;
         }
 
+        const toolResult =
+          "toolResult" in data && data.toolResult != null ? data.toolResult : null;
+        const steps = toolResult
+          ? buildActivityEventsFromToolResult(toolResult, hasImage)
+          : activitySteps;
+
+        if (toolResult?.ok && toolResult.blocks && toolResult.blocks.length > 0) {
+          const structure = { blocks: [...toolResult.blocks] };
+          const presetId = toolResult.presetId ?? activeChat.presetId;
+          updateChat(chatId, (c) => ({
+            ...c,
+            presetId,
+            status: "preview_ready",
+            generatedStructure: structure,
+            lastOperationSummary: toolResult.assistantSummary,
+          }));
+          setValidationWarnings(
+            (toolResult.validationIssues ?? [])
+              .filter((i) => i.severity === "warning")
+              .map((i) => i.message),
+          );
+          setPreviewGenerationNonce((n) => n + 1);
+        } else if (toolResult && !toolResult.ok) {
+          setValidationWarnings([]);
+        }
+
         patchAssistant({
           content: data.message,
           isStreaming: false,
-          activitySteps,
+          activitySteps: steps,
         });
       } catch {
         patchAssistant({
@@ -313,8 +355,14 @@ export function BuilderClient() {
     const snapshot = resetSnapshots.current.get(activeChatId);
     if (!snapshot) return;
     const restored = snapshot.map((m) => ({ ...m }));
-    updateChat(activeChatId, (c) => ({ ...c, messages: restored }));
+    updateChat(activeChatId, (c) => ({
+      ...c,
+      messages: restored,
+      generatedStructure: null,
+      status: "empty",
+    }));
     syncViews(activeChatId, restored);
+    setValidationWarnings([]);
   }, [activeChatId, syncViews, updateChat]);
 
   return (
@@ -323,7 +371,7 @@ export function BuilderClient() {
         <BuilderSidebar
           chats={chats}
           activeChatId={activeChat.id}
-          onSelectChat={setActiveChatId}
+          onSelectChat={handleSelectChat}
           onNewBuild={handleNewBuild}
         />
       </div>
@@ -333,6 +381,8 @@ export function BuilderClient() {
         isLoading={isLoading}
         onSendMessage={handleSendMessage}
         onResetChat={handleResetChat}
+        validationWarnings={validationWarnings}
+        previewGenerationNonce={previewGenerationNonce}
       />
     </div>
   );

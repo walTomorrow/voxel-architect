@@ -1,35 +1,13 @@
 import type { BuilderImageAttachmentInput } from "@/src/lib/builder/builderChatTypes";
+import type { BuilderActivityEvent } from "@/src/lib/builder/builderToolTypes";
+import { buildChatOnlyActivitySteps } from "@/src/lib/builder/builderActivityFromTool";
 
-export type BuilderActivityStep = {
-  readonly id: string;
-  readonly label: string;
-  readonly status: "success";
-};
+export type BuilderActivityStep = BuilderActivityEvent;
 
 export function buildMockActivitySteps(
   hasImage: boolean,
 ): readonly BuilderActivityStep[] {
-  const steps: BuilderActivityStep[] = [
-    { id: "parsed", label: "Parsed building request", status: "success" },
-  ];
-  if (hasImage) {
-    steps.push({
-      id: "image",
-      label: "Included user reference image",
-      status: "success",
-    });
-  }
-  steps.push(
-    { id: "drafted", label: "Drafted component blueprint (demo)", status: "success" },
-    { id: "validated", label: "Validated blueprint (demo)", status: "success" },
-    {
-      id: "preview",
-      label: "Preview unchanged — static preset",
-      status: "success",
-    },
-    { id: "assistant", label: "Assistant response ready", status: "success" },
-  );
-  return steps;
+  return buildChatOnlyActivitySteps(hasImage);
 }
 
 export function hasImageAttachment(

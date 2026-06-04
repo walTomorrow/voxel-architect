@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { clonePresetBlueprint } from "@/src/app/generic-lab/genericLabUtils";
+import { clonePresetBlueprintV2 } from "@/src/lib/blueprints/clonePresetBlueprint";
 import { BuilderPreviewBreakdown } from "@/src/app/builder/components/BuilderPreviewBreakdown";
 import { BuilderPreviewLayerBar } from "@/src/app/builder/components/BuilderPreviewLayerBar";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
@@ -18,6 +18,9 @@ import type { VoxelStructure } from "@/src/lib/voxel/types";
 
 type Props = {
   readonly presetId: string;
+  readonly generatedStructure: VoxelStructure | null;
+  readonly validationWarnings?: readonly string[];
+  readonly previewGenerationNonce?: number;
 };
 
 type PreviewViewportProps = {
@@ -36,6 +39,7 @@ type PreviewViewportProps = {
   readonly onRefitCamera: () => void;
   readonly showExpand?: boolean;
   readonly onExpand?: () => void;
+  readonly previewBadge: string;
 };
 
 function PreviewViewport({
@@ -54,6 +58,7 @@ function PreviewViewport({
   cameraResetNonce,
   showExpand,
   onExpand,
+  previewBadge,
 }: PreviewViewportProps) {
   return (
     <div className="relative min-h-0 flex-1">
@@ -84,7 +89,7 @@ function PreviewViewport({
           <span />
         )}
         <span className="rounded-full border border-zinc-600/50 bg-zinc-950/85 px-2.5 py-0.5 text-[10px] font-medium text-zinc-400 backdrop-blur-sm">
-          Static preset
+          {previewBadge}
         </span>
       </div>
 
@@ -107,7 +112,12 @@ function PreviewViewport({
   );
 }
 
-export function BuilderPreviewPanel({ presetId }: Props) {
+export function BuilderPreviewPanel({
+  presetId,
+  generatedStructure,
+  validationWarnings = [],
+  previewGenerationNonce = 0,
+}: Props) {
   const [layerViewMode, setLayerViewMode] = useState<LayerViewMode>("full");
   const [selectedLayer, setSelectedLayer] = useState(0);
   const [cameraResetNonce, setCameraResetNonce] = useState(0);
@@ -129,14 +139,31 @@ export function BuilderPreviewPanel({ presetId }: Props) {
     };
   }, [isExpanded, closeExpanded]);
 
+  const previewBadge =
+    generatedStructure != null && generatedStructure.blocks.length > 0
+      ? "Generated preview"
+      : "Default preset";
+
   const generated = useMemo(() => {
+    if (
+      generatedStructure != null &&
+      generatedStructure.blocks.length > 0
+    ) {
+      return { displayStructure: generatedStructure, error: null };
+    }
     try {
-      const blueprint = clonePresetBlueprint(presetId);
+      const blueprint = clonePresetBlueprintV2(presetId);
       const validation = validateBlueprint(blueprint);
       if (!validation.ok) {
+        const err =
+          "errors" in validation && validation.errors[0]
+            ? typeof validation.errors[0] === "string"
+              ? validation.errors[0]
+              : validation.errors[0].message
+            : "Blueprint validation failed";
         return {
           displayStructure: null,
-          error: validation.errors[0] ?? "Blueprint validation failed",
+          error: err,
         };
       }
       const blocks = generateStructure(blueprint);
@@ -147,7 +174,7 @@ export function BuilderPreviewPanel({ presetId }: Props) {
         error: e instanceof Error ? e.message : "Generation failed",
       };
     }
-  }, [presetId]);
+  }, [presetId, generatedStructure]);
 
   const hasStructure =
     generated.displayStructure != null && generated.displayStructure.blocks.length > 0;
@@ -186,11 +213,13 @@ export function BuilderPreviewPanel({ presetId }: Props) {
 
   const refitCamera = useCallback(() => setCameraResetNonce((n) => n + 1), []);
 
+  const effectiveCameraNonce = cameraResetNonce + previewGenerationNonce;
+
   const viewportProps: PreviewViewportProps = {
     hasStructure,
     displayStructure: generated.displayStructure,
     visibleStructure,
-    cameraResetNonce,
+    cameraResetNonce: effectiveCameraNonce,
     error: generated.error,
     layerViewMode,
     onLayerViewModeChange: setLayerViewMode,
@@ -200,6 +229,7 @@ export function BuilderPreviewPanel({ presetId }: Props) {
     visibleCount: visibleStructure.blocks.length,
     totalCount,
     onRefitCamera: refitCamera,
+    previewBadge,
   };
 
   return (
@@ -212,6 +242,14 @@ export function BuilderPreviewPanel({ presetId }: Props) {
             onExpand={() => setIsExpanded(true)}
           />
         </div>
+
+        {validationWarnings.length > 0 ? (
+          <div className="shrink-0 border-t border-amber-900/40 bg-amber-950/30 px-3 py-2 text-[11px] text-amber-200/90">
+            {validationWarnings.map((w) => (
+              <p key={w}>{w}</p>
+            ))}
+          </div>
+        ) : null}
 
         <BuilderPreviewBreakdown
           breakdown={fullStructureBreakdown}
@@ -251,11 +289,11 @@ export function BuilderPreviewPanel({ presetId }: Props) {
                 className="absolute inset-0 h-full w-full"
                 structure={visibleStructure}
                 boundsStructure={generated.displayStructure!}
-                cameraResetNonce={cameraResetNonce}
+                cameraResetNonce={effectiveCameraNonce}
               />
               <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-end p-3">
                 <span className="rounded-full border border-zinc-600/50 bg-zinc-950/85 px-2.5 py-0.5 text-[10px] font-medium text-zinc-400 backdrop-blur-sm">
-                  Static preset
+                  {previewBadge}
                 </span>
               </div>
               <div className="absolute inset-x-4 bottom-4 z-10">

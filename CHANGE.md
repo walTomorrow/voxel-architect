@@ -1,87 +1,62 @@
-# Change report — Generic v2 lab layout refinement
+# Change report — Builder agent tools (deterministic bridge)
 
 ## Branch
 
-`feature/component-authoring-model`
+`feature/builder-agent-tools`
 
 ## Scope
 
-Layout and UX refinement for the real `/generic-lab` Generic v2 mode only. No schema, validator, generator, emitter, preset, or blueprint type changes. No changes to `/generic-lab-concepts`, V1 lab mode, or concept exploration.
+Connect `/builder` chat to the existing deterministic v2 preset → validate → generate pipeline. Server controls when the tool runs and which preset is used; the model only summarizes tool results. No Cloudflare Agents, D1, R2, or LLM-authored blueprint JSON.
 
-## Files updated
+## Behavior
 
-- `src/app/generic-lab/v2/GenericLabV2Client.tsx` — viewer-first three-column workbench layout
-- `src/app/generic-lab/v2/ComponentInspectorPanel.tsx` — compact header with face + detail summary at top
-- `src/app/generic-lab/v2/genericLabV2Display.ts` — `buildSelectedComponentPreview` helper for overlay/inspector context
+- **Generation intent** (e.g. “make me a small stone cottage”): non-streaming JSON chat response with `toolResult`; preview updates only when `toolResult.ok`.
+- **Normal chat**: existing SSE streaming unchanged.
+- **Image-only** prompts: chat-only (no tool) unless text includes generation verbs.
+- **`modify_current`**: returns a clear not-available-yet error via `POST /api/builder/generate` or tool path.
 
 ## Files created
 
-- `src/app/generic-lab/v2/SelectedComponentPreviewOverlay.tsx` — compact bottom overlay on the live preview
-- `src/app/generic-lab/v2/__tests__/genericLabV2Display.test.ts` — preview summary test for `porch_house_v2` front windows
+- `src/lib/blueprints/clonePresetBlueprint.ts` — v2 preset clone helper
+- `src/lib/builder/builderToolTypes.ts` — tool request/result types
+- `src/lib/builder/shouldRunGenerationTool.ts` — server intent gate
+- `src/lib/builder/resolvePresetFromPrompt.ts` — keyword → v2 preset id
+- `src/lib/builder/generateBuildingPreview.ts` — deterministic tool
+- `src/lib/builder/builderActivityFromTool.ts` — real activity steps
+- `src/lib/builder/formatToolResultForModel.ts` — tool context for Workers AI
+- `src/lib/builder/runBuilderChatTurn.ts` — generation chat orchestration
+- `src/app/api/builder/generate/route.ts` — standalone tool endpoint
+- `src/lib/builder/__tests__/shouldRunGenerationTool.test.ts`
+- `src/lib/builder/__tests__/resolvePresetFromPrompt.test.ts`
+- `src/lib/builder/__tests__/generateBuildingPreview.test.ts`
 
-## Layout changes (summary)
+## Files updated
 
-- **Top bar:** Preset, reload, and blueprint materials (collapsed `<details>`) moved out of the left column into a compact header so the workbench body is only map · preview · inspector.
-- **Three columns (desktop):** Fixed-width semantic map (~304px), flexible center preview, fixed-width inspector (~352px). Validation/debug sits in a collapsed bottom strip outside the main row.
-- **Mobile:** Preview is ordered first (`order-1`) with a generous minimum height; map and inspector stack below with capped heights so the viewer stays primary.
+- `src/app/api/builder/chat/route.ts` — generation turns → JSON + tool
+- `src/lib/builder/builderSystemPrompt.ts` — tool result rules
+- `src/lib/builder/builderChatTypes.ts` — `BuilderChatWithToolSuccessResponse`
+- `src/lib/builder/mockBuilderActivity.ts` — chat-only activity alias
+- `src/app/builder/mockBuilderData.ts` — v2 default preset, `generatedStructure`
+- `src/app/builder/BuilderClient.tsx` — apply tool results to preview state
+- `src/app/builder/components/BuilderPreviewPanel.tsx` — generated vs default preset
+- `src/app/builder/components/BuilderWorkspace.tsx` — header copy, warnings prop
+- `src/app/builder/components/BuilderActivityCard.tsx` — error step styling
 
-## VoxelViewer priority
+## Preset mapping (server)
 
-- Center column is `flex-1` with `absolute inset-0` `VoxelViewer` filling the panel (no nested grid sharing horizontal space with the inspector).
-- Removed the previous layout where the inspector sat beside the viewer inside the center column.
-- Stale-structure banner uses a single compact line at the top of the preview.
-- Structure inspection and validation/debug are collapsed by default and live outside the preview’s flex growth path.
+| User intent (keywords) | v2 preset |
+|------------------------|-----------|
+| workshop / forge / smith | `stone_workshop_v2` |
+| porch / veranda | `porch_house_v2` |
+| cottage / cabin / default | `simple_cabin_v2` |
 
-## Left / right panel simplification
+## Verification
 
-**Left**
+```bash
+pnpm exec tsc --noEmit
+pnpm lint
+pnpm test:generator
+pnpm run build
+```
 
-- Semantic map only (no preset block or materials form above the tree).
-- Map scrolls internally; full height on `lg` breakpoints.
-
-**Right**
-
-- Inspector is the primary panel; structure inspection is a collapsed `<details>` footer with a reduced max height (`10rem`).
-- Inspector header is tighter: human name, monospace id, face + key details (no separate “type” / palette inheritance line).
-- Material overrides remain collapsed `<details>` (unchanged behavior).
-
-## Selected-component preview context
-
-- `buildSelectedComponentPreview` builds name, id, attachment line (`Attached to Front face`), and a detail string (e.g. `2 windows · symmetric · auto height`).
-- `SelectedComponentPreviewOverlay` renders a small bottom-left card on the `VoxelViewer` (pointer-events none, max width ~md) so tree selection, preview, and inspector refer to the same component.
-- No voxel or mesh highlighting was added.
-
-## Preserved behavior
-
-- Rich semantic map, visual surface cards, segmented horizontal placement, live generation, stale preview, collapsible validation/debug, V1 lab mode toggle, and all existing edit paths via `patchComponent`.
-
-## Confirmations
-
-- V1 lab mode remains intact (`GenericLabShell` unchanged).
-- `/generic-lab-concepts` untouched.
-- No schema, generation pipeline, AI, image upload, interior, floor plan, multiple-room, freeform coordinate, or region-selection changes.
-- ComponentPlanV2 is not exposed as editable JSON.
-
-## Tests
-
-- **Added:** `genericLabV2Display.test.ts` (window group preview summary for `porch_house_v2`).
-- **Unchanged:** `genericLabV2Utils.test.ts` (no helper behavior changes).
-
-## Manual verification checklist
-
-- [ ] Open `/generic-lab`, switch to **Generic v2** — V1 still works when toggled.
-- [ ] On a laptop-width window, the voxel preview dominates; map and inspector are side columns.
-- [ ] Preset reload and blueprint materials (collapsed) work from the top bar.
-- [ ] Selecting components in the semantic map updates the preview overlay and inspector header.
-- [ ] Invalid draft still shows stale structure with a compact top banner.
-- [ ] Validation & debug strip expands only when opened; structure inspection stays collapsed by default.
-- [ ] Edit a window count / face / placement — live preview updates when valid.
-
-## Command results
-
-| Command | Result |
-|---------|--------|
-| `pnpm exec tsc --noEmit` | Pass |
-| `pnpm lint` | Pass |
-| `pnpm test:generator` | Pass (135 tests, including new display test) |
-| `pnpm run build` | Pass |
+Manual: `/builder` → “Make me a small stone cottage” → preview updates, activity shows real steps; casual chat still streams.

@@ -46,6 +46,13 @@ export type BuilderChatSuccessResponse = {
   readonly model: string;
 };
 
+/** Non-streaming chat turn when the server ran generate_building_preview. */
+export type BuilderChatWithToolSuccessResponse = {
+  readonly message: string;
+  readonly model: string;
+  readonly toolResult: import("@/src/lib/builder/builderToolTypes").GenerateBuildingPreviewResult;
+};
+
 export type BuilderChatErrorCode = "CONFIG" | "VALIDATION" | "UPSTREAM" | "LICENSE";
 
 export type BuilderChatErrorResponse = {

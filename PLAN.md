@@ -1,353 +1,383 @@
-# Plan — OpenNext migration (Cloudflare)
+# Plan — Builder agent tools (bare-minimum generator bridge)
 
-**Branch:** `feature/opennext-migration`  
-**Status:** Complete — live app at https://voxel-architect.wlc562.workers.dev/ (see `docs/deployment/CLOUDFLARE.md`).  
-**Type:** Infrastructure migration — **not** a product feature branch.
+**Branch:** `feature/builder-agent-tools`  
+**Status:** Planning only — **no implementation** until review.  
+**Type:** Product integration — connects `/builder` chat to the **existing deterministic** generator; not a full autonomous agent.
 
-**Goal:** Replace the deprecated `@cloudflare/next-on-pages` build/deploy path with the current **OpenNext Cloudflare adapter** (`@opennextjs/cloudflare`), while keeping the deployed app and existing routes working.
+**Live app (reference):** https://voxel-architect.wlc562.workers.dev/  
+**Infra:** Cloudflare Workers + OpenNext (`docs/deployment/CLOUDFLARE.md`).
 
-**Official references (verify before implementing):**
+**Goal:** Move from “user chats while preview is static” to “user chats → controlled tool run → validated blueprint → voxel generation → preview updates → activity log reflects real steps.”
 
-- [OpenNext — Cloudflare get started](https://opennext.js.org/cloudflare/get-started)
-- [OpenNext — Cloudflare CLI](https://opennext.js.org/cloudflare/cli)
-- [OpenNext — Cloudflare environment variables](https://opennext.js.org/cloudflare/howtos/env-vars)
-- [Cloudflare Workers — Next.js framework guide](https://developers.cloudflare.com/workers/framework-guides/web-apps/nextjs/)
-- [Cloudflare blog — OpenNext on Workers](https://blog.cloudflare.com/deploying-nextjs-apps-to-cloudflare-workers-with-the-opennext-adapter/)
-
-**Live site:** https://voxel-architect.wlc562.workers.dev/ (Cloudflare **Workers** via OpenNext).
+This is the **middle layer** between the top-end chat UI and the generator. It is **not** Cloudflare Agents SDK, **not** D1/R2 persistence, and **not** full v2 semantic refinement / operation grammar yet.
 
 ---
 
 ## 1. Summary
 
-This branch migrates **how** Voxel Architect is built and run on Cloudflare. It does **not** change generator/blueprint logic, `/preview` behavior, `/generic-lab` editing, or builder product UX except where the platform requires it (e.g. removing unsupported Edge runtime exports).
+`/builder` already has Workers AI chat (streaming text, image references) and a **static** voxel preview driven by a fixed **v1 preset id** on the active chat. The assistant is instructed not to claim it changed the building.
 
-The deprecated adapter warned in build logs:
+This branch adds a **server-side builder tool** (`generate_building_preview`) that:
 
-```text
-@cloudflare/next-on-pages@1.13.16: Please use the OpenNext adapter instead: https://opennext.js.org/cloudflare
-```
+1. Selects or receives a **valid generic building blueprint** (initially from **v2 presets**, not model-invented JSON).
+2. Runs **`validateBlueprint` → `generateStructure`** (existing pipeline).
+3. Returns **blocks + summary + validation issues + activity events** to the client.
+4. Updates the preview from **tool output**, not from a frozen preset alone.
 
-**Current production workaround:** `/api/builder/chat` was made Edge-compatible under `next-on-pages` and deploys successfully. This migration addresses **long-term technical debt** before expanding Cloudflare infrastructure (bindings, caching, etc.).
-
-**Success means:** same user-visible routes (`/builder`, `/preview`, `/generic-lab`), same builder chat behavior (streaming text, image prompts), secrets stay server-side, and the `next-on-pages` build command is gone from the deployment path.
-
----
-
-## 2. Current state survey
-
-### Package scripts (`package.json`)
-
-| Script | Command |
-|--------|---------|
-| `dev` | `next dev` |
-| `build` | `next build` |
-| `start` | `next start` (Node — not used on Cloudflare today) |
-| `lint` | `eslint` |
-| `test:generator` | `vitest run` |
-
-- **Package manager:** `pnpm@10.33.3`
-- **Was:** `@cloudflare/next-on-pages` only in the dashboard; **now:** `@opennextjs/cloudflare` and `wrangler` in `package.json`.
-- **No** `setupDevPlatform()`, `getRequestContext`, or other `next-on-pages` references in source.
-
-### Previous build (replaced)
-
-| Setting | Was |
-|---------|-----|
-| Build command | `npx @cloudflare/next-on-pages@1` (deprecated) |
-| Platform | Cloudflare Pages + Edge runtime |
-
-**Now:** Workers Builds / `pnpm run deploy:cloudflare` → `.open-next/`.
-
-### Wrangler / OpenNext config in repo
-
-| File | Present? |
-|------|----------|
-| `wrangler.toml` | **No** |
-| `wrangler.jsonc` | **No** |
-| `open-next.config.ts` | **No** |
-| `.dev.vars` | **No** (gitignored pattern may apply via `.env*`) |
-| `public/_headers` | **No** |
-
-### Next.js version
-
-- **`next`:** `16.2.6` (App Router)
-- OpenNext documents support for **Next.js 16** minor/patch versions via `@opennextjs/cloudflare`.
-
-### `next.config.ts`
-
-- Redirect: `/visualizer` → `/generic-lab`
-- **No** OpenNext dev helper (`initOpenNextCloudflareForDev`) yet.
-
-### App routes to preserve (no logic changes planned)
-
-| Route | Role |
-|-------|------|
-| `/builder` | Product-facing AI builder UI (`src/app/builder/`) |
-| `/preview` | Structure preview (`src/app/preview/`) |
-| `/generic-lab` | Blueprint lab (`src/app/generic-lab/`) |
-| `/api/builder/chat` | Workers AI chat API |
-
-No `middleware.ts` in repo. No other `export const runtime = "edge"` besides the builder chat route.
-
-### API route: `src/app/api/builder/chat/route.ts`
-
-- **`export const runtime = "edge"`** — required for `next-on-pages`; **OpenNext docs require removing Edge runtime** (Node.js runtime on Workers instead).
-- **POST** handler: JSON body validation → text-only **SSE streaming** or image **JSON** response.
-- **Imports:** `@/src/lib/builder/callWorkersAiChat`, `validateChatRequest`, types.
-- **No** filesystem, **no** `Buffer` in the route file.
-
-### Builder chat library (`src/lib/builder/`)
-
-| Module | Notes |
-|--------|--------|
-| `callWorkersAiChat.ts` | `process.env` for config; outbound `fetch` to Workers AI REST; streaming via `ReadableStream` |
-| `workersAiSse.ts` | `TextDecoder` / `TransformStream` / string `lineBuffer` (not Node `Buffer`) |
-| `validateChatRequest.ts` | JSON + base64 image size checks |
-| Others | Guardrails, system prompt, types, mock activity (UI-only) |
-
-### Environment variables (builder chat)
-
-Documented in **`.env.example`** (placeholders only — safe to commit):
-
-| Variable | Purpose |
-|----------|---------|
-| `CLOUDFLARE_ACCOUNT_ID` | Workers AI REST account segment |
-| `CLOUDFLARE_API_TOKEN` | Bearer token (server-only secret) |
-| `WORKERS_AI_MODEL` | Default `@cf/meta/llama-3.2-11b-vision-instruct` |
-
-**`.env.local`:** exists locally for development; **do not** read, print, commit, or modify as part of this migration.
-
-**Client exposure:** no `NEXT_PUBLIC_*` Cloudflare secrets in `src/` (grep confirms server-only names in builder lib).
-
-### Deployment documentation in repo
-
-- No root `CLOUDFLARE.md` in tree at plan time.
-- `docs/deployment/README.md` was listed in tooling but is **not** present on disk — plan to add **`docs/deployment/CLOUDFLARE.md`** as the canonical deployment doc for this migration.
-
-### Repo vs dashboard gap (historical)
-
-A prior deploy failed when only `route.ts` was pushed without `src/lib/builder/` and `src/app/builder/`. This migration branch should ensure **full builder tree** is committed before any deploy test.
+The model may **request** generation via a controlled orchestration path; it must **not** output raw voxel coordinates or edit `ComponentPlan` IR.
 
 ---
 
-## 3. Migration decision
+## 2. Current implementation status survey
 
-### Recommended target: **Cloudflare Workers via `@opennextjs/cloudflare`**
-
-Official OpenNext and Cloudflare documentation describe deployment to **Cloudflare Workers** (Worker entry `.open-next/worker.js` + static assets in `.open-next/assets`), not a continued **`next-on-pages`** Pages Functions model.
-
-| Option | Fit for this repo |
-|--------|-------------------|
-| **Workers + OpenNext** (recommended) | Matches official adapter; supports **Route Handlers**, **response streaming**, Next **16**; uses `nodejs_compat` instead of Edge-constrained runtime. |
-| **Pages + OpenNext** | **Not** a supported target; production uses Workers + OpenNext only. |
-
-### Least disruptive deployment *workflow*
-
-1. **Keep** GitHub branch → preview → merge workflow.
-2. **Change** build/deploy mechanics to OpenNext + Wrangler (Worker + assets binding).
-3. **Host on Workers** at https://voxel-architect.wlc562.workers.dev/ (custom domain optional).
-
-**Outcome:** Workers Builds / `wrangler deploy` replaces the deprecated Pages `next-on-pages` pipeline.
-
-**Alternative bootstrap:** `npx @opennextjs/cloudflare migrate` automates dependency install, `wrangler.jsonc`, `open-next.config.ts`, `.dev.vars`, scripts, `_headers`, `.gitignore`, and `initOpenNextCloudflareForDev()`. **Review the diff carefully** (it may create R2 cache resources if R2 is enabled on the account). Manual steps from the get-started guide are equivalent.
-
-**Optional minimal OpenNext config:** `defineCloudflareConfig()` with **no** R2 incremental cache on first pass (defer R2 until caching is explicitly desired).
-
----
-
-## 4. Files likely to change
-
-**Create**
-
-| File | Purpose |
-|------|---------|
-| `wrangler.jsonc` | Worker name, `main`, `assets`, `compatibility_date`, `nodejs_compat` (and flags per docs) |
-| `open-next.config.ts` | `defineCloudflareConfig()` (minimal initially) |
-| `.dev.vars` | `NEXTJS_ENV=development` for local Worker preview (no secrets committed) |
-| `public/_headers` | Static asset cache headers for `/_next/static/*` |
-| `docs/deployment/CLOUDFLARE.md` | Build/deploy/env instructions for the team |
-
-**Edit**
-
-| File | Purpose |
-|------|---------|
-| `package.json` | Add `@opennextjs/cloudflare`, `wrangler`; add `preview` / `deploy` / `upload` / `cf-typegen` scripts |
-| `pnpm-lock.yaml` | Lockfile update |
-| `next.config.ts` | `initOpenNextCloudflareForDev()` from `@opennextjs/cloudflare` |
-| `.gitignore` | Ignore `.open-next/` |
-| `src/app/api/builder/chat/route.ts` | **Remove** `export const runtime = "edge"` per OpenNext requirement |
-| `README.md` | Update live URL / deploy instructions after cutover (optional, post-migration) |
-| `.env.example` | Placeholders only if OpenNext/Wrangler docs add vars (e.g. `NEXTJS_ENV` note); **never** real secrets |
-| `PLAN.md` | This document (replaced for migration) |
-
-**Do not edit (unless build proves otherwise)**
-
-- `src/lib/generation/**`, blueprint schemas, compiler
-- `src/app/preview/**`, `src/app/generic-lab/**` (except forced build fixes)
-- Builder **UX** beyond runtime export removal
-- `.env.local`
-
----
-
-## 5. Build command changes
-
-### Previous (removed)
-
-```bash
-npx @cloudflare/next-on-pages@1
-```
-
-No longer used.
-
-### Target (from official OpenNext + Cloudflare docs)
-
-**Packages**
-
-```bash
-pnpm add @opennextjs/cloudflare@latest
-pnpm add -D wrangler@latest
-```
-
-Wrangler **≥ 3.99.0** required.
-
-**`package.json` scripts** (adapter invokes existing `build` → `next build`):
-
-```json
-{
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
-  }
-}
-```
-
-Use `pnpm exec opennextjs-cloudflare …` if the binary is not on PATH.
-
-**What each step does**
-
-| Command | Role |
-|---------|------|
-| `opennextjs-cloudflare build` | Runs `pnpm run build` (`next build`), then transforms output to `.open-next/` |
-| `opennextjs-cloudflare preview` | Populates local cache + `wrangler dev` (production-like `workerd` runtime) |
-| `opennextjs-cloudflare deploy` | Populates remote cache + deploys Worker (use `-- --keep-vars` if dashboard vars must persist) |
-| `next dev` | Unchanged for day-to-day UI work |
-
-**Local full build (no deploy)**
-
-```bash
-pnpm exec opennextjs-cloudflare build
-```
-
-**Output artifacts (do not commit)**
+### 2.1 `/builder` UI (exists)
 
 | Path | Role |
 |------|------|
-| `.open-next/worker.js` | Wrangler `main` entry |
-| `.open-next/assets/` | Static assets (`assets.directory` in `wrangler.jsonc`) |
+| `src/app/builder/page.tsx` | Route shell |
+| `src/app/builder/BuilderClient.tsx` | Chat state, `fetch("/api/builder/chat")`, streaming via `consumeBuilderChatSse`, mock activity on every assistant turn |
+| `src/app/builder/mockBuilderData.ts` | `BuilderChat`: `presetId`, `status`, messages; default preset `simple_rustic_cabin` (v1); **no** stored blocks/blueprint |
+| `src/app/builder/components/BuilderWorkspace.tsx` | Layout; header shows preset label + **“Static preview”** |
+| `src/app/builder/components/BuilderPreviewPanel.tsx` | **Client-side** `clonePresetBlueprint(presetId)` → `validateBlueprint` → `generateStructure` in `useMemo`; badge **“Static preset”** |
+| `src/app/builder/components/BuilderChatPanel.tsx` | Message list + prompt |
+| `src/app/builder/components/BuilderActivityCard.tsx` | Renders `BuilderActivityStep[]` |
+| `src/lib/builder/mockBuilderActivity.ts` | **Mock-only** steps; ends with “Preview unchanged — static preset” |
 
-**Cloudflare CI / dashboard (Workers Builds or equivalent)**
+**Preview data flow today:** `presetId` from chat → `genericLabUtils.clonePresetBlueprint` (**v1 only**) → `generateStructure` → `VoxelViewer`. Preview **does not** react to chat content.
 
-- **Build + deploy command:** `pnpm install && pnpm run deploy` (or split build/upload per account conventions).
-- **Not** a Pages “output directory” upload of `.next/` — the adapter produces `.open-next/`.
-- Use **Workers Builds** (or `pnpm run deploy:cloudflare`) in the Cloudflare dashboard.
+### 2.2 `/api/builder/chat` (exists)
 
-**Windows note:** OpenNext documents limited Windows support; prefer **WSL**, Linux CI, or deploy-only validation on Windows if `preview`/`build` fails locally.
+| Path | Role |
+|------|------|
+| `src/app/api/builder/chat/route.ts` | `POST`; no `runtime = "edge"` (OpenNext Node on Workers) |
+| `src/lib/builder/callWorkersAiChat.ts` | Workers AI REST; streaming for text-only |
+| `src/lib/builder/validateChatRequest.ts` | JSON + image validation |
+| `src/lib/builder/builderChatTypes.ts` | Request/response types; **no** tool result types yet |
+| `src/lib/builder/builderSystemPrompt.ts` | Tells model preview is **static**; no tool vocabulary |
+| `src/lib/builder/consumeBuilderChatStream.ts` | Client SSE parser (`chunk` / `done` / `error`) |
+| `src/lib/builder/builderChatGuardrails.ts` | Message prep, friendly errors |
+
+**No** tool invocation, **no** blueprint/generation in chat route today.
+
+### 2.3 Generator & validation (exists, production-quality)
+
+| Entry | Path | Notes |
+|-------|------|--------|
+| Unified validate + generate | `src/lib/generation/generateStructure.ts` | Dispatches `schemaVersion` 1 vs 2 |
+| v1 validate | `src/lib/blueprints/validateBlueprint.ts` → `validateGenericBuilding` | Returns `resolved` for v1 |
+| v2 validate | `validateGenericBuildingBlueprintV2` | Returns `normalized` blueprint |
+| v1 generate | `generateGenericBuilding` | From resolved v1 |
+| v2 generate | `generateGenericBuildingV2` | After `resolveGenericBuildingV2` |
+| v2 compiler IR | `src/lib/generation/components/v2/*` | `ComponentPlan` v2 — **internal**, not for UI/model |
+
+**Presets:**
+
+| Version | Catalog | Count (repo) | IDs (examples) |
+|---------|---------|----------------|----------------|
+| v1 | `sampleGenericBuildingBlueprints.ts` | 2 | `simple_rustic_cabin`, `shed_roof_workshop` |
+| v2 | `sampleGenericBuildingBlueprintsV2.ts` | 3 | `simple_cabin_v2`, `stone_workshop_v2`, `porch_house_v2` |
+
+`previewPresetCatalog.ts` lists both v1 and v2 for `/preview` lab sources.
+
+### 2.4 GenericBuildingBlueprint v2 — **implemented in `src/`, not docs-only**
+
+**In code today:**
+
+- Types: `src/lib/blueprints/types/genericBuildingV2.ts`
+- Validator: `validateGenericBuildingV2.ts` + tests
+- Resolver: `resolveGenericBuildingV2.ts` + tests
+- Generator: `generateGenericBuildingV2.ts`, `compileGenericBuildingV2Plan.ts`, emitters + tests
+- UI: `/generic-lab` v2 client (`GenericLabV2Client.tsx`, component tree editor)
+- Invariant tests: `generatorGenericPresetInvariantsV2.test.ts`
+
+**Not implemented (docs/planned, out of this branch):**
+
+- LLM-authored full v2 blueprints from free-form prompts
+- Semantic **refine** operations (`add window`, `widen porch`) as first-class tool ops
+- Automatic v1→v2 conversion
+- Canonical render / screenshot self-evaluation loop
+
+`docs/plans/GENERIC_BUILDING_V2.md` is a **broader** product plan; the **executable v2 preset + generator path already exists**.
+
+### 2.5 Builder vs v2 gap
+
+- Builder preview uses **v1-only** `clonePresetBlueprint` in `genericLabUtils.ts`.
+- Default builder preset is **v1** `simple_rustic_cabin`.
+- Chat/model have **no** path to v2 presets yet.
+
+### 2.6 Other routes (unchanged this branch)
+
+- `/preview` — `PreviewInspectionClient.tsx`; preset catalog v1/v2
+- `/generic-lab` — v1 lab + v2 lab; human blueprint editing
+
+### 2.7 Relevant tests (keep green)
+
+- `pnpm test:generator` — v1/v2 preset invariants, compile tests, validation tests
+- No builder tool tests yet
 
 ---
 
-## 6. Environment variables and secrets
+## 3. Recommended first tool scope
 
-### Local development
+### Option A — v1 preset bridge
 
-| File | Policy |
+| Criterion | Assessment |
+|-----------|------------|
+| Speed | Fastest (builder already uses v1 `clonePresetBlueprint`) |
+| Architecture | **Misaligned** with long-term v2 + semantic components target |
+| Demo value | Good for “see preview move” |
+| Risk | Low technically; **high** product debt if refinement is built on v1 |
+| Code touched | Builder preview utils, tool mapping to 2 v1 presets |
+
+### Option B — v2 as first executable target (preset selection, not free-form authoring)
+
+| Criterion | Assessment |
+|-----------|------------|
+| Speed | **Still fast** — reuse `getGenericBuildingPresetV2` + `generateStructure` (v2 path already wired) |
+| Architecture | **Correct** direction; matches generic-lab v2 and PLAN in `docs/plans/GENERIC_BUILDING_V2.md` |
+| Demo value | Strong (“cottage” → `simple_cabin_v2`, “workshop” → `stone_workshop_v2`, etc.) |
+| Risk | Low if scope is **preset pick + validate + generate**, not LLM JSON blueprint |
+| Code touched | New `clonePresetBlueprintV2` (or shared preset helper), tool module, builder state, preview props |
+
+### Recommendation: **Option B — minimal v2 executable path (preset selection)**
+
+**Phase-1 tool behavior (`generate_building_preview`):**
+
+- **Modes implemented first:**
+  - `select_preset` — map user/assistant intent to one of **3 v2 preset ids** (deterministic keyword table + default `simple_cabin_v2`).
+  - `create_from_prompt` — **alias** of `select_preset` in phase 1 (honest activity copy: “Matched request to v2 preset …”).
+- **Deferred in phase 1:**
+  - `modify_current` — needs stable in-memory blueprint + safe patch rules (semantic ops) → later branch.
+  - LLM-emitted full `GenericBuildingBlueprintV2` JSON.
+
+**v1:** Do **not** build refinement on v1. Optional **fallback** only if v2 generation throws (log + single retry with `simple_cabin_v2`), not a parallel product path.
+
+**Honesty in UI/activity:** Say “v2 component blueprint (preset)” not “AI designed every component.”
+
+---
+
+## 4. Tool contract (refined from repo types)
+
+### 4.1 Request (server-internal first)
+
+```ts
+/** Tool name: generate_building_preview */
+type GenerateBuildingPreviewRequest = {
+  /** Latest user message text (trimmed). */
+  prompt: string;
+  mode: "select_preset" | "create_from_prompt" | "modify_current";
+  /** Phase 1: preset id hint from classifier; phase 2+: sanitized blueprint. */
+  presetId?: string;
+  /** Phase 2+ only — never accept raw ComponentPlan. */
+  blueprint?: import("@/src/lib/blueprints/types").StructureBlueprint;
+  /** Optional: last successful blueprint in session (for modify_current later). */
+  currentBlueprint?: import("@/src/lib/blueprints/types").StructureBlueprint;
+  /** High-level image note only — not raw base64 in tool (chat route already handled image). */
+  imageContextSummary?: string;
+};
+```
+
+Phase 1 implementation: only `select_preset` / `create_from_prompt` with **v2 preset ids**.
+
+### 4.2 Result
+
+```ts
+type BuilderActivityEvent = {
+  readonly id: string;
+  readonly label: string;
+  readonly status: "pending" | "success" | "error";
+};
+
+type BuilderValidationIssueView = {
+  readonly severity: "error" | "warning" | "note";
+  readonly message: string;
+  readonly code?: string;
+};
+
+type GenerateBuildingPreviewResult = {
+  readonly ok: boolean;
+  /** Shown in chat + activity; must reflect actual tool outcome. */
+  readonly assistantSummary: string;
+  /** Public blueprint JSON safe for UI/debug panel — schemaVersion 2 preset clone. */
+  readonly blueprint?: import("@/src/lib/blueprints/types").GenericBuildingBlueprintV2;
+  readonly presetId?: string;
+  readonly presetLabel?: string;
+  readonly schemaVersion: 2;
+  readonly blocks?: import("@/src/lib/voxel/types").VoxelBlock[];
+  readonly blockCount?: number;
+  readonly validationIssues?: readonly BuilderValidationIssueView[];
+  readonly activityEvents: readonly BuilderActivityEvent[];
+  readonly error?: string;
+};
+```
+
+**Never expose:** `ComponentPlan`, `ComponentPlanV2`, resolved compiler internals, raw coordinate arrays for the model to edit.
+
+**Size guard:** Reject or warn if `blockCount` exceeds blueprint `constraints.maxBlockCount` after generation (validator should already catch most issues).
+
+### 4.3 Core function (new)
+
+`src/lib/builder/generateBuildingPreview.ts`:
+
+1. Resolve preset id (`resolvePresetFromPrompt(prompt)`).
+2. `structuredClone(getGenericBuildingPresetV2(id).blueprint)`.
+3. `validateBlueprint(blueprint)` — if `!ok`, return `ok: false` with issues, **no** blocks.
+4. `generateStructure(blueprint)` → blocks.
+5. Build `activityEvents` + `assistantSummary` from actual steps.
+
+Unit-test: each v2 preset id produces `ok: true` and `blockCount > 0`.
+
+---
+
+## 5. LLM / tool integration design
+
+### Approaches considered
+
+| Approach | Summary | Risk |
+|----------|---------|------|
+| **1** Single model call returns text + tool JSON | Fragile parsing; stream incompatible | High |
+| **2** Backend rules classify intent → run tool | Predictable; may miss nuance | Low–medium |
+| **3** Strict JSON planner call → tool → final response | More accurate; extra latency/cost | Medium |
+
+### Recommendation: **Approach 2 (rules) + optional single non-stream “summary” call**
+
+**Phase 1 orchestration (`runBuilderChatTurn` in `src/lib/builder/`):**
+
+1. Parse chat request (existing validation).
+2. **`shouldRunGenerationTool(lastUserMessage)`** — keyword/heuristic table, e.g. `make`, `build`, `create`, `generate`, `cottage`, `cabin`, `house`, `workshop`, `porch`, `preview` (tunable list in code).
+3. If **false:** existing Workers AI stream path only (unchanged).
+4. If **true:**
+   - Run `generateBuildingPreview` **before** assistant text.
+   - If tool **`ok: false`:** return assistant message that states failure (no claim of preview update); SSE or JSON includes `toolFailed: true`.
+   - If tool **`ok: true`:** inject **tool summary** into a **short augmented user context** for Workers AI (preset chosen, block count, validation warnings count) — **non-streaming** assistant reply for that turn **or** stream only the explanation after tool completes.
+5. Response to client includes **`toolResult`** payload (blocks or block count + preset id; see API shape).
+
+**Image turns:** Phase 1 — run tool only if text also triggers generation keywords; image-only interpretation stays chat-only. Phase 2 — extend classifier with vision summary stub.
+
+### Guardrails (required)
+
+| Risk | Mitigation |
+|------|------------|
+| Model claims preview changed when tool failed | System prompt + server only attaches `toolResult.ok` metadata; UI only updates preview on `ok: true` |
+| Raw voxel coordinates | Prompt + validator rejects non-blueprint payloads; tool never accepts coordinate arrays |
+| Bypass validation | Tool always calls `validateBlueprint` before `generateStructure` |
+| Edit ComponentPlan | Tool API does not import compiler IR; blueprint only via preset clone |
+| Unconstrained JSON from model | Phase 1: **no** model-produced blueprint JSON; preset id from **server** classifier only |
+| Huge payloads | Cap blocks returned to client (full blocks OK for dev sizes ~ tens of thousands); consider omitting full `blueprint` in SSE and sending `presetId` only |
+
+**Update `BUILDER_SYSTEM_PROMPT`:** Preview **can** update when the server reports a successful generation tool run; assistant must not claim success without `toolResult.ok`.
+
+---
+
+## 6. UI integration (minimal)
+
+| Area | Change |
 |------|--------|
-| `.env.local` | **Do not** touch, print, inspect, or commit. User-managed secrets. |
-| `.env.example` | Placeholders only; may add non-secret notes (`NEXTJS_ENV`, license curl hints). |
-| `.dev.vars` | Commit **only** non-secret defaults, e.g. `NEXTJS_ENV=development`. **Do not** put API tokens in git. |
-
-OpenNext recommends **Next.js `.env*` files** for vars available under `process.env` in both `next dev` and `wrangler dev` / deployed Worker. Existing `.env.local` pattern should continue to work for local `next dev`.
-
-### Production / preview deployments
-
-| Variable | Where to set | When needed |
-|----------|--------------|-------------|
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard → Worker **environment variables** or **secrets** | **Runtime** (API route) |
-| `CLOUDFLARE_API_TOKEN` | Dashboard **secrets** (preferred) | **Runtime** |
-| `WORKERS_AI_MODEL` | Dashboard env var | **Runtime** (optional override) |
-
-**Workers Builds:** If the CI build step runs `next build` only, builder secrets are primarily **runtime** vars. Follow [OpenNext env vars](https://opennext.js.org/cloudflare/howtos/env-vars): set **runtime** vars in the dashboard; use **Build variables and secrets** only if the build inlines env-dependent SSG (this app’s builder route is dynamic).
-
-**Deploy preservation:** `opennextjs-cloudflare deploy -- --keep-vars` if dashboard-defined vars must survive deploys.
-
-**Rules**
-
-- No `NEXT_PUBLIC_*` for Cloudflare credentials.
-- Tokens stay server-side (`process.env` in route handlers / lib only).
-
-### Future improvement (out of scope unless trivial)
-
-- **Workers AI binding** instead of REST `fetch` + API token — lower latency and no token in Worker env, but requires `wrangler.jsonc` AI binding and code changes in `callWorkersAiChat.ts`. Treat as **post-migration** unless docs show a zero-risk drop-in.
+| `BuilderPreviewPanel` | Accept `structure: VoxelStructure \| null` prop; when set, use it instead of regenerating from static `presetId` only; badge: **“Generated preview”** vs initial **“Default preset”** |
+| `BuilderClient` | Hold per-chat: `generatedStructure`, `lastToolResult`, `activePresetId`; on successful tool response, update state and `status: "preview_ready"` |
+| Chat message | Show assistant text as today; attach **real** `activitySteps` from server when tool ran |
+| Validation | Compact strip or activity lines for warnings (v2 `ValidationIssue`); errors block preview update |
+| Failure | Preview unchanged; assistant error friendly; activity shows failed step |
+| `BuilderWorkspace` header | Remove “Static preview” when `preview_ready`; show preset label from tool |
+| **No** full UI redesign |
 
 ---
 
-## 7. Runtime compatibility audit
+## 7. State model (client-only)
 
-Execute during implementation; **preserve behavior** — rewrite only if preview/deploy proves breakage.
+Per `BuilderChat` (extend `mockBuilderData.ts` types or parallel `BuilderSessionState`):
 
-### `/api/builder/chat` (`route.ts`)
+```ts
+type BuilderPreviewState = {
+  readonly presetId: string;
+  readonly schemaVersion: 1 | 2;
+  readonly structure: VoxelStructure | null; // null until first successful tool
+  readonly lastToolResult?: GenerateBuildingPreviewResult;
+};
+```
 
-| Check | Current state | OpenNext expectation |
-|-------|---------------|----------------------|
-| `runtime = "edge"` | Present | **Remove** — adapter uses Node.js runtime on Workers |
-| Request body | `request.json()`, 4 MB limit | Standard Web APIs — OK |
-| Responses | `Response.json`, SSE `ReadableStream` | [Supported — response streaming](https://developers.cloudflare.com/workers/framework-guides/web-apps/nextjs/) |
-| Dynamic route | No static generation of secrets | OK |
-
-### `callWorkersAiChat.ts`
-
-| Check | Current state |
-|-------|---------------|
-| `process.env.*` | Used for account/token/model |
-| Outbound `fetch` | HTTPS to `api.cloudflare.com` — may need `global_fetch_strictly_public` in `wrangler.jsonc` per OpenNext template |
-| Streaming | `fetch` with `stream: true`, pipe through `transformWorkersAiStreamToBuilderSse` |
-| Image path | Non-streaming JSON body with top-level `image` + `messages` |
-| Node `Buffer` / `fs` / `child_process` | **Not used** |
-
-### `workersAiSse.ts`
-
-| Check | Current state |
-|-------|---------------|
-| Streams | `TransformStream`, `TextEncoder`/`TextDecoder` |
-| `lineBuffer` | JavaScript string, not Node Buffer |
-
-### `validateChatRequest.ts`
-
-| Check | Current state |
-|-------|---------------|
-| Parsing | Pure JSON validation, base64 size estimate |
-
-### App pages (`/builder`, `/preview`, `/generic-lab`)
-
-- Mostly client components + static/SSR Next patterns; **no** planned changes.
-- **Three.js** / R3F bundles: watch **Worker bundle size** (gzip limit matters; Wrangler reports compressed size).
-
-### Audit checklist (implementation phase)
-
-- [ ] Grep for `runtime = "edge"` and remove per OpenNext docs
-- [ ] Grep for `Buffer`, `fs`, `node:`, `child_process` under `src/app/api` and `src/lib/builder`
-- [ ] Run `pnpm run preview` and exercise streaming + image paths
-- [ ] Confirm `process.env` reads work in deployed Worker (dashboard vars)
+- **New chat / reset:** structure `null`, preview shows default v2 preset (change default to `simple_cabin_v2`) until first generation.
+- **Switch chat:** restore that chat’s last structure from React state (in-memory map).
+- **Refresh:** all generation state lost — **no** misleading “saved build” copy; optional subtle “Not saved” in header (one line).
+- **No** D1/R2.
 
 ---
 
-## 8. Testing plan
+## 8. Activity events (tool-driven)
 
-### Baseline (before or after config, no deploy)
+Replace mock steps when `toolResult` present:
+
+| Step id (example) | Label (example) |
+|-------------------|-----------------|
+| `parsed` | Parsed building request |
+| `target` | Chose v2 preset: Simple cabin (v2) |
+| `blueprint` | Loaded v2 component blueprint (preset) |
+| `validate` | Validated blueprint |
+| `generate` | Generated voxel structure (N blocks) |
+| `preview` | Updated builder preview |
+| `assistant` | Assistant response ready |
+
+On failure: mark `validate` or `generate` as `error`; **no** `preview` success step.
+
+Keep `buildMockActivitySteps` only for **chat-only** turns (no tool).
+
+---
+
+## 9. Server / API shape
+
+### Recommendation: **separate endpoint + orchestration helper**
+
+| Endpoint | Role |
+|----------|------|
+| `POST /api/builder/chat` | Remains chat + optional **orchestrated** turn: internally may call tool, then Workers AI; extends SSE/JSON with tool metadata |
+| `POST /api/builder/generate` | **Deterministic tool only** — same auth/env as chat; usable for testing and explicit “regenerate” later |
+
+**Why separate `/api/builder/generate`:**
+
+- Keeps generator logic testable without Workers AI tokens.
+- Avoids tangling SSE stream parser with large block payloads in every chat request.
+- Chat route **calls** `generateBuildingPreview()` in-process (shared lib), not only via HTTP self-fetch.
+
+**Client flow (phase 1):**
+
+1. `POST /api/builder/chat` with messages (+ image).
+2. Response:
+   - **Stream path:** new SSE events `tool_start`, `tool_result` (summary + presetId + blockCount; **blocks** in final `done` payload or separate JSON field after stream) — **or**
+   - **Simpler phase 1:** if generation intent, use **JSON response** (no stream) with `{ message, toolResult, model }`; non-generation turns keep streaming.
+
+**Preference alignment:** Start with **non-stream chat response when tool runs** (lowest risk); preserve streaming for non-generation messages.
+
+### Response type extension (sketch)
+
+```ts
+type BuilderChatResponse =
+  | { mode: "stream"; /* existing SSE */ }
+  | {
+      mode: "json";
+      message: string;
+      model: string;
+      toolResult?: GenerateBuildingPreviewResult;
+    };
+```
+
+Client: if `toolResult?.ok`, apply blocks to preview.
+
+---
+
+## 10. Cloudflare / runtime
+
+- Route handlers stay **OpenNext Workers**-compatible (no Edge runtime).
+- Secrets unchanged (`CLOUDFLARE_*`, `WORKERS_AI_MODEL`).
+- Tool path: `fetch` only inside existing Workers AI module; generator is **pure TS** (no `fs`, no `Buffer` required).
+- **Do not** add Agents, D1, R2, AI Gateway.
+- Streaming for **non-tool** turns must remain working; image JSON mode unchanged.
+- Worker bundle: returning full block arrays in JSON increases response size — acceptable for preset-scale builds; monitor limits.
+
+---
+
+## 11. Testing plan
+
+### Automated
 
 ```bash
 pnpm exec tsc --noEmit
@@ -356,131 +386,142 @@ pnpm test:generator
 pnpm run build
 ```
 
-### OpenNext-specific (local)
+**New unit tests (Vitest):**
 
-```bash
-pnpm run preview
-```
+- `generateBuildingPreview` — each v2 preset succeeds.
+- `resolvePresetFromPrompt` — keyword → id mapping.
+- `shouldRunGenerationTool` — positive/negative cases.
+- Optional: `POST /api/builder/generate` route test with mocked env (minimal).
 
-Then verify in the **Worker runtime** (not only `next dev`):
+### Manual (deployed or `pnpm run preview:cloudflare`)
 
-| Check | How |
-|-------|-----|
-| `/builder` loads | Browser |
-| Text-only chat | Send message → streaming tokens |
-| Streaming | SSE `chunk` / `done` events; send disabled while in flight |
-| Image prompt | Attach/paste image → JSON mode response (`X-Builder-Chat-Mode: json`) |
-| `/preview` | Loads 3D preview |
-| `/generic-lab` | Loads lab shell / v2 UI |
-| Secrets | DevTools network: no `CLOUDFLARE_API_TOKEN` in client bundles or responses |
-| Config missing | Temporarily unset vars locally → 503 CONFIG message (optional) |
-
-### Deployed branch preview
-
-Repeat the same browser checks on the **branch preview URL** after Cloudflare build succeeds.
-
-### Regression guard
-
-- `pnpm test:generator` must stay green (no generator edits planned).
+| Check | Expected |
+|-------|----------|
+| `/builder` loads | Default v2 preset preview |
+| Chat without build verbs | Streams as today |
+| Image prompt | Works; no false preview update unless keywords |
+| “Make me a small stone cottage” | Tool runs → preview updates → real activity |
+| Tool failure path | Friendly error; preview unchanged |
+| `/preview`, `/generic-lab` | Unchanged |
 
 ---
 
-## 9. Deployment plan
+## 12. Out of scope (this branch)
 
-### Implementation sequence (after plan approval)
-
-1. Branch `feature/opennext-migration` from latest main (or current production base).
-2. Add dependencies and config (`wrangler.jsonc`, `open-next.config.ts`, scripts, `_headers`, `.gitignore`, `next.config.ts` dev helper).
-3. Remove `export const runtime = "edge"` from `src/app/api/builder/chat/route.ts`.
-4. Add `docs/deployment/CLOUDFLARE.md`.
-5. Run baseline tests (Section 8).
-6. Run `pnpm run preview` locally (WSL if Windows fails).
-7. Configure **Cloudflare Workers** (or Workers Builds) for the repo:
-   - Replace `npx @cloudflare/next-on-pages@1` with `pnpm install && pnpm run deploy` (or documented equivalent).
-   - Set **runtime** env vars / secrets for the three `CLOUDFLARE_*` / `WORKERS_AI_MODEL` vars.
-8. Deploy **branch preview**; run deployed checklist (Section 8).
-9. Merge to production branch only when branch preview passes.
-10. README and `docs/deployment/CLOUDFLARE.md` point to https://voxel-architect.wlc562.workers.dev/
-
-### Rollback plan
-
-- Revert the migration PR / reset branch to pre-migration commit.
-- Re-enable the previous `next-on-pages` build in dashboard history only if absolutely necessary (deprecated).
-- **Do not** mix generator features, blueprint v2, or UI overhauls into this branch.
+- Cloudflare Agents SDK, Durable Objects, D1, R2, AI Gateway
+- Full v2 **authoring** from LLM JSON
+- Semantic **refine** / `modify_current` beyond stub
+- Canonical render evaluation, long-term memory, auth
+- Model outputting voxel coordinates
+- Public import/export format
+- Major `/builder` UI redesign
+- Generator/blueprint **logic** changes unless required for tool safety
 
 ---
 
-## 10. Out of scope
+## 13. Implementation phases
 
-Do **not** implement on this branch:
+### Phase A — Audit & types
 
-- Cloudflare Agents
-- Durable Objects
-- D1 persistence
-- R2 uploads (except optional default R2 cache bucket created by `migrate` — prefer minimal config without R2 first)
-- AI Gateway
-- Workers AI **binding** migration (unless proven necessary for deploy)
-- Blueprint generation / v2 schema / compiler changes
-- Canonical render self-evaluation
-- UI feature changes beyond forced platform fixes
-- Generator / `test:generator` logic changes
-- GenericBuildingBlueprint v2 product plan (previous `PLAN.md` topic)
+- Add `builderToolTypes.ts`, `generateBuildingPreview.ts` stubs.
+- Preset classifier table + tests.
+- Document preset ids in plan/CHANGE.
 
----
+### Phase B — Deterministic tool
 
-## 11. Risks / things to confirm during implementation
+- Implement `generateBuildingPreview` (v2 presets only).
+- `clonePresetBlueprintV2` in `src/lib/blueprints/` or extend catalog helper.
+- Unit tests.
 
-Answer these while executing the migration (not all are knowable from the repo alone):
+### Phase C — API
 
-| # | Question | Where to confirm |
-|---|----------|------------------|
-| 1 | **Pages vs Workers:** Does the team migrate the existing Pages project to Workers, or create a new Worker + Workers Builds? | Cloudflare dashboard + account |
-| 2 | **Next.js 16.2.6:** Any OpenNext pin or adapter version caveats for this exact patch? | OpenNext releases / changelog |
-| 3 | **App Router + route handler + streaming:** Any known gaps with SSE through Route Handlers? | `pnpm run preview` + branch deploy |
-| 4 | **Env vars after migration:** Same dashboard fields, or separate Build vs Runtime secrets? | [OpenNext env vars](https://opennext.js.org/cloudflare/howtos/env-vars) |
-| 5 | **Worker build settings:** Confirm Workers Builds command and env vars | Cloudflare project settings |
-| 6 | **`nodejs_compat` + `compatibility_date`:** Minimum date and extra flags (`global_fetch_strictly_public`)? | `wrangler.jsonc` template in OpenNext get-started |
-| 7 | **`runtime = "edge"` removal:** Does chat still stream correctly under default Node route runtime? | Local preview + deploy |
-| 8 | **Worker size:** Does the Three.js client bundle + Next server bundle exceed paid/free compressed limits? | Wrangler deploy size line |
-| 9 | **Windows dev:** Does `opennextjs-cloudflare build` work on the primary dev OS, or only in CI/WSL? | OpenNext Windows note |
-| 10 | **Custom domain:** Optional; attach in Cloudflare DNS / Workers routes if desired | Cloudflare dashboard |
-| 11 | **R2 cache:** Skip R2 on first deploy or accept `migrate`-created bucket? | Account R2 enabled? |
-| 12 | **License flow:** Meta `{"prompt":"agree"}` still works unchanged via REST? | One manual curl per env |
+- `POST /api/builder/generate/route.ts`.
+- `runBuilderChatTurn.ts` orchestration; wire into `chat/route.ts` for generation intents.
+- Extend SSE or JSON response contract + `consumeBuilderChatStream` if SSE events added.
 
----
+### Phase D — Client state & preview
 
-## 12. Success criteria
+- Extend `BuilderChat` / client state with `structure` + `toolResult`.
+- `BuilderPreviewPanel` driven by generated structure.
+- Default preset → v2.
 
-The migration is **done** when:
+### Phase E — Activity & prompts
 
-- [x] Deprecated `@cloudflare/next-on-pages` is **not** used in Cloudflare build settings or repo scripts
-- [x] `@opennextjs/cloudflare` + `wrangler` are configured (`wrangler.jsonc`, `.open-next` gitignored)
-- [x] `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm test:generator`, `pnpm run build` pass
-- [x] Cloudflare Worker deployment succeeds
-- [x] Live URL: https://voxel-architect.wlc562.workers.dev/
-- [x] `/builder`, streaming chat, image prompts, `/preview`, `/generic-lab` verified on Worker deploy
-- [x] No Cloudflare secrets exposed via `NEXT_PUBLIC_*` or client bundles
-- [x] No unrelated generator/blueprint/product diffs in the migration PR
+- Real activity from tool; update `BUILDER_SYSTEM_PROMPT`.
+- Validation warnings in UI (compact).
+
+### Phase F — Docs
+
+- `docs/development/CHANGE.md` entry.
+- Short note in `docs/deployment/CLOUDFLARE.md` only if env/API behavior changes (unlikely).
 
 ---
 
-## Appendix — `wrangler.jsonc` starter (from OpenNext docs; adjust `name` / dates)
+## 14. Success criteria
 
-```jsonc
-{
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "main": ".open-next/worker.js",
-  "name": "voxel-architect",
-  "compatibility_date": "2024-12-30",
-  "compatibility_flags": [
-    "nodejs_compat",
-    "global_fetch_strictly_public"
-  ],
-  "assets": {
-    "directory": ".open-next/assets",
-    "binding": "ASSETS"
-  }
-}
-```
+- [ ] User can ask to create/build a cottage-like structure and **see preview change** after a **validated** generation.
+- [ ] Activity log shows **real** tool steps (not mock “Preview unchanged”).
+- [ ] Assistant does **not** claim preview updated on tool failure.
+- [ ] Model is **not** given raw voxel coordinates or ComponentPlan IR.
+- [ ] Streaming chat still works for non-generation messages.
+- [ ] Image chat still works.
+- [ ] `pnpm test:generator` and existing checks pass.
+- [ ] No persistence / Cloudflare platform expansion.
 
-Optional `services` / `r2_buckets` / `images` blocks from the full get-started template should only be added when those features are intentionally enabled.
+---
+
+## 15. Files likely to create/edit
+
+| Action | Path |
+|--------|------|
+| Create | `src/lib/builder/builderToolTypes.ts` |
+| Create | `src/lib/builder/generateBuildingPreview.ts` |
+| Create | `src/lib/builder/resolvePresetFromPrompt.ts` |
+| Create | `src/lib/builder/shouldRunGenerationTool.ts` |
+| Create | `src/lib/builder/runBuilderChatTurn.ts` |
+| Create | `src/lib/builder/builderActivityFromTool.ts` |
+| Create | `src/lib/blueprints/clonePresetBlueprint.ts` (v1+v2 unified) or `clonePresetBlueprintV2.ts` |
+| Create | `src/app/api/builder/generate/route.ts` |
+| Edit | `src/app/api/builder/chat/route.ts` |
+| Edit | `src/lib/builder/builderChatTypes.ts` |
+| Edit | `src/lib/builder/builderSystemPrompt.ts` |
+| Edit | `src/lib/builder/consumeBuilderChatStream.ts` (if new SSE events) |
+| Edit | `src/app/builder/BuilderClient.tsx` |
+| Edit | `src/app/builder/mockBuilderData.ts` |
+| Edit | `src/app/builder/components/BuilderPreviewPanel.tsx` |
+| Edit | `src/app/builder/components/BuilderWorkspace.tsx` |
+| Edit | `src/lib/builder/mockBuilderActivity.ts` (chat-only fallback) |
+| Test | `src/lib/builder/__tests__/generateBuildingPreview.test.ts` |
+| Test | `src/lib/builder/__tests__/resolvePresetFromPrompt.test.ts` |
+| Docs | `docs/development/CHANGE.md` |
+
+**Do not edit** (unless build forces): `src/lib/generation/**` compiler internals, `/generic-lab` editor logic, `/preview` page.
+
+---
+
+## 16. Approval checklist (before implementation)
+
+Please confirm:
+
+1. **v2 preset selection** is acceptable as phase-1 “create_from_prompt” (no LLM blueprint JSON yet).
+2. **Non-streaming** chat response when the tool runs is acceptable for v1 integration (streaming stays for normal chat).
+3. **Separate** `POST /api/builder/generate` plus in-process call from chat is acceptable.
+4. **Default builder preview** should switch to **`simple_cabin_v2`** (not v1 cabin).
+5. Keyword list for `shouldRunGenerationTool` is sufficient for first demo (vs extra JSON planner call).
+
+---
+
+## 17. Main risks
+
+| Risk | Mitigation |
+|------|------------|
+| False-positive tool triggers on casual chat | Tunable keyword list; require build verbs |
+| Assistant contradicts tool outcome | Strict prompt + server-built summary from `toolResult` only |
+| Large JSON responses (blocks) | Accept for MVP; later return presetId + regen client-side |
+| SSE complexity | Phase 1 JSON for tool turns |
+| User expects persistence | Copy: “Not saved after refresh” |
+| `modify_current` requested but not ready | Honest “can’t edit yet” + new preset selection |
+
+---
+
+*After review approval, implement phase A → F on `feature/builder-agent-tools` without expanding scope.*

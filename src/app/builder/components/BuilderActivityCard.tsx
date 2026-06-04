@@ -15,8 +15,15 @@ export function BuilderActivityCard({ steps }: Props) {
       <ul className="space-y-1 border-t border-zinc-800/80 px-3 py-2">
         {steps.map((step) => (
           <li key={step.id} className="flex items-start gap-2 text-[11px] text-zinc-400">
-            <span className="text-emerald-400/90" aria-hidden>
-              ✓
+            <span
+              className={
+                step.status === "error"
+                  ? "text-red-400/90"
+                  : "text-emerald-400/90"
+              }
+              aria-hidden
+            >
+              {step.status === "error" ? "✕" : "✓"}
             </span>
             <span>{step.label}</span>
           </li>
