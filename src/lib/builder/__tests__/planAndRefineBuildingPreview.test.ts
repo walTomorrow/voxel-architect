@@ -158,18 +158,18 @@ describe("planAndRefineBuildingPreview", () => {
     ).toBe(true);
   });
 
-  it("routes wider porch to LLM unsupported", async () => {
+  it("widens porch deterministically in auto mode", async () => {
     const blueprint = clonePresetBlueprintV2("porch_house_v2");
-    const wasLlmCalled = mockLlmUnsupported("Porch width changes are not supported yet.");
+    const wasLlmCalled = mockLlmSuccess();
 
     const result = await planAndRefineBuildingPreview({
       prompt: "make the porch wider",
       blueprint,
       plannerMode: "auto",
     });
-    expect(wasLlmCalled()).toBe(true);
-    expect(result.ok).toBe(false);
-    expect(result.rejectionCode).toBe("PLANNER_UNSUPPORTED");
+    expect(wasLlmCalled()).toBe(false);
+    expect(result.ok).toBe(true);
+    expect(result.plannerPath).toBe("deterministic");
   });
 
   it("routes add a second floor to LLM unsupported", async () => {

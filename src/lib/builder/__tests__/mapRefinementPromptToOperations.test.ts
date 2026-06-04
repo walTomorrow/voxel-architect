@@ -86,11 +86,16 @@ describe("mapRefinementPromptToOperations", () => {
     }
   });
 
-  it("does not hard-reject wider porch (LLM path handles unsupported)", () => {
+  it("maps wider porch to full_facade widthMode", () => {
+    const porch = findPorch(porchHouse)!;
     const result = mapRefinementPromptToOperations("make the porch wider", porchHouse);
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.reason).not.toMatch(/not supported yet/i);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.operations[0]).toMatchObject({
+        op: "updateComponent",
+        id: porch.id,
+        patch: { type: "porch", widthMode: "full_facade", aroundDoor: null },
+      });
     }
   });
 

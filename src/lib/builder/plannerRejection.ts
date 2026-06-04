@@ -11,7 +11,13 @@ export type PlannerRejectionCode =
   | "EMPTY_MODEL_OUTPUT"
   | "UNEXPECTED_RESPONSE_SHAPE"
   | "EMPTY_OPERATIONS"
-  | "INVALID_PLANNER_JSON";
+  | "INVALID_PLANNER_JSON"
+  | "ADD_NOT_ALLOWED"
+  | "NOT_REMOVABLE"
+  | "INVALID_SURFACE"
+  | "INVALID_ADD_TYPE"
+  | "OVERBROAD_OPERATION_PLAN"
+  | "JSON_MODE_FAILED";
 
 export type PlannerRejection = {
   readonly code: PlannerRejectionCode;
@@ -43,6 +49,11 @@ export function classifyPlannerValidationMessage(message: string): PlannerReject
   }
   if (m.includes("at most") && m.includes("operations")) return "TOO_MANY_OPERATIONS";
   if (m.includes("must not be empty")) return "EMPTY_OPERATIONS";
+  if (m.includes("cannot be removed")) return "NOT_REMOVABLE";
+  if (m.includes("already has a") || m.includes("cannot add")) return "ADD_NOT_ALLOWED";
+  if (m.includes("invalid target surface")) return "INVALID_SURFACE";
+  if (m.includes("overbroad") || m.includes("exactly one operation")) return "OVERBROAD_OPERATION_PLAN";
+  if (m.includes("json mode")) return "JSON_MODE_FAILED";
   if (m.includes("not valid json") || m.includes("parse")) return "JSON_PARSE_FAILED";
   return "INVALID_PLANNER_JSON";
 }

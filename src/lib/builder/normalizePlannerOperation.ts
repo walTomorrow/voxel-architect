@@ -5,7 +5,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 const ROOM_PATCH_KEYS = ["width", "depth", "wallHeight"] as const;
 const ROOF_PATCH_KEYS = ["kind", "layers", "overhang", "orientation"] as const;
 const WINDOW_PATCH_KEYS = ["count", "layout"] as const;
-const PORCH_PATCH_KEYS = ["depth"] as const;
+const PORCH_PATCH_KEYS = ["depth", "widthMode", "aroundDoor"] as const;
 const CHIMNEY_PATCH_KEYS = ["targetFace", "placementHorizontal"] as const;
 
 const PATCH_KEYS_BY_COMPONENT: Record<string, readonly string[]> = {
@@ -15,6 +15,13 @@ const PATCH_KEYS_BY_COMPONENT: Record<string, readonly string[]> = {
   porch: PORCH_PATCH_KEYS,
   chimney: CHIMNEY_PATCH_KEYS,
 };
+
+const PLANNER_OP_NAMES = new Set([
+  "setMaterialPalette",
+  "updateComponent",
+  "addComponent",
+  "removeComponent",
+]);
 
 function hoistPatchFields(
   raw: Record<string, unknown>,
@@ -55,10 +62,7 @@ function normalizePatch(
 function normalizeOpName(raw: Record<string, unknown>): string | undefined {
   if (typeof raw.op === "string") return raw.op;
   if (typeof raw.operation === "string") return raw.operation;
-  if (
-    typeof raw.type === "string" &&
-    (raw.type === "setMaterialPalette" || raw.type === "updateComponent")
-  ) {
+  if (typeof raw.type === "string" && PLANNER_OP_NAMES.has(raw.type)) {
     return raw.type;
   }
   return undefined;
@@ -107,15 +111,47 @@ function normalizeUpdateComponent(raw: Record<string, unknown>): Record<string, 
   };
 }
 
+function normalizeAddComponent(raw: Record<string, unknown>): Record<string, unknown> {
+  const componentType =
+    (typeof raw.componentType === "string" ? raw.componentType : undefined) ??
+    (typeof raw.component_type === "string" ? raw.component_type : undefined) ??
+    (typeof raw.type === "string" &&
+    raw.type !== "addComponent" &&
+    (raw.type === "porch" || raw.type === "chimney" || raw.type === "window_group")
+      ? raw.type
+      : undefined);
+
+  const targetSurface =
+    (typeof raw.targetSurface === "string" ? raw.targetSurface : undefined) ??
+    (typeof raw.target_surface === "string" ? raw.target_surface : undefined);
+
+  return {
+    op: "addComponent",
+    componentType,
+    ...(typeof raw.id === "string" ? { id: raw.id } : {}),
+    ...(targetSurface ? { targetSurface } : {}),
+    ...(raw.placement === "left" || raw.placement === "center" || raw.placement === "right"
+      ? { placement: raw.placement }
+      : {}),
+    ...(raw.options !== undefined ? { options: raw.options } : {}),
+  };
+}
+
+function normalizeRemoveComponent(raw: Record<string, unknown>): Record<string, unknown> {
+  const id =
+    (typeof raw.id === "string" ? raw.id : undefined) ??
+    (typeof raw.componentId === "string" ? raw.componentId : undefined) ??
+    (typeof raw.component_id === "string" ? raw.component_id : undefined);
+  return { op: "removeComponent", id };
+}
+
 /**
  * Coerce common LLM planner operation shapes into canonical op objects before validation.
  */
 export function normalizePlannerOperation(raw: unknown): unknown {
   if (!isRecord(raw)) return raw;
 
-  const wrappedKey = Object.keys(raw).find(
-    (k) => k === "setMaterialPalette" || k === "updateComponent",
-  );
+  const wrappedKey = Object.keys(raw).find((k) => PLANNER_OP_NAMES.has(k));
   if (wrappedKey && isRecord(raw[wrappedKey])) {
     return normalizePlannerOperation({ op: wrappedKey, ...raw[wrappedKey] });
   }
@@ -123,6 +159,8 @@ export function normalizePlannerOperation(raw: unknown): unknown {
   const op = normalizeOpName(raw);
   if (op === "setMaterialPalette") return normalizeSetMaterialPalette(raw);
   if (op === "updateComponent") return normalizeUpdateComponent(raw);
+  if (op === "addComponent") return normalizeAddComponent(raw);
+  if (op === "removeComponent") return normalizeRemoveComponent(raw);
   return raw;
 }
 

@@ -23,8 +23,14 @@ describe("classifyRefinementPrompt", () => {
 
   it("classifies structural unsupported prompts", () => {
     expect(classifyRefinementPrompt("add a second floor")).toBe("structural");
-    expect(classifyRefinementPrompt("add a porch")).toBe("structural");
-    expect(classifyRefinementPrompt("remove the porch")).toBe("structural");
-    expect(classifyRefinementPrompt("make the porch wider")).toBe("structural");
+    expect(classifyRefinementPrompt("add a side room")).toBe("structural");
+    expect(classifyRefinementPrompt("add a balcony")).toBe("structural");
+  });
+
+  it("classifies component add/remove as literal", () => {
+    expect(classifyRefinementPrompt("add a porch")).toBe("literal");
+    expect(classifyRefinementPrompt("remove the porch")).toBe("literal");
+    expect(classifyRefinementPrompt("make the porch wider")).toBe("literal");
+    expect(classifyRefinementPrompt("add a chimney")).toBe("literal");
   });
 });

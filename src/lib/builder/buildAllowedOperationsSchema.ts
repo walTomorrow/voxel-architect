@@ -3,6 +3,10 @@ import { CLASSIC_MATERIAL_KEYS } from "@/src/app/generic-lab/genericLabUtils";
 import type { AllowedOperationsSchema } from "@/src/lib/builder/plannerTypes";
 import { MAX_PLANNER_OPERATIONS } from "@/src/lib/builder/plannerTypes";
 import { summarizeBlueprintForPlanner } from "@/src/lib/builder/summarizeBlueprintForPlanner";
+import {
+  getBlueprintAffordancesForPlanner,
+  renderAffordancesText,
+} from "@/src/lib/builder/getBlueprintAffordancesForPlanner";
 
 export const PLANNER_ROOM_WIDTH = { min: 5, max: 17 } as const;
 export const PLANNER_ROOM_DEPTH = { min: 5, max: 13 } as const;
@@ -17,7 +21,8 @@ export function buildAllowedOperationsSchema(
   const summary = summarizeBlueprintForPlanner(blueprint);
   return {
     maxOperations: MAX_PLANNER_OPERATIONS,
-    allowedOpTypes: ["setMaterialPalette", "updateComponent"],
+    allowedOpTypes: ["setMaterialPalette", "updateComponent", "addComponent", "removeComponent"],
+    addableComponentTypes: ["porch", "chimney", "window_group"],
     componentAllowlist: summary.components.map((c) => ({ id: c.id, type: c.type })),
     materialKeys: [...CLASSIC_MATERIAL_KEYS],
     roofKinds: ["pitched_gable", "shed", "none"],
@@ -30,13 +35,12 @@ export function buildAllowedOperationsSchema(
     porchDepth: PLANNER_PORCH_DEPTH,
     roofLayers: PLANNER_ROOF_LAYERS,
     unsupported: [
-      "add or remove components",
-      "porch width changes",
-      "door resize",
       "setMaterialOverride",
       "metadata or constraints edits",
       "full blueprint rewrite",
       "voxel coordinates or ComponentPlan",
+      "add/remove room, roof, door, or step",
+      "second floor, side room, interior zones, balcony, dormer",
     ],
   };
 }
@@ -46,6 +50,7 @@ export function renderAllowedOperationsSchemaText(schema: AllowedOperationsSchem
     "Allowed operations:",
     `- maxOperations: ${schema.maxOperations}`,
     `- op types: ${schema.allowedOpTypes.join(", ")}`,
+    `- addable component types: ${schema.addableComponentTypes.join(", ")}`,
     "- component allowlist (id, type):",
   ];
   for (const c of schema.componentAllowlist) {
@@ -60,10 +65,19 @@ export function renderAllowedOperationsSchemaText(schema: AllowedOperationsSchem
     `- window_group count: ${schema.windowCount.min}-${schema.windowCount.max}`,
   );
   lines.push(`- porch depth: ${schema.porchDepth.min}-${schema.porchDepth.max}`);
+  lines.push(`- porch patch may include widthMode: door_only | full_facade`);
   lines.push(`- roof layers: ${schema.roofLayers.min}-${schema.roofLayers.max}`);
+  lines.push("- addComponent intent (server materializes component):");
+  lines.push('  {"op":"addComponent","componentType":"porch|chimney|window_group","targetSurface?":"main-room.front",...}');
+  lines.push("- removeComponent: {\"op\":\"removeComponent\",\"id\":\"<removable-id>\"}");
   lines.push("- unsupported:");
   for (const u of schema.unsupported) {
     lines.push(`  - ${u}`);
   }
   return lines.join("\n");
+}
+
+export function renderPlannerContextBlocks(blueprint: GenericBuildingBlueprintV2): string {
+  const affordances = getBlueprintAffordancesForPlanner(blueprint);
+  return renderAffordancesText(affordances);
 }

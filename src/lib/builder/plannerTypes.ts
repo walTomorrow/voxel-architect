@@ -1,6 +1,9 @@
 import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
-import type { BlueprintOperationV2 } from "@/src/lib/builder/blueprintOperationsV2";
-
+import type {
+  AddableComponentKind,
+  ApplyableBlueprintOperationV2,
+  BlueprintOperationV2,
+} from "@/src/lib/builder/blueprintOperationsV2";
 export type PlannerMode = "auto" | "deterministic" | "llm";
 
 export const MAX_PLANNER_OPERATIONS = 3;
@@ -25,7 +28,13 @@ export type BlueprintPlannerSummary = {
 
 export type AllowedOperationsSchema = {
   readonly maxOperations: number;
-  readonly allowedOpTypes: readonly ("setMaterialPalette" | "updateComponent")[];
+  readonly allowedOpTypes: readonly (
+    | "setMaterialPalette"
+    | "updateComponent"
+    | "addComponent"
+    | "removeComponent"
+  )[];
+  readonly addableComponentTypes: readonly AddableComponentKind[];
   readonly componentAllowlist: readonly { readonly id: string; readonly type: string }[];
   readonly materialKeys: readonly string[];
   readonly roofKinds: readonly string[];
@@ -52,10 +61,9 @@ export type PlannerJsonResponse = PlannerJsonOk | PlannerJsonUnsupported;
 export type PlannerResult =
   | {
       readonly ok: true;
-      readonly operations: readonly BlueprintOperationV2[];
+      readonly operations: readonly ApplyableBlueprintOperationV2[];
       readonly rationaleSummary: string;
-    }
-  | {
+    }  | {
       readonly ok: false;
       readonly unsupportedReason: string;
       readonly rejectionCode?: import("@/src/lib/builder/plannerRejection").PlannerRejectionCode;

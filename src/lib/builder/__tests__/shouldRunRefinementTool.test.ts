@@ -85,6 +85,17 @@ describe("shouldRunRefinementTool", () => {
     expect(shouldRunRefinementTool("Can you make it brighter?", true, false)).toBe(true);
   });
 
+  it("routes remove chimney phrasing to refine", () => {
+    expect(shouldRunRefinementTool("remove the chimney", true, false)).toBe(true);
+    expect(shouldRunRefinementTool("could you remove the chimney?", true, false)).toBe(true);
+    expect(
+      shouldRunRefinementTool("I changed my mind, could you remove the chimney?", true, false),
+    ).toBe(true);
+    expect(shouldRunRefinementTool("try again to remove the chimney", true, false)).toBe(true);
+    expect(shouldRunRefinementTool("delete the chimney", true, false)).toBe(true);
+    expect(shouldRunRefinementTool("take off the chimney", true, false)).toBe(true);
+  });
+
   it("keeps design feedback chat-only", () => {
     expect(shouldRunRefinementTool("what do you think of the build?", true, false)).toBe(
       false,

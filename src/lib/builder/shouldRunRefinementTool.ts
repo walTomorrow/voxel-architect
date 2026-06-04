@@ -1,3 +1,5 @@
+import { looksLikeComponentEditRequest } from "@/src/lib/builder/looksLikeComponentEditRequest";
+
 const STRONG_CREATE =
   /\b(make me|build me|create me|generate me|give me a|show me a)\b/i;
 
@@ -12,7 +14,7 @@ export function shouldStrongCreatePrompt(userText: string): boolean {
 }
 
 const REFINE_VERBS =
-  /\b(change|switch|move|wider|narrower|deeper|shallower|taller|shorter|steeper|flatter|more|fewer|add|extend|use|make it|make the|dark wood|slate|glass|wooden|stone)\b/i;
+  /\b(change|switch|move|wider|narrower|deeper|shallower|taller|shorter|steeper|flatter|more|fewer|add|remove|delete|extend|use|make it|make the|dark wood|slate|glass|wooden|stone)\b/i;
 
 const GIVE_EDIT = /\bgive (it|the|this)\b/i;
 
@@ -91,6 +93,8 @@ export function looksLikeEditRequest(userText: string): boolean {
 
   if (hasPart && (hasStyle || hasCompare || hasImperative)) return true;
   if (hasImperative && (hasStyle || hasCompare)) return true;
+  if (looksLikeComponentEditRequest(text)) return true;
+  if (/\b(remove|delete|take off|get rid of)\b/i.test(text) && hasPart) return true;
   if (REFINE_VERBS.test(text)) return true;
   return false;
 }
@@ -108,7 +112,10 @@ export function shouldRunRefinementTool(
   if (shouldStrongCreatePrompt(text)) return false;
   if (looksLikeDesignFeedback(text)) return false;
 
-  const wantsEdit = REFINE_VERBS.test(text) || looksLikeEditRequest(text);
+  const wantsEdit =
+    REFINE_VERBS.test(text) ||
+    looksLikeEditRequest(text) ||
+    looksLikeComponentEditRequest(text);
   if (!wantsEdit) return false;
 
   if (hasImageAttachment && !REFINE_VERBS.test(text) && !looksLikeEditRequest(text)) {

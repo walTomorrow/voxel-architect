@@ -1,9 +1,19 @@
 import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
 import { buildPlannerUserPrompt } from "@/src/lib/builder/buildPlannerPrompt";
-import { callWorkersAiJsonPlanner } from "@/src/lib/builder/callWorkersAiJsonPlanner";
+import {
+  callWorkersAiJsonPlanner,
+  fetchPlannerText,
+  parsePlannerRawText,
+} from "@/src/lib/builder/callWorkersAiJsonPlanner";
 import type { PlannerRejectionCode } from "@/src/lib/builder/plannerRejection";
-import type { PlannerResult } from "@/src/lib/builder/plannerTypes";
+import type { PlannerJsonResponse, PlannerResult } from "@/src/lib/builder/plannerTypes";
 import { validatePlannerJsonAndOperations } from "@/src/lib/builder/validatePlannerOperations";
+import {
+  buildPlannerRepairSystemPrompt,
+  buildPlannerRepairUserPrompt,
+  isRepairablePlannerRejection,
+  truncateForRepairSnippet,
+} from "@/src/lib/builder/plannerRepair";
 
 export type PlanBlueprintOperationsInput = {
   readonly userRequest: string;
@@ -31,6 +41,73 @@ export function setLlmPlannerForTests(fn: LlmPlannerFn | null): void {
   llmPlannerOverride = fn;
 }
 
+function failureFromValidation(
+  validated: Extract<PlannerResult, { ok: false }>,
+): LlmPlannerFailure {
+  return {
+    unsupportedReason: validated.unsupportedReason,
+    rejectionCode: validated.rejectionCode ?? "INVALID_PLANNER_JSON",
+    rejectionDetail: validated.rejectionDetail ?? validated.unsupportedReason,
+  };
+}
+
+async function runPlannerRepairAttempt(input: {
+  readonly blueprint: GenericBuildingBlueprintV2;
+  readonly userRequest: string;
+  readonly userPrompt: string;
+  readonly presetId?: string;
+  readonly rejectionCode: PlannerRejectionCode;
+  readonly rejectionDetail: string;
+  readonly badRawText?: string;
+}): Promise<
+  | { ok: true; json: PlannerJsonResponse; model: string }
+  | { ok: false; failure: LlmPlannerFailure }
+> {
+  const repairUserPrompt = buildPlannerRepairUserPrompt({
+    blueprint: input.blueprint,
+    userRequest: input.userRequest,
+    rejectionCode: input.rejectionCode,
+    rejectionDetail: input.rejectionDetail,
+    badResponseSnippet: input.badRawText
+      ? truncateForRepairSnippet(input.badRawText)
+      : undefined,
+    presetId: input.presetId,
+  });
+
+  const repairFetch = await fetchPlannerText(repairUserPrompt, buildPlannerRepairSystemPrompt());
+  if (!repairFetch.ok) {
+    return {
+      ok: false,
+      failure: {
+        unsupportedReason: repairFetch.error,
+        rejectionCode: repairFetch.rejectionCode,
+        rejectionDetail: repairFetch.error,
+      },
+    };
+  }
+
+  const parsed = parsePlannerRawText(repairFetch.rawText);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      failure: {
+        unsupportedReason: parsed.error,
+        rejectionCode: parsed.code,
+        rejectionDetail: parsed.error,
+      },
+    };
+  }
+
+  const validated = validatePlannerJsonAndOperations(input.blueprint, parsed.json, {
+    userPrompt: input.userRequest,
+  });
+  if (!validated.ok) {
+    return { ok: false, failure: failureFromValidation(validated) };
+  }
+
+  return { ok: true, json: parsed.json, model: repairFetch.model };
+}
+
 export async function planBlueprintOperationsWithLlm(
   input: PlanBlueprintOperationsInput,
 ): Promise<
@@ -53,31 +130,53 @@ export async function planBlueprintOperationsWithLlm(
   const userPrompt = buildPlannerUserPrompt(input.blueprint, input.userRequest, {
     presetId: input.presetId,
   });
+
   const call = await callWorkersAiJsonPlanner(userPrompt);
   if (!call.ok) {
-    const rejectionCode: PlannerRejectionCode = call.rejectionCode;
-    const detail = call.error;
     return {
       ok: false,
       failure: {
-        unsupportedReason: detail,
-        rejectionCode,
-        rejectionDetail: detail,
+        unsupportedReason: call.error,
+        rejectionCode: call.rejectionCode,
+        rejectionDetail: call.error,
         plannerDiagnostics: call.diagnostics ? [call.diagnostics.summary] : undefined,
       },
     };
   }
 
-  const validated = validatePlannerJsonAndOperations(input.blueprint, call.json);
-  if (!validated.ok) {
-    return {
-      ok: false,
-      failure: {
-        unsupportedReason: validated.unsupportedReason,
-        rejectionCode: validated.rejectionCode ?? "INVALID_PLANNER_JSON",
-        rejectionDetail: validated.rejectionDetail ?? validated.unsupportedReason,
-      },
-    };
+  let validated = validatePlannerJsonAndOperations(input.blueprint, call.json, {
+    userPrompt: input.userRequest,
+  });
+
+  if (
+    !validated.ok &&
+    validated.rejectionCode &&
+    isRepairablePlannerRejection(validated.rejectionCode)
+  ) {
+    const repaired = await runPlannerRepairAttempt({
+      blueprint: input.blueprint,
+      userRequest: input.userRequest,
+      userPrompt,
+      presetId: input.presetId,
+      rejectionCode: validated.rejectionCode,
+      rejectionDetail: validated.rejectionDetail ?? validated.unsupportedReason,
+      badRawText: call.rawText,
+    });
+    if (repaired.ok) {
+      validated = validatePlannerJsonAndOperations(input.blueprint, repaired.json, {
+        userPrompt: input.userRequest,
+      });
+      if (validated.ok) {
+        return { ok: true, result: validated };
+      }
+    } else {
+      return { ok: false, failure: repaired.failure };
+    }
   }
+
+  if (!validated.ok) {
+    return { ok: false, failure: failureFromValidation(validated) };
+  }
+
   return { ok: true, result: validated };
 }
