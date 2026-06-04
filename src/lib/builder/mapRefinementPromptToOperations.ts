@@ -1,6 +1,6 @@
 import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
 import type { BlueprintMaterialPalette } from "@/src/lib/blueprints/types/materials";
-import type { BlueprintOperationV2 } from "@/src/lib/builder/blueprintOperationsV2";
+import type { ApplyableBlueprintOperationV2 } from "@/src/lib/builder/blueprintOperationsV2";
 import {
   findChimney,
   findMainRoof,
@@ -10,7 +10,7 @@ import {
 } from "@/src/lib/builder/blueprintComponentIndex";
 
 export type MapRefinementResult =
-  | { readonly ok: true; readonly operations: readonly BlueprintOperationV2[]; readonly planLabel: string }
+  | { readonly ok: true; readonly operations: readonly ApplyableBlueprintOperationV2[]; readonly planLabel: string }
   | { readonly ok: false; readonly reason: string };
 
 function lower(text: string): string {
@@ -84,6 +84,32 @@ export function mapRefinementPromptToOperations(
 ): MapRefinementResult {
   const text = lower(prompt);
 
+  const chimneyForRemove = findChimney(blueprint);
+  if (
+    chimneyForRemove &&
+    /\b(remove|delete|take off|get rid of)\b/.test(text) &&
+    /\bchimney\b/.test(text)
+  ) {
+    return {
+      ok: true,
+      operations: [{ op: "removeComponent", id: chimneyForRemove.id }],
+      planLabel: "Remove chimney",
+    };
+  }
+
+  const porchForRemove = findPorch(blueprint);
+  if (
+    porchForRemove &&
+    /\b(remove|delete|take off|get rid of)\b/.test(text) &&
+    /\bporch\b/.test(text)
+  ) {
+    return {
+      ok: true,
+      operations: [{ op: "removeComponent", id: porchForRemove.id }],
+      planLabel: "Remove porch",
+    };
+  }
+
   const palettePatch = buildExplicitMaterialPalettePatch(text);
   if (Object.keys(palettePatch).length > 0) {
     const labels = Object.keys(palettePatch).join(", ");
@@ -126,6 +152,20 @@ export function mapRefinementPromptToOperations(
           },
         ],
         planLabel: "Decrease porch depth",
+      };
+    }
+    if (/\b(wider porch|porch wider|make the porch wider|full.?width porch|full facade porch)\b/.test(text)) {
+      return {
+        ok: true,
+        operations: [
+          {
+            op: "updateComponent",
+            id: porch.id,
+            componentType: "porch",
+            patch: { type: "porch", widthMode: "full_facade", aroundDoor: null },
+          },
+        ],
+        planLabel: "Widen porch to full facade",
       };
     }
   }

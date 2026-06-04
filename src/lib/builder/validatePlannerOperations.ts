@@ -1,6 +1,8 @@
 import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
 import type { BlueprintMaterialPalette } from "@/src/lib/blueprints/types/materials";
 import type { BlueprintOperationV2, ComponentPatchV2 } from "@/src/lib/builder/blueprintOperationsV2";
+import type { AddableComponentKind } from "@/src/lib/builder/blueprintOperationsV2";
+import { isAddComponentIntent } from "@/src/lib/builder/blueprintOperationsV2";
 import type { GenericBuildingComponentTypeV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
 import {
   buildAllowedOperationsSchema,
@@ -15,7 +17,15 @@ import type { AllowedOperationsSchema, PlannerJsonResponse, PlannerResult } from
 import { MAX_PLANNER_OPERATIONS } from "@/src/lib/builder/plannerTypes";
 import { findComponentById } from "@/src/lib/builder/blueprintComponentIndex";
 import { normalizePlannerOperations } from "@/src/lib/builder/normalizePlannerOperation";
+import {
+  canAddComponent,
+  canRemoveComponent,
+  normalizeAddOptions,
+} from "@/src/lib/builder/componentOperationRegistry";
+import { materializePlannerOperations } from "@/src/lib/builder/materializePlannerOperations";
+import type { ApplyableBlueprintOperationV2 } from "@/src/lib/builder/blueprintOperationsV2";
 import type { PlannerRejection, PlannerRejectionCode } from "@/src/lib/builder/plannerRejection";
+import { validateOverbroadPlannerPlan } from "@/src/lib/builder/validateOverbroadPlannerPlan";
 
 const PALETTE_KEYS = new Set(["wall", "floor", "roof", "window", "door", "accent"]);
 
@@ -25,12 +35,37 @@ function reject(code: PlannerRejectionCode, detail: string): ValidationFail {
   return { ok: false, rejection: { code, detail } };
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
+function unknownFieldsMessage(context: string, extra: readonly string[]): string {
+  return `${context} contains unknown fields: ${extra.join(", ")}`;
 }
 
-function hasOnlyKeys(obj: Record<string, unknown>, allowed: readonly string[]): boolean {
-  return Object.keys(obj).every((k) => allowed.includes(k));
+function rejectUnknownFields(
+  code: PlannerRejectionCode,
+  context: string,
+  obj: Record<string, unknown>,
+  allowed: readonly string[],
+): ValidationFail | null {
+  const extra = Object.keys(obj).filter((k) => !allowed.includes(k));
+  if (extra.length > 0) {
+    return reject(code, unknownFieldsMessage(context, extra));
+  }
+  return null;
+}
+
+function requireStringField(
+  value: unknown,
+  opName: string,
+  field: string,
+  code: PlannerRejectionCode = "INVALID_PLANNER_JSON",
+): ValidationFail | null {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return reject(code, `${opName} is missing required string field "${field}"`);
+  }
+  return null;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
 }
 
 function isFiniteNumber(v: unknown): v is number {
@@ -42,10 +77,9 @@ function inRange(n: number, min: number, max: number): boolean {
 }
 
 function validateRoomPatch(patch: Record<string, unknown>): ValidationFail | null {
-  const allowed = ["type", "width", "depth", "wallHeight"];
-  if (!hasOnlyKeys(patch, allowed)) {
-    return reject("UNSUPPORTED_PATCH_FIELD", "room patch has unknown fields");
-  }
+  const allowed = ["type", "width", "depth", "wallHeight"] as const;
+  const unk = rejectUnknownFields("UNSUPPORTED_PATCH_FIELD", "room patch", patch, allowed);
+  if (unk) return unk;
   if (patch.type !== "room") {
     return reject("UNSUPPORTED_PATCH_FIELD", "room patch type must be room");
   }
@@ -74,10 +108,9 @@ function validateRoofPatch(
   patch: Record<string, unknown>,
   schema: AllowedOperationsSchema,
 ): ValidationFail | null {
-  const allowed = ["type", "kind", "layers", "overhang", "orientation"];
-  if (!hasOnlyKeys(patch, allowed)) {
-    return reject("UNSUPPORTED_PATCH_FIELD", "roof patch has unknown fields");
-  }
+  const allowed = ["type", "kind", "layers", "overhang", "orientation"] as const;
+  const unk = rejectUnknownFields("UNSUPPORTED_PATCH_FIELD", "roof patch", patch, allowed);
+  if (unk) return unk;
   if (patch.type !== "roof") {
     return reject("UNSUPPORTED_PATCH_FIELD", "roof patch type must be roof");
   }
@@ -99,10 +132,9 @@ function validateRoofPatch(
 }
 
 function validateWindowPatch(patch: Record<string, unknown>): ValidationFail | null {
-  const allowed = ["type", "count", "layout"];
-  if (!hasOnlyKeys(patch, allowed)) {
-    return reject("UNSUPPORTED_PATCH_FIELD", "window_group patch has unknown fields");
-  }
+  const allowed = ["type", "count", "layout"] as const;
+  const unk = rejectUnknownFields("UNSUPPORTED_PATCH_FIELD", "window_group patch", patch, allowed);
+  if (unk) return unk;
   if (patch.type !== "window_group") {
     return reject("UNSUPPORTED_PATCH_FIELD", "window_group patch type must be window_group");
   }
@@ -117,11 +149,14 @@ function validateWindowPatch(patch: Record<string, unknown>): ValidationFail | n
   return null;
 }
 
+const ADDABLE_KINDS: readonly AddableComponentKind[] = ["porch", "chimney", "window_group"];
+
+const SURFACE_REF_PATTERN = /^[a-z0-9-]+\.(front|back|left|right|roof)$/;
+
 function validatePorchPatch(patch: Record<string, unknown>): ValidationFail | null {
-  const allowed = ["type", "depth"];
-  if (!hasOnlyKeys(patch, allowed)) {
-    return reject("UNSUPPORTED_PATCH_FIELD", "porch patch has unknown fields");
-  }
+  const allowed = ["type", "depth", "widthMode", "aroundDoor"] as const;
+  const unk = rejectUnknownFields("UNSUPPORTED_PATCH_FIELD", "porch patch", patch, allowed);
+  if (unk) return unk;
   if (patch.type !== "porch") {
     return reject("UNSUPPORTED_PATCH_FIELD", "porch patch type must be porch");
   }
@@ -130,14 +165,19 @@ function validatePorchPatch(patch: Record<string, unknown>): ValidationFail | nu
       return reject("UNSUPPORTED_PATCH_FIELD", "porch depth out of range");
     }
   }
+  if (patch.widthMode !== undefined && patch.widthMode !== "door_only" && patch.widthMode !== "full_facade") {
+    return reject("UNSUPPORTED_PATCH_FIELD", "invalid porch widthMode");
+  }
+  if (patch.aroundDoor !== undefined && patch.aroundDoor !== null && typeof patch.aroundDoor !== "string") {
+    return reject("UNSUPPORTED_PATCH_FIELD", "porch aroundDoor must be a string or null");
+  }
   return null;
 }
 
 function validateChimneyPatch(patch: Record<string, unknown>): ValidationFail | null {
-  const allowed = ["type", "targetFace", "placementHorizontal"];
-  if (!hasOnlyKeys(patch, allowed)) {
-    return reject("UNSUPPORTED_PATCH_FIELD", "chimney patch has unknown fields");
-  }
+  const allowed = ["type", "targetFace", "placementHorizontal"] as const;
+  const unk = rejectUnknownFields("UNSUPPORTED_PATCH_FIELD", "chimney patch", patch, allowed);
+  if (unk) return unk;
   if (patch.type !== "chimney") {
     return reject("UNSUPPORTED_PATCH_FIELD", "chimney patch type must be chimney");
   }
@@ -183,9 +223,13 @@ function validateOperation(
   if (!isRecord(op)) return reject("INVALID_PLANNER_JSON", "operation must be an object");
   const opKeys = Object.keys(op);
   if (op.op === "setMaterialPalette") {
-    if (!opKeys.every((k) => ["op", "patch"].includes(k))) {
-      return reject("UNSUPPORTED_PATCH_FIELD", "setMaterialPalette has unknown fields");
-    }
+    const unk = rejectUnknownFields(
+      "UNSUPPORTED_PATCH_FIELD",
+      "setMaterialPalette",
+      op,
+      ["op", "patch"],
+    );
+    if (unk) return unk;
     if (!isRecord(op.patch)) return reject("UNSUPPORTED_PATCH_FIELD", "patch must be an object");
     const patchKeys = Object.keys(op.patch);
     if (!patchKeys.every((k) => PALETTE_KEYS.has(k))) {
@@ -206,19 +250,24 @@ function validateOperation(
   }
 
   if (op.op === "updateComponent") {
-    const allowedKeys = ["op", "id", "componentType", "patch"] as const;
-    const extra = opKeys.filter((k) => !allowedKeys.includes(k as (typeof allowedKeys)[number]));
-    if (extra.length > 0) {
-      return reject(
-        "UNSUPPORTED_PATCH_FIELD",
-        `updateComponent has unknown fields: ${extra.join(", ")}`,
-      );
+    const unk = rejectUnknownFields(
+      "UNSUPPORTED_PATCH_FIELD",
+      "updateComponent",
+      op,
+      ["op", "id", "componentType", "patch"],
+    );
+    if (unk) return unk;
+
+    const idErr = requireStringField(op.id, "updateComponent", "id");
+    if (idErr) return idErr;
+    const typeErr = requireStringField(op.componentType, "updateComponent", "componentType");
+    if (typeErr) return typeErr;
+    if (!isRecord(op.patch)) {
+      return reject("INVALID_PLANNER_JSON", 'updateComponent is missing required object field "patch"');
     }
-    const id = op.id;
-    const componentType = op.componentType;
-    if (typeof id !== "string" || typeof componentType !== "string") {
-      return reject("INVALID_PLANNER_JSON", "id and componentType must be strings");
-    }
+
+    const id = op.id as string;
+    const componentType = op.componentType as string;
     const existing = findComponentById(blueprint, id);
     if (!existing) return reject("UNKNOWN_COMPONENT_ID", `unknown component id "${id}"`);
     if (existing.type !== componentType) {
@@ -242,6 +291,93 @@ function validateOperation(
 
   if (op.op === "setMaterialOverride") {
     return reject("INVALID_OP_TYPE", "setMaterialOverride is not allowed");
+  }
+
+  if (op.op === "addComponent") {
+    if ("component" in op) {
+      return reject(
+        "INVALID_ADD_TYPE",
+        'addComponent cannot include a full "component" object; use componentType + targetSurface + options',
+      );
+    }
+    const unk = rejectUnknownFields(
+      "UNSUPPORTED_PATCH_FIELD",
+      "addComponent",
+      op,
+      ["op", "componentType", "id", "targetSurface", "placement", "options"],
+    );
+    if (unk) return unk;
+
+    const typeErr = requireStringField(
+      op.componentType,
+      "addComponent",
+      "componentType",
+      "INVALID_ADD_TYPE",
+    );
+    if (typeErr) return typeErr;
+
+    const componentType = op.componentType as string;
+    if (!ADDABLE_KINDS.includes(componentType as AddableComponentKind)) {
+      return reject(
+        "INVALID_ADD_TYPE",
+        "addComponent must use componentType: porch | chimney | window_group",
+      );
+    }
+    const targetSurface =
+      typeof op.targetSurface === "string" ? op.targetSurface : undefined;
+    if (targetSurface !== undefined && !SURFACE_REF_PATTERN.test(targetSurface)) {
+      return reject("INVALID_SURFACE", `invalid targetSurface "${targetSurface}"`);
+    }
+    if (
+      op.placement !== undefined &&
+      !["left", "center", "right"].includes(String(op.placement))
+    ) {
+      return reject("UNSUPPORTED_PATCH_FIELD", "invalid placement");
+    }
+    const can = canAddComponent(
+      blueprint,
+      componentType as AddableComponentKind,
+      targetSurface as import("@/src/lib/blueprints/types/genericBuildingV2").RoomSurfaceRef | undefined,
+    );
+    if (!can.ok) {
+      return reject("ADD_NOT_ALLOWED", can.reason);
+    }
+    const options = normalizeAddOptions(
+      op.options,
+      componentType as AddableComponentKind,
+      targetSurface as import("@/src/lib/blueprints/types/genericBuildingV2").RoomSurfaceRef | undefined,
+    );
+    return {
+      ok: true,
+      operation: {
+        op: "addComponent",
+        componentType: componentType as AddableComponentKind,
+        ...(typeof op.id === "string" ? { id: op.id } : {}),
+        ...(targetSurface ? { targetSurface: targetSurface as import("@/src/lib/blueprints/types/genericBuildingV2").RoomSurfaceRef } : {}),
+        ...(op.placement === "left" || op.placement === "center" || op.placement === "right"
+          ? { placement: op.placement }
+          : {}),
+        ...(options ? { options } : {}),
+      },
+    };
+  }
+
+  if (op.op === "removeComponent") {
+    const unk = rejectUnknownFields("UNSUPPORTED_PATCH_FIELD", "removeComponent", op, ["op", "id"]);
+    if (unk) return unk;
+
+    const idRaw = op.id ?? op.componentId;
+    const idErr = requireStringField(idRaw, "removeComponent", "id");
+    if (idErr) return idErr;
+    const id = idRaw as string;
+    const can = canRemoveComponent(blueprint, id);
+    if (!can.ok) {
+      return reject(can.reason.includes("cannot be removed") ? "NOT_REMOVABLE" : "UNKNOWN_COMPONENT_ID", can.reason);
+    }
+    return {
+      ok: true,
+      operation: { op: "removeComponent", id },
+    };
   }
 
   return reject("INVALID_OP_TYPE", `unsupported operation type "${String(op.op)}"`);
@@ -294,7 +430,8 @@ export function parsePlannerJsonResponse(
 export function validatePlannerOperations(
   blueprint: GenericBuildingBlueprintV2,
   operations: readonly unknown[],
-): { ok: true; operations: readonly BlueprintOperationV2[] } | ValidationFail {
+  options?: { userPrompt?: string },
+): { ok: true; operations: readonly ApplyableBlueprintOperationV2[] } | ValidationFail {
   const schema = buildAllowedOperationsSchema(blueprint);
   if (operations.length === 0) {
     return reject("EMPTY_OPERATIONS", "operations must not be empty.");
@@ -303,19 +440,58 @@ export function validatePlannerOperations(
     return reject("TOO_MANY_OPERATIONS", `At most ${MAX_PLANNER_OPERATIONS} operations allowed.`);
   }
 
+  for (const raw of operations) {
+    if (isRecord(raw) && raw.op === "addComponent" && "component" in raw) {
+      return reject(
+        "INVALID_ADD_TYPE",
+        'addComponent cannot include a full "component" object; use componentType + targetSurface + options',
+      );
+    }
+  }
+
   const validated: BlueprintOperationV2[] = [];
   const normalized = normalizePlannerOperations(operations);
+  let working = blueprint;
+
   for (const raw of normalized) {
-    const result = validateOperation(raw, blueprint, schema);
+    const result = validateOperation(raw, working, schema);
     if (!result.ok) return result;
     validated.push(result.operation);
+
+    if (isAddComponentIntent(result.operation)) {
+      const mat = materializePlannerOperations(working, [result.operation], {
+        userPrompt: options?.userPrompt,
+      });
+      if (!mat.ok) return mat;
+      const added = mat.operations[0];
+      if (added?.op === "addComponent" && "component" in added) {
+        working = {
+          ...working,
+          components: [...working.components, added.component],
+        };
+      }
+    } else if (result.operation.op === "removeComponent") {
+      const removeId = result.operation.id;
+      working = {
+        ...working,
+        components: working.components.filter((c) => c.id !== removeId),
+      };
+    }
   }
-  return { ok: true, operations: validated };
+
+  const materialized = materializePlannerOperations(blueprint, validated, {
+    userPrompt: options?.userPrompt,
+  });
+  if (!materialized.ok) {
+    return { ok: false, rejection: materialized.rejection };
+  }
+  return { ok: true, operations: materialized.operations };
 }
 
 export function validatePlannerJsonAndOperations(
   blueprint: GenericBuildingBlueprintV2,
   json: PlannerJsonResponse,
+  options?: { userPrompt?: string },
 ): PlannerResult {
   if (json.status === "unsupported") {
     return {
@@ -325,7 +501,7 @@ export function validatePlannerJsonAndOperations(
       rejectionDetail: json.unsupportedReason,
     };
   }
-  const validated = validatePlannerOperations(blueprint, json.operations);
+  const validated = validatePlannerOperations(blueprint, json.operations, options);
   if (!validated.ok) {
     return {
       ok: false,
@@ -334,6 +510,19 @@ export function validatePlannerJsonAndOperations(
       rejectionDetail: validated.rejection.detail,
     };
   }
+
+  if (options?.userPrompt) {
+    const overbroad = validateOverbroadPlannerPlan(options.userPrompt, json.operations);
+    if (!overbroad.ok) {
+      return {
+        ok: false,
+        unsupportedReason: overbroad.rejection.detail,
+        rejectionCode: overbroad.rejection.code,
+        rejectionDetail: overbroad.rejection.detail,
+      };
+    }
+  }
+
   return {
     ok: true,
     operations: validated.operations,

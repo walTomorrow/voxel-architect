@@ -51,6 +51,21 @@ function hasExplicitMaterialCommand(text: string): boolean {
 function hasLiteralMechanicalSignals(text: string): boolean {
   if (hasLiteralPorchDepthSignals(text)) return true;
 
+  if (/\b(wider porch|porch wider|make the porch wider|full.?width porch|full facade porch)\b/.test(text)) {
+    return true;
+  }
+
+  if (
+    /\b(add a porch|add porch|add a chimney|add chimney)\b/.test(text) ||
+    (/\b(remove|delete|take off|get rid of)\b/.test(text) &&
+      /\b(porch|chimney)\b/.test(text))
+  ) {
+    return true;
+  }
+  if (/\b(add windows?|add window|remove (?:the )?side windows?|remove (?:the )?left windows?)\b/.test(text)) {
+    return true;
+  }
+
   if (/\b(taller|shorter|higher|lower|make it tall|make it short)\b/.test(text)) return true;
   if (/\b(wider|narrower|more wide|less wide|more narrow)\b/.test(text) && !/\bporch\b/.test(text)) {
     return true;
@@ -86,15 +101,9 @@ function hasStructuralUnsupportedSignals(text: string): boolean {
   if (/\binterior bedroom\b/.test(text)) return true;
   if (/\b(balcony|bedroom wing|add a wing)\b/.test(text)) return true;
 
-  if (/\b(add|remove|delete)\b/.test(text) && /\b(porch|chimney|floor|room|bedroom|tower|garage|balcony)\b/.test(text)) {
+  if (/\b(add|remove|delete)\b/.test(text) && /\b(floor|room|bedroom|tower|garage|balcony)\b/.test(text)) {
     return true;
   }
-  if (/\badd a porch\b/.test(text) || /\bremove the porch\b/.test(text) || /\bremove porch\b/.test(text)) {
-    return true;
-  }
-
-  if (/\b(wider|narrower)\b/.test(text) && /\bporch\b/.test(text)) return true;
-  if (/\b(wider porch|porch wider|narrower porch|porch narrower)\b/.test(text)) return true;
 
   return false;
 }

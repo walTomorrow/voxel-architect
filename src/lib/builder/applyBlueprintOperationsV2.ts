@@ -3,6 +3,7 @@ import type {
   GenericBuildingBlueprintV2,
   GenericBuildingComponentV2,
   PorchComponentV2,
+  PorchWidthModeV2,
   RoomComponentV2,
   RoofComponentV2,
   WindowGroupComponentV2,
@@ -10,12 +11,14 @@ import type {
 import type { BlueprintMaterialPalette } from "@/src/lib/blueprints/types/materials";
 import { CLASSIC_MATERIAL_KEYS } from "@/src/app/generic-lab/genericLabUtils";
 import type {
+  ApplyableBlueprintOperationV2,
   ApplyOperationsErrorCode,
   ApplyOperationsResult,
-  BlueprintOperationV2,
   ComponentPatchV2,
 } from "@/src/lib/builder/blueprintOperationsV2";
 import { findComponentById } from "@/src/lib/builder/blueprintComponentIndex";
+import { canRemoveComponent } from "@/src/lib/builder/componentOperationRegistry";
+import { sanitizeWindowGroupComponent } from "@/src/lib/blueprints/windowFacadeCapacity";
 
 const ROOM_WIDTH = { min: 5, max: 17 } as const;
 const ROOM_DEPTH = { min: 5, max: 13 } as const;
@@ -69,6 +72,7 @@ function applyRoofPatch(roof: RoofComponentV2, patch: Extract<ComponentPatchV2, 
 }
 
 function applyWindowPatch(
+  blueprint: GenericBuildingBlueprintV2,
   wg: WindowGroupComponentV2,
   patch: Extract<ComponentPatchV2, { type: "window_group" }>,
 ): WindowGroupComponentV2 {
@@ -76,22 +80,42 @@ function applyWindowPatch(
   if (patch.count !== undefined) {
     count = clampInt(patch.count, WINDOW_COUNT.min, WINDOW_COUNT.max);
   }
-  return {
+  const next: WindowGroupComponentV2 = {
     ...wg,
     count,
     layout: patch.layout ?? wg.layout,
   };
+  return sanitizeWindowGroupComponent(next, blueprint);
 }
 
 function applyPorchPatch(
   porch: PorchComponentV2,
   patch: Extract<ComponentPatchV2, { type: "porch" }>,
 ): PorchComponentV2 {
-  if (patch.depth === undefined) return porch;
-  return {
-    ...porch,
-    depth: clampInt(patch.depth, PORCH_DEPTH.min, PORCH_DEPTH.max),
-  };
+  let next: PorchComponentV2 = { ...porch };
+  if (patch.depth !== undefined) {
+    next = {
+      ...next,
+      depth: clampInt(patch.depth, PORCH_DEPTH.min, PORCH_DEPTH.max),
+    };
+  }
+  if (patch.widthMode !== undefined) {
+    const widthMode = patch.widthMode as PorchWidthModeV2;
+    next = { ...next, widthMode };
+    if (widthMode === "full_facade") {
+      const { aroundDoor: _removed, ...rest } = next;
+      next = rest as PorchComponentV2;
+    }
+  }
+  if (patch.aroundDoor !== undefined) {
+    if (patch.aroundDoor === null) {
+      const { aroundDoor: _removed, ...rest } = next;
+      next = rest as PorchComponentV2;
+    } else {
+      next = { ...next, aroundDoor: patch.aroundDoor };
+    }
+  }
+  return next;
 }
 
 function applyChimneyPatch(
@@ -117,7 +141,7 @@ function applyChimneyPatch(
 
 function applyComponentOp(
   blueprint: GenericBuildingBlueprintV2,
-  op: Extract<BlueprintOperationV2, { op: "updateComponent" }>,
+  op: Extract<ApplyableBlueprintOperationV2, { op: "updateComponent" }>,
   labels: string[],
 ): { blueprint: GenericBuildingBlueprintV2 } | ApplyOperationsResult {
   const existing = findComponentById(blueprint, op.id);
@@ -152,13 +176,19 @@ function applyComponentOp(
       break;
     case "window_group":
       if (existing.type !== "window_group") return fail("Invalid window patch.", "TYPE_MISMATCH");
-      updated = applyWindowPatch(existing, op.patch);
+      updated = applyWindowPatch(blueprint, existing, op.patch);
       labels.push(`Updated window group (${(updated as WindowGroupComponentV2).count} windows)`);
       break;
     case "porch":
       if (existing.type !== "porch") return fail("Invalid porch patch.", "TYPE_MISMATCH");
       updated = applyPorchPatch(existing, op.patch);
-      labels.push(`Updated porch depth`);
+      if (op.patch.widthMode === "full_facade") {
+        labels.push(`Updated porch to full facade width`);
+      } else if (op.patch.depth !== undefined) {
+        labels.push(`Updated porch depth`);
+      } else {
+        labels.push(`Updated porch`);
+      }
       break;
     case "chimney":
       if (existing.type !== "chimney") return fail("Invalid chimney patch.", "TYPE_MISMATCH");
@@ -177,7 +207,7 @@ function applyComponentOp(
 
 export function applyBlueprintOperationsV2(
   input: GenericBuildingBlueprintV2,
-  operations: readonly BlueprintOperationV2[],
+  operations: readonly ApplyableBlueprintOperationV2[],
 ): ApplyOperationsResult & { blueprint?: GenericBuildingBlueprintV2 } {
   let blueprint = structuredClone(input) as GenericBuildingBlueprintV2;
   const appliedLabels: string[] = [];
@@ -212,6 +242,42 @@ export function applyBlueprintOperationsV2(
       );
       blueprint = { ...blueprint, components };
       appliedLabels.push(`Updated materials on ${op.id}`);
+      continue;
+    }
+
+    if (op.op === "addComponent") {
+      if (findComponentById(blueprint, op.component.id)) {
+        return fail(`Component id "${op.component.id}" already exists.`, "DUPLICATE_COMPONENT");
+      }
+      const toAdd =
+        op.component.type === "window_group"
+          ? sanitizeWindowGroupComponent(op.component, blueprint)
+          : op.component;
+      blueprint = {
+        ...blueprint,
+        components: [...blueprint.components, toAdd],
+      };
+      appliedLabels.push(
+        op.component.type === "porch"
+          ? `Added porch component (${op.component.id})`
+          : op.component.type === "chimney"
+            ? `Added chimney component (${op.component.id})`
+            : `Added window group (${op.component.id})`,
+      );
+      continue;
+    }
+
+    if (op.op === "removeComponent") {
+      const can = canRemoveComponent(blueprint, op.id);
+      if (!can.ok) {
+        return fail(can.reason, "NOT_REMOVABLE");
+      }
+      const removed = findComponentById(blueprint, op.id)!;
+      blueprint = {
+        ...blueprint,
+        components: blueprint.components.filter((c) => c.id !== op.id),
+      };
+      appliedLabels.push(`Removed ${removed.type} (${op.id})`);
       continue;
     }
 

@@ -6,7 +6,7 @@ import {
 import type { BlueprintValidationResultV2 } from "@/src/lib/blueprints/types/validationResult";
 import { generateStructure } from "@/src/lib/generation/generateStructure";
 import { applyBlueprintOperationsV2 } from "@/src/lib/builder/applyBlueprintOperationsV2";
-import type { BlueprintOperationV2 } from "@/src/lib/builder/blueprintOperationsV2";
+import type { ApplyableBlueprintOperationV2 } from "@/src/lib/builder/blueprintOperationsV2";
 import type {
   BuilderActivityEvent,
   BuilderPlannerPath,
@@ -21,6 +21,8 @@ import type { PlannerRejectionCode } from "@/src/lib/builder/plannerRejection";
 import { formatRejectionActivityLabel } from "@/src/lib/builder/plannerRejection";
 import { isBuilderDevMode } from "@/src/lib/builder/builderDevMode";
 import { summarizeBlueprintForPlanner } from "@/src/lib/builder/summarizeBlueprintForPlanner";
+import { getBlueprintAffordancesForPlanner } from "@/src/lib/builder/getBlueprintAffordancesForPlanner";
+import { buildValidationFailureSuggestion } from "@/src/lib/builder/buildValidationFailureSuggestion";
 
 function appendPlannerDebugEvents(
   events: BuilderActivityEvent[],
@@ -84,7 +86,7 @@ type PlanResolveFailure = {
 };
 
 type ResolvedPlan = {
-  readonly operations: readonly BlueprintOperationV2[];
+  readonly operations: readonly ApplyableBlueprintOperationV2[];
   readonly planLabel: string;
   readonly plannerPath: BuilderPlannerPath;
   readonly rationaleSummary?: string;
@@ -291,11 +293,21 @@ function applyAndGenerate(
   const validationIssues = mapValidationIssues(validation);
   if (!validation.ok) {
     const err = validation.errors[0]?.message ?? "Blueprint validation failed.";
+    const affordances = getBlueprintAffordancesForPlanner(blueprint);
+    const hint = buildValidationFailureSuggestion(validation.errors, updated, affordances);
+    const detail = hint ? `${err} ${hint}` : err;
     return failResult(
-      err,
-      `Validation failed after the edit: ${err} The preview was not updated.`,
-      [...events, { id: "validate", label: "Validate updated blueprint", status: "error" }],
-      { plannerPath: plan.plannerPath },
+      detail,
+      `Validation failed after the edit: ${detail} The preview was not updated.`,
+      [
+        ...events,
+        {
+          id: "validate",
+          label: `Blueprint validation failed: ${validation.errors[0]?.code ?? "error"}`,
+          status: "error",
+        },
+      ],
+      { plannerPath: plan.plannerPath, rejectionDetail: detail },
     );
   }
 

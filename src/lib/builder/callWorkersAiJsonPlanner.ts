@@ -3,6 +3,7 @@ import { PLANNER_SYSTEM_PROMPT } from "@/src/lib/builder/buildPlannerPrompt";
 import type { PlannerRejectionCode } from "@/src/lib/builder/plannerRejection";
 import { parsePlannerJsonResponse } from "@/src/lib/builder/validatePlannerOperations";
 import type { PlannerJsonResponse } from "@/src/lib/builder/plannerTypes";
+import { buildWorkersAiPlannerResponseFormat } from "@/src/lib/builder/plannerResponseSchema";
 import {
   classifyEmptyWorkersAiExtract,
   extractWorkersAiResponseText,
@@ -39,35 +40,18 @@ export type CallJsonPlannerResult =
       diagnostics?: PlannerUpstreamDiagnostics;
     };
 
-const PLANNER_RESPONSE_FORMAT = {
-  type: "json_schema",
-  json_schema: {
-    type: "object",
-    properties: {
-      status: { type: "string", enum: ["ok", "unsupported"] },
-      operations: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            op: { type: "string", enum: ["setMaterialPalette", "updateComponent"] },
-            id: { type: "string" },
-            componentType: { type: "string" },
-            patch: { type: "object" },
-          },
-          required: ["op", "patch"],
-        },
-      },
-      rationaleSummary: { type: "string" },
-      unsupportedReason: { type: "string" },
-    },
-    required: ["status"],
-  },
-} as const;
+function isJsonModeFailureMessage(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes("json mode") && (m.includes("couldn't be met") || m.includes("could not be met"));
+}
 
-async function fetchPlannerText(
+/**
+ * POST to Workers AI with JSON Mode (`response_format.type = "json_schema"`).
+ * Schema from `buildWorkersAiPlannerResponseFormat()` — see plannerResponseSchema.ts.
+ */
+export async function fetchPlannerText(
   userPrompt: string,
-  systemExtra?: string,
+  systemContent?: string,
 ): Promise<CallJsonPlannerResult> {
   const config = getWorkersAiConfig();
   if (!config) {
@@ -80,9 +64,7 @@ async function fetchPlannerText(
     };
   }
 
-  const system = systemExtra
-    ? `${PLANNER_SYSTEM_PROMPT}\n\n${systemExtra}`
-    : PLANNER_SYSTEM_PROMPT;
+  const system = systemContent ?? PLANNER_SYSTEM_PROMPT;
 
   const body = {
     messages: [
@@ -91,7 +73,7 @@ async function fetchPlannerText(
     ],
     max_tokens: PLANNER_MAX_TOKENS,
     stream: false,
-    response_format: PLANNER_RESPONSE_FORMAT,
+    response_format: buildWorkersAiPlannerResponseFormat(),
   };
 
   const url = workersAiRunUrl(config.accountId, config.model);
@@ -130,6 +112,7 @@ async function fetchPlannerText(
         errors[0]?.message?.trim() ||
         (rawBody.length < 500 ? rawBody.trim() : "") ||
         "Workers AI planner request failed.";
+
       logPlannerDev(
         formatWorkersAiExtractDiagnostics(config.model, "planner", {
           httpStatus: response.status,
@@ -143,12 +126,19 @@ async function fetchPlannerText(
           rawBodyLength: rawBody.length,
         }) + `; upstreamError=${msg.slice(0, 120)}`,
       );
+
+      const rejectionCode: PlannerRejectionCode = isJsonModeFailureMessage(msg)
+        ? "JSON_MODE_FAILED"
+        : "PLANNER_UPSTREAM";
+
       return {
         ok: false,
         code: "UPSTREAM",
-        error: msg,
+        error: isJsonModeFailureMessage(msg)
+          ? "Workers AI JSON Mode could not produce a response matching the planner schema."
+          : msg,
         upstreamStatus: response.status,
-        rejectionCode: "PLANNER_UPSTREAM",
+        rejectionCode,
       };
     }
 
@@ -188,19 +178,36 @@ async function fetchPlannerText(
   }
 }
 
+export function parsePlannerRawText(
+  rawText: string,
+):
+  | { ok: true; json: PlannerJsonResponse }
+  | { ok: false; error: string; code: PlannerRejectionCode } {
+  const parsed = parsePlannerJsonResponse(rawText);
+  if ("error" in parsed) {
+    return { ok: false, error: parsed.error, code: parsed.code };
+  }
+  return { ok: true, json: parsed };
+}
+
+/**
+ * Fetch planner text and parse JSON. One repair attempt on parse failure (also uses JSON Mode).
+ */
 export async function callWorkersAiJsonPlanner(
   userPrompt: string,
+  options?: { systemContent?: string },
 ): Promise<
-  | { ok: true; json: PlannerJsonResponse; model: string }
+  | { ok: true; json: PlannerJsonResponse; model: string; rawText: string }
   | {
       ok: false;
       error: string;
       code: "CONFIG" | "UPSTREAM" | "PARSE";
       rejectionCode: PlannerRejectionCode;
       diagnostics?: PlannerUpstreamDiagnostics;
+      lastRawText?: string;
     }
 > {
-  const first = await fetchPlannerText(userPrompt);
+  const first = await fetchPlannerText(userPrompt, options?.systemContent);
   if (!first.ok) {
     return {
       ok: false,
@@ -211,12 +218,13 @@ export async function callWorkersAiJsonPlanner(
     };
   }
 
-  let parsed = parsePlannerJsonResponse(first.rawText);
-  if ("error" in parsed) {
+  let parsed = parsePlannerRawText(first.rawText);
+  if (!parsed.ok) {
     logPlannerDev(`parseFailure=${parsed.code}; textLen=${first.rawText.length}`);
     const repair = await fetchPlannerText(
       userPrompt,
-      "Your previous response was invalid JSON. Return only a single valid JSON object matching the required shape. No markdown.",
+      options?.systemContent ??
+        `${PLANNER_SYSTEM_PROMPT}\n\nYour previous response was invalid. Return only one valid JSON object. No markdown.`,
     );
     if (!repair.ok) {
       return {
@@ -224,35 +232,22 @@ export async function callWorkersAiJsonPlanner(
         error: `JSON parse failed: ${parsed.error}`,
         code: "PARSE",
         rejectionCode: parsed.code,
-        diagnostics: repair.diagnostics ?? {
-          model: first.model,
-          requestMode: "planner",
-          rejectionCategory: parsed.code,
-          summary: `parseFailure=${parsed.code}; textLen=${first.rawText.length}`,
-          extract: {
-            httpStatus: 200,
-            apiSuccess: true,
-            resultType: "parsed",
-            resultFieldNames: [],
-            topLevelFieldNames: [],
-            extractedLength: first.rawText.length,
-            hadText: true,
-            extractPath: "parsed",
-            rawBodyLength: first.rawText.length,
-          },
-        },
+        lastRawText: first.rawText,
+        diagnostics: repair.diagnostics,
       };
     }
-    parsed = parsePlannerJsonResponse(repair.rawText);
-    if ("error" in parsed) {
+    parsed = parsePlannerRawText(repair.rawText);
+    if (!parsed.ok) {
       return {
         ok: false,
         error: `JSON parse failed: ${parsed.error}`,
         code: "PARSE",
         rejectionCode: parsed.code,
+        lastRawText: repair.rawText,
       };
     }
+    return { ok: true, json: parsed.json, model: repair.model, rawText: repair.rawText };
   }
 
-  return { ok: true, json: parsed, model: first.model };
+  return { ok: true, json: parsed.json, model: first.model, rawText: first.rawText };
 }

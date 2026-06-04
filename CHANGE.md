@@ -1,3 +1,56 @@
+# Change report — Builder tool expansion
+
+## Component operation framework (2026-06-04)
+
+**Branch:** `feature/builder-tool-expansion`
+
+- **`addComponent` / `removeComponent`** (Option B): planner returns intent; server materializes via `componentOperationRegistry.ts`.
+- **Allowlist:** porch, chimney, window_group — one porch/chimney per blueprint; one window_group per surface.
+- **`getBlueprintAffordancesForPlanner()`** injected into planner prompt.
+- **Porch `widthMode`** patch for “make the porch wider” (deterministic + planner).
+- **`classifyRefinementPrompt`:** add/remove porch/chimney/windows no longer structural unsupported.
+- Pipeline unchanged: validate → materialize → apply → validateBlueprint → generate.
+
+See `PLAN.md` §18 for long-term semantic vs geometry layering.
+
+---
+
+## Planner schema hardening (2026-06-03)
+
+**Branch:** `feature/builder-tool-expansion`
+
+- **Strict planner JSON Schema** (`plannerResponseSchema.ts`): top-level `ok` | `unsupported` only; per-op `oneOf` (no shared `required: ["op","patch"]` on all ops); `addComponent` intent only (no full `component` blob).
+- **Workers AI JSON Mode** on native `/ai/run/{model}`: `response_format: { type: "json_schema", json_schema: PLANNER_RESPONSE_JSON_SCHEMA }` on initial and repair calls.
+- **One-shot repair**: parse/validation failures with repairable codes → single repair fetch with JSON Mode + rejection detail + bad snippet; no preview update on failure.
+- **Minimum-change rule**: direct add/remove/widen component requests → reject `OVERBROAD_OPERATION_PLAN` if more than one operation (`validateOverbroadPlannerPlan.ts` + prompt examples).
+- **Diagnostics**: field-specific messages (missing `id`, unknown patch fields, full `component` object rejected before normalize).
+- **New rejection codes:** `JSON_MODE_FAILED`, `OVERBROAD_OPERATION_PLAN`.
+- **Tests:** `plannerSchemaHardening.test.ts` (schema, fetch payload, diagnostics, overbroad, repair helpers).
+
+Pipeline unchanged: parse → normalize → validate → materialize → apply → validateBlueprint → generate.
+
+---
+
+## Component operation stabilization (2026-06-03)
+
+**Branch:** `feature/builder-tool-expansion`
+
+- **Remove routing:** `looksLikeComponentEditRequest`, `remove`/`delete` in refine verbs; deterministic `removeComponent` in mapper for chimney/porch.
+- **Window defaults:** `windowFacadeCapacity.ts` — layout sanitization, count clamp, singular-window count 1; sanitize on add/apply.
+- **Affordances:** per-surface window capacity, `frontWindowsAtCapacity`, porch widen/deepen, chimney remove id.
+- **Validation hints:** `buildValidationFailureSuggestion` on post-apply validate failures.
+
+### Known limitations from manual testing
+
+These are follow-up issues for the semantic affordance / build-summary layer, not blockers for the component-operation framework.
+
+- **Surface-specific window requests are still inconsistent.** For example, “add windows to the right and back” may be misrouted or reduced to a front-window deterministic edit.
+- **Compound side-window requests** such as “left and right” may miss the refine tool or be rejected incorrectly.
+- **Some planner failures may reference the wrong component affordance**, e.g. a porch-related rejection during a window request.
+- **Assistant summaries can overstate count deltas**, e.g. saying “two additional windows” when the tool updated an existing window group to count 2.
+
+---
+
 # Change report — Planner routing & chat context fixes
 
 ## Semantic routing refactor (2026-06-04)
