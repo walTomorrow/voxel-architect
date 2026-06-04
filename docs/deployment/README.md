@@ -2,4 +2,4 @@
 
 | File | Purpose |
 |------|---------|
-| [`CLOUDFLARE.md`](CLOUDFLARE.md) | Cloudflare Pages, Workers, and future AI/session infrastructure |
+| [`CLOUDFLARE.md`](CLOUDFLARE.md) | Cloudflare Pages, Workers AI, `/api/builder/chat`, env vars |

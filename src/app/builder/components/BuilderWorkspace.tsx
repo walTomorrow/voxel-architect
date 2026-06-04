@@ -6,14 +6,24 @@ import { statusLabel } from "@/src/app/builder/mockBuilderData";
 import { getGenericBuildingPreset } from "@/src/lib/blueprints/sampleGenericBuildingBlueprints";
 import { BuilderPreviewPanel } from "@/src/app/builder/components/BuilderPreviewPanel";
 import { BuilderChatPanel } from "@/src/app/builder/components/BuilderChatPanel";
+import type { BuilderMessageView } from "@/src/app/builder/components/BuilderMessage";
+import type { PendingImageReference } from "@/src/app/builder/components/BuilderPromptInput";
 
 type Props = {
   readonly chat: BuilderChat;
-  readonly onSendMessage: (text: string) => void;
+  readonly messages: readonly BuilderMessageView[];
+  readonly isLoading: boolean;
+  readonly onSendMessage: (text: string, image: PendingImageReference | null) => void;
   readonly onResetChat: () => void;
 };
 
-export function BuilderWorkspace({ chat, onSendMessage, onResetChat }: Props) {
+export function BuilderWorkspace({
+  chat,
+  messages,
+  isLoading,
+  onSendMessage,
+  onResetChat,
+}: Props) {
   const preset = getGenericBuildingPreset(chat.presetId);
 
   return (
@@ -46,7 +56,8 @@ export function BuilderWorkspace({ chat, onSendMessage, onResetChat }: Props) {
             <button
               type="button"
               onClick={onResetChat}
-              className="rounded-lg border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
+              disabled={isLoading}
+              className="rounded-lg border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Reset chat
             </button>
@@ -54,8 +65,12 @@ export function BuilderWorkspace({ chat, onSendMessage, onResetChat }: Props) {
         </header>
         <BuilderPreviewPanel presetId={chat.presetId} />
       </section>
-      <section className="flex h-[min(40vh,20rem)] w-full shrink-0 flex-col border-t border-zinc-800/90 lg:h-auto lg:max-w-[19rem] lg:flex-1 lg:flex-none lg:border-l lg:border-t-0 xl:max-w-[20rem]">
-        <BuilderChatPanel chat={chat} onSendMessage={onSendMessage} />
+      <section className="flex min-h-[min(52vh,28rem)] w-full shrink-0 flex-col border-t border-zinc-800/90 lg:h-full lg:min-h-0 lg:max-w-[22rem] lg:flex-1 lg:flex-none lg:border-l lg:border-t-0 xl:max-w-[24rem]">
+        <BuilderChatPanel
+          messages={messages}
+          isLoading={isLoading}
+          onSendMessage={onSendMessage}
+        />
       </section>
     </div>
   );

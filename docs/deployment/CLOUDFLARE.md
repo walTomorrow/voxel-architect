@@ -474,6 +474,26 @@ For an early-stage project, this simplicity is often more valuable than micro-op
 
 ---
 
+# Builder chat API (`/api/builder/chat`)
+
+The `/builder` route uses a **Next.js Route Handler** (`src/app/api/builder/chat/route.ts`) that calls **Workers AI** over the REST API. Secrets stay server-side only.
+
+**Environment variables** (see `.env.example`):
+
+* `CLOUDFLARE_ACCOUNT_ID`
+* `CLOUDFLARE_API_TOKEN` (Workers AI access)
+* `WORKERS_AI_MODEL` (default `@cf/meta/llama-3.2-11b-vision-instruct`)
+
+**Local:** `pnpm dev` with `.env.local` (never commit).
+
+**Meta license:** First use of the vision model may require a one-time `{ "prompt": "agree" }` POST to the model run URL (documented in `.env.example`).
+
+**Production on Pages:** Static-only Pages deploys do not run Next API routes until **OpenNext for Cloudflare** or a **Pages Function** is added. Local dev works with the Route Handler first.
+
+**Not stored:** Reference images are sent inline per request only — no R2, no persistence.
+
+---
+
 # Final Practical Guidance
 
 For now:
