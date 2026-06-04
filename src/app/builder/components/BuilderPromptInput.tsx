@@ -24,6 +24,12 @@ function fileToMimeType(file: File): BuilderImageMimeType | null {
   return (BUILDER_IMAGE_MIME_TYPES as readonly string[]).includes(t) ? t : null;
 }
 
+function defaultPastedFileName(mimeType: BuilderImageMimeType): string {
+  if (mimeType === "image/png") return "pasted-reference.png";
+  if (mimeType === "image/jpeg") return "pasted-reference.jpg";
+  return "pasted-reference.webp";
+}
+
 const MAX_IMAGE_MB = Math.round(BUILDER_MAX_IMAGE_BYTES / (1024 * 1024));
 
 export function BuilderPromptInput({ disabled, onSend }: Props) {
@@ -39,29 +45,52 @@ export function BuilderPromptInput({ disabled, onSend }: Props) {
     setPendingImage(null);
   }
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  function attachImageFile(file: File, name?: string) {
     setPickError(null);
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-
     const mimeType = fileToMimeType(file);
     if (!mimeType) {
       setPickError("Use PNG, JPEG, or WebP.");
-      return;
+      return false;
     }
     if (file.size > BUILDER_MAX_IMAGE_BYTES) {
       setPickError(`Image must be under ${MAX_IMAGE_MB} MB.`);
-      return;
+      return false;
     }
 
     clearPendingImage();
     setPendingImage({
       file,
       mimeType,
-      name: file.name,
+      name: name?.trim() || file.name || defaultPastedFileName(mimeType),
       previewUrl: URL.createObjectURL(file),
     });
+    return true;
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) attachImageFile(file);
+  }
+
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (disabled) return;
+
+    const items = e.clipboardData?.items;
+    if (!items?.length) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item || item.kind !== "file" || !item.type.startsWith("image/")) continue;
+
+      const file = item.getAsFile();
+      if (!file) continue;
+
+      if (attachImageFile(file)) {
+        e.preventDefault();
+      }
+      return;
+    }
   }
 
   function submit() {
@@ -107,9 +136,10 @@ export function BuilderPromptInput({ disabled, onSend }: Props) {
           rows={3}
           value={value}
           disabled={disabled}
-          placeholder="Describe your building or ask about the reference…"
+          placeholder="Describe your building or paste / attach a reference image…"
           className="min-h-[5.5rem] w-full resize-y rounded-xl border border-zinc-700/80 bg-zinc-900/90 px-3 py-2.5 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:opacity-50"
           onChange={(e) => setValue(e.target.value)}
+          onPaste={handlePaste}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -154,7 +184,7 @@ export function BuilderPromptInput({ disabled, onSend }: Props) {
             </svg>
           </button>
           <p className="min-w-0 flex-1 text-[10px] leading-snug text-zinc-600">
-            One image per message · PNG, JPEG, WebP · max {MAX_IMAGE_MB} MB
+            Paste or attach one image · PNG, JPEG, WebP · max {MAX_IMAGE_MB} MB
           </p>
           <button
             type="button"

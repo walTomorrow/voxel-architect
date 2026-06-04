@@ -7,6 +7,7 @@ import type { BuilderActivityStep } from "@/src/lib/builder/mockBuilderActivity"
 export type BuilderMessageView = BuilderMessageType & {
   readonly activitySteps?: readonly BuilderActivityStep[];
   readonly isError?: boolean;
+  readonly isStreaming?: boolean;
 };
 
 type Props = {
@@ -57,6 +58,12 @@ export function BuilderMessageBubble({ message }: Props) {
         ].join(" ")}
       >
         {message.content}
+        {message.isStreaming && message.content.length === 0 ? (
+          <span className="text-zinc-500">…</span>
+        ) : null}
+        {message.isStreaming && message.content.length > 0 ? (
+          <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-emerald-400/80 align-middle" aria-hidden />
+        ) : null}
       </div>
       {message.attachments && message.attachments.length > 0 && !message.attachments[0]?.previewUrl ? (
         <div className="flex flex-wrap gap-1.5">

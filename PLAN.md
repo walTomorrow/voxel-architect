@@ -67,8 +67,17 @@ One multimodal Workers AI model for text chat and user reference images in the s
 
 ### Response
 
-Success: `{ message: string; model?: string }`  
-Error: `{ error: string; code?: "CONFIG" | "UPSTREAM" | "VALIDATION" | "LICENSE" }`
+**Text-only (streaming):** `text/event-stream` with builder SSE events:
+
+- `event: chunk` — `{ text: string }` (incremental assistant text)
+- `event: done` — `{ model: string }`
+- `event: error` — `{ error: string; code: string }`
+
+Server sends `stream: true` to Workers AI (`messages` only, no `image`). If upstream returns JSON instead of SSE, the route emits one chunk + `done` as a fallback.
+
+**Image reference (non-streaming):** JSON `{ message: string; model?: string }` — vision requests use `stream: false` because multimodal image+text streaming is not relied on in this branch.
+
+**Errors (JSON or SSE):** `{ error: string; code?: "CONFIG" | "UPSTREAM" | "VALIDATION" | "LICENSE" }`
 
 ---
 
@@ -80,8 +89,8 @@ Server-only REST:
 POST https://api.cloudflare.com/client/v4/accounts/{id}/ai/run/{WORKERS_AI_MODEL}
 ```
 
-- **Text-only:** `{ messages: [{ role, content: string }, ...] }`
-- **With image:** Top-level `image` as `data:{mime};base64,{data}` plus `messages` (Cloudflare vision tutorial format — not OpenAI `image_url` parts).
+- **Text-only:** `{ messages, max_tokens, stream: true }` → SSE from Workers AI, proxied to browser
+- **With image:** `{ messages, max_tokens, stream: false, image: "data:{mime};base64,..." }` (non-streaming JSON response)
 
 Confirm via [Cloudflare model docs](https://developers.cloudflare.com/workers-ai/models/llama-3.2-11b-vision-instruct/) and Cursor Cloudflare plugin when debugging.
 
@@ -101,7 +110,8 @@ Confirm via [Cloudflare model docs](https://developers.cloudflare.com/workers-ai
 
 - 3-column layout unchanged; preview static
 - Send text and/or one image (local file picker, preview chip, remove before send)
-- Loading state; assistant from API; clear errors
+- Text-only replies **stream** into the assistant bubble; image messages use full JSON response
+- Send disabled while streaming; clear errors
 - **Build activity:** mock checklist under assistant turn — not LLM reasoning
 
 ### Image UX
@@ -122,14 +132,14 @@ Confirm via [Cloudflare model docs](https://developers.cloudflare.com/workers-ai
 
 ## Out of scope
 
-Blueprint generation, preview changes, v2 compiler, operations, Agents/DO, persistence, auth, R2, canonical renders, self-evaluation loop, streaming, AI Gateway, separate text/vision routes.
+Blueprint generation, preview changes, v2 compiler, operations, Agents/DO, persistence, auth, R2, canonical renders, self-evaluation loop, AI Gateway, separate text/vision routes, image+text streaming.
 
 ---
 
 ## Success criteria
 
-- [ ] Text-only chat via Workers AI
-- [ ] One image reference per message with same model
+- [x] Text-only chat via Workers AI (streaming)
+- [x] One image reference per message with same model (non-streaming JSON)
 - [ ] Static preview unchanged
 - [ ] Mock build activity; no secrets in client
 - [ ] `tsc`, `lint`, `test:generator`, `build` pass

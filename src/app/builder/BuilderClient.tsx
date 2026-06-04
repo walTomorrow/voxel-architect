@@ -6,6 +6,7 @@ import { BuilderWorkspace } from "@/src/app/builder/components/BuilderWorkspace"
 import type { BuilderMessageView } from "@/src/app/builder/components/BuilderMessage";
 import type { PendingImageReference } from "@/src/app/builder/components/BuilderPromptInput";
 import { prepareMessagesForChatApi } from "@/src/lib/builder/builderChatGuardrails";
+import { consumeBuilderChatSse } from "@/src/lib/builder/consumeBuilderChatStream";
 import type { BuilderChatErrorResponse, BuilderChatSuccessResponse } from "@/src/lib/builder/builderChatTypes";
 import { buildMockActivitySteps } from "@/src/lib/builder/mockBuilderActivity";
 import {
@@ -176,6 +177,31 @@ export function BuilderClient() {
         name: string;
       } | null = null;
 
+      const assistantId = newMessageId();
+      const hasImage = image != null;
+      const activitySteps = buildMockActivitySteps(hasImage);
+
+      const patchAssistant = (patch: Partial<BuilderMessageView>) => {
+        updateChat(chatId, (c) => {
+          const messages = c.messages.map((m) =>
+            m.id === assistantId ? { ...m, ...patch } : m,
+          ) as BuilderMessage[];
+          syncViews(chatId, messages);
+          return { ...c, messages };
+        });
+      };
+
+      const assistantPlaceholder: BuilderMessageView = {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        createdAtLabel: "Just now",
+        isStreaming: !hasImage,
+      };
+      const withAssistant = [...withUser, assistantPlaceholder];
+      updateChat(chatId, (c) => ({ ...c, messages: withAssistant }));
+      syncViews(chatId, withAssistant);
+
       try {
         if (image) {
           const dataBase64 = await fileToBase64(image.file);
@@ -197,38 +223,84 @@ export function BuilderClient() {
           }),
         });
 
+        const chatMode = res.headers.get("X-Builder-Chat-Mode");
+        const isStream =
+          chatMode === "stream" ||
+          (res.headers.get("Content-Type") ?? "").includes("text/event-stream");
+
+        if (isStream) {
+          let content = "";
+          let streamFailed = false;
+          const { completed } = await consumeBuilderChatSse(res, {
+            onChunk: (text) => {
+              content += text;
+              patchAssistant({ content, isStreaming: true });
+            },
+            onDone: () => {
+              patchAssistant({
+                content: content.trim() || "No response from the assistant.",
+                isStreaming: false,
+                activitySteps,
+              });
+            },
+            onError: (errText) => {
+              streamFailed = true;
+              patchAssistant({
+                content: errText,
+                isStreaming: false,
+                isError: true,
+                activitySteps,
+              });
+            },
+          });
+          if (!streamFailed && !completed && content.trim().length > 0) {
+            patchAssistant({
+              content: content.trim(),
+              isStreaming: false,
+              activitySteps,
+            });
+          } else if (!streamFailed && !completed && content.trim().length === 0) {
+            patchAssistant({
+              content: "The assistant stream ended without a response. Try again.",
+              isStreaming: false,
+              isError: true,
+              activitySteps,
+            });
+          }
+          return;
+        }
+
         const data = (await res.json()) as
           | BuilderChatSuccessResponse
           | BuilderChatErrorResponse;
-
-        const activitySteps = buildMockActivitySteps(image != null);
 
         if (!res.ok || !("message" in data) || typeof data.message !== "string") {
           const errText =
             "error" in data && typeof data.error === "string"
               ? data.error
               : "Couldn't reach the building assistant. Try again.";
-          appendAssistantError(chatId, withUser, errText, image != null);
+          patchAssistant({
+            content: errText,
+            isStreaming: false,
+            isError: true,
+            activitySteps,
+          });
           return;
         }
 
-        const assistantMsg: BuilderMessageView = {
-          id: newMessageId(),
-          role: "assistant",
+        patchAssistant({
           content: data.message,
-          createdAtLabel: "Just now",
+          isStreaming: false,
           activitySteps,
-        };
-        const finalMsgs = [...withUser, assistantMsg];
-        updateChat(chatId, (c) => ({ ...c, messages: finalMsgs }));
-        syncViews(chatId, finalMsgs);
+        });
       } catch {
-        appendAssistantError(
-          chatId,
-          withUser,
-          "Couldn't reach the building assistant. Check your connection and server configuration.",
-          image != null,
-        );
+        patchAssistant({
+          content:
+            "Couldn't reach the building assistant. Check your connection and server configuration.",
+          isStreaming: false,
+          isError: true,
+          activitySteps,
+        });
       } finally {
         sendInFlightRef.current = false;
         setIsLoading(false);

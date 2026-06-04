@@ -1,4 +1,10 @@
-import { callWorkersAiChat } from "@/src/lib/builder/callWorkersAiChat";
+import {
+  builderChatSseHeaders,
+  callWorkersAiChat,
+  shouldStreamBuilderChat,
+  sseErrorStream,
+  streamWorkersAiChat,
+} from "@/src/lib/builder/callWorkersAiChat";
 import type { BuilderChatErrorResponse, BuilderChatSuccessResponse } from "@/src/lib/builder/builderChatTypes";
 import { parseBuilderChatRequestBody } from "@/src/lib/builder/validateChatRequest";
 
@@ -27,7 +33,24 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError(parsed.error, "VALIDATION", 400);
   }
 
-  const result = await callWorkersAiChat(parsed.data.messages, parsed.data.attachment);
+  const { messages, attachment } = parsed.data;
+
+  if (shouldStreamBuilderChat(attachment)) {
+    const streamResult = await streamWorkersAiChat(messages);
+    if (!streamResult.ok) {
+      const status = upstreamHttpStatus(streamResult);
+      return new Response(
+        sseErrorStream(streamResult.error, streamResult.code),
+        { status, headers: builderChatSseHeaders("") },
+      );
+    }
+
+    return new Response(streamResult.stream, {
+      headers: builderChatSseHeaders(streamResult.model),
+    });
+  }
+
+  const result = await callWorkersAiChat(messages, attachment);
   if (!result.ok) {
     const status = upstreamHttpStatus(result);
     return jsonError(result.error, result.code, status);
@@ -37,7 +60,9 @@ export async function POST(request: Request): Promise<Response> {
     message: result.message,
     model: result.model,
   };
-  return Response.json(payload);
+  return Response.json(payload, {
+    headers: { "X-Builder-Chat-Mode": "json" },
+  });
 }
 
 function upstreamHttpStatus(
