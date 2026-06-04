@@ -1,26 +1,22 @@
 # Cloudflare deployment (OpenNext on Workers)
 
-Voxel Architect is built and deployed with [**@opennextjs/cloudflare**](https://opennext.js.org/cloudflare), not the deprecated `@cloudflare/next-on-pages` adapter.
+Voxel Architect is built and deployed with [**@opennextjs/cloudflare**](https://opennext.js.org/cloudflare). The deprecated `@cloudflare/next-on-pages` adapter is no longer used.
 
 ---
 
-## Deployment target and URL cutover (read this first)
+## Current deployment
 
-| | **Before (legacy)** | **After (this migration)** |
-|---|---------------------|----------------------------|
-| **Platform** | Cloudflare **Pages** | Cloudflare **Workers** (OpenNext bundle) |
-| **Typical public URL** | `https://voxel-architect.pages.dev` | `https://voxel-architect.<account>.workers.dev` (or a **custom domain** you attach to the Worker) |
-| **Build command** | `npx @cloudflare/next-on-pages@1` | `pnpm install && pnpm run deploy:cloudflare` (or Workers Builds equivalent) |
-| **Output** | Pages / Functions layout from `next-on-pages` | `.open-next/worker.js` + `.open-next/assets/` |
+| Item | Value |
+|------|--------|
+| **Platform** | Cloudflare **Workers** (OpenNext bundle) |
+| **Live URL** | https://voxel-architect.wlc562.workers.dev/ |
+| **Worker entry** | `.open-next/worker.js` |
+| **Static assets** | `.open-next/assets/` |
+| **Deploy** | `pnpm run deploy:cloudflare` (or Workers Builds with the same command) |
 
-**Important:** Completing this migration does **not** automatically keep serving traffic at **`voxel-architect.pages.dev`**. That hostname belongs to the **Pages** project. The OpenNext app runs as a **Worker** and gets a **different default URL** unless you:
+A custom domain is optional and not required for this project.
 
-1. Deploy the Worker (`pnpm run deploy:cloudflare` or Workers Builds), then  
-2. **Cut over** traffic by attaching your production hostname (custom domain) to the **Worker**, or updating links/README to the new `workers.dev` URL.
-
-Until cutover, the old Pages deployment may still respond at `*.pages.dev` if that project is left connected—treat it as **legacy** and avoid changing its build settings back to `next-on-pages` once the Worker is production.
-
-Document the **actual** production URL in the repo README after cutover.
+Earlier versions were deployed through Cloudflare Pages using the deprecated `next-on-pages` adapter; production now runs only on the Worker URL above.
 
 ---
 
@@ -73,16 +69,14 @@ To preserve dashboard-defined env vars across deploys:
 pnpm exec opennextjs-cloudflare deploy -- --keep-vars
 ```
 
-(`deploy:cloudflare` script can be extended with `--keep-vars` once confirmed in your account.)
-
 ---
 
 ## Cloudflare dashboard / CI
 
-### Workers Builds (recommended for Git push → deploy)
+Use a **Workers** project (Workers Builds or `pnpm run deploy:cloudflare`), not a Pages `next-on-pages` pipeline.
 
-1. Create or use a **Workers** project linked to this repository (not the legacy Pages `next-on-pages` pipeline).
-2. **Build command:** `pnpm install && pnpm run deploy:cloudflare` (or `pnpm exec opennextjs-cloudflare build` + separate deploy step per your setup).
+1. Link the repository to **Workers Builds** (or deploy from CI).
+2. **Build/deploy command:** `pnpm install && pnpm run deploy:cloudflare` (or `pnpm exec opennextjs-cloudflare build` plus a separate deploy step).
 3. **Runtime environment variables / secrets** (required for `/api/builder/chat`):
 
    | Name | Secret? |
@@ -94,13 +88,6 @@ pnpm exec opennextjs-cloudflare deploy -- --keep-vars
 4. Do **not** set `NEXT_PUBLIC_*` for these values.
 
 See `.env.example` for placeholders and Meta license curl notes.
-
-### Legacy Pages project
-
-If a **Pages** project still exists for this repo:
-
-- **Stop** using `npx @cloudflare/next-on-pages@1` there once the Worker is live.
-- Expect **`voxel-architect.pages.dev`** to remain on Pages until you disable that project or repoint DNS—**that is a different deployment** than the Worker URL.
 
 ---
 
@@ -125,7 +112,7 @@ If a **Pages** project still exists for this repo:
 
 ## Verification checklist
 
-After deploy to a **Worker** URL (not assumed to be `pages.dev`):
+After deploy to https://voxel-architect.wlc562.workers.dev/ (or a preview Worker URL):
 
 - [ ] `/builder` loads  
 - [ ] Text chat streams (SSE)  
@@ -145,7 +132,7 @@ pnpm exec opennextjs-cloudflare build
 
 ---
 
-## Out of scope on this migration
+## Out of scope
 
 AI Gateway, Agents, Durable Objects, D1, R2 incremental cache, Workers AI bindings (REST remains), blueprint/generator/UI changes.
 

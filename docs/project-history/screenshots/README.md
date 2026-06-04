@@ -2,7 +2,7 @@
 
 This folder stores **curated PNG captures** of Voxel Architect at meaningful milestones. Images are embedded in [`../DEVELOPMENT_TIMELINE.md`](../DEVELOPMENT_TIMELINE.md) and indexed here for teammates, instructors, and coding assistants.
 
-There is **no** automated screenshot CI. Captures are taken from **Cloudflare Pages** deployments at the commit indicated in each filename suffix.
+There is **no** automated screenshot CI. Captures are taken from deployed Cloudflare builds at the commit indicated in each filename suffix.
 
 ---
 

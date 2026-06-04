@@ -260,7 +260,7 @@ Planned or possible infrastructure:
 - Queues for async generation jobs
 - Vectorize or equivalent retrieval/indexing
 - Supabase for database/auth
-- Vercel or Cloudflare Pages for frontend hosting during MVP phases
+- Vercel or Cloudflare Workers (OpenNext) for frontend hosting during MVP phases
 
 ---
 

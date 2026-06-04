@@ -1,3 +1,3 @@
 # Deployment
 
-- **[Cloudflare (OpenNext on Workers)](./CLOUDFLARE.md)** — build, deploy, URL cutover from Pages, environment variables.
+- **[Cloudflare (OpenNext on Workers)](./CLOUDFLARE.md)** — live URL, build, deploy, environment variables.

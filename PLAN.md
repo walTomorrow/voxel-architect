@@ -1,7 +1,7 @@
 # Plan — OpenNext migration (Cloudflare)
 
 **Branch:** `feature/opennext-migration`  
-**Status:** Implemented on branch — see `docs/deployment/CLOUDFLARE.md` for deploy/cutover.  
+**Status:** Complete — live app at https://voxel-architect.wlc562.workers.dev/ (see `docs/deployment/CLOUDFLARE.md`).  
 **Type:** Infrastructure migration — **not** a product feature branch.
 
 **Goal:** Replace the deprecated `@cloudflare/next-on-pages` build/deploy path with the current **OpenNext Cloudflare adapter** (`@opennextjs/cloudflare`), while keeping the deployed app and existing routes working.
@@ -14,7 +14,7 @@
 - [Cloudflare Workers — Next.js framework guide](https://developers.cloudflare.com/workers/framework-guides/web-apps/nextjs/)
 - [Cloudflare blog — OpenNext on Workers](https://blog.cloudflare.com/deploying-nextjs-apps-to-cloudflare-workers-with-the-opennext-adapter/)
 
-**Live site today:** https://voxel-architect.pages.dev (Cloudflare **Pages**, build assumed below).
+**Live site:** https://voxel-architect.wlc562.workers.dev/ (Cloudflare **Workers** via OpenNext).
 
 ---
 
@@ -47,18 +47,17 @@ The deprecated adapter warned in build logs:
 | `test:generator` | `vitest run` |
 
 - **Package manager:** `pnpm@10.33.3`
-- **No** `@cloudflare/next-on-pages`, `@opennextjs/cloudflare`, or `wrangler` in `package.json` today (adapter is only invoked from the **Cloudflare Pages dashboard** build command, not the repo).
+- **Was:** `@cloudflare/next-on-pages` only in the dashboard; **now:** `@opennextjs/cloudflare` and `wrangler` in `package.json`.
 - **No** `setupDevPlatform()`, `getRequestContext`, or other `next-on-pages` references in source.
 
-### Assumed Cloudflare Pages build (dashboard)
+### Previous build (replaced)
 
-| Setting | Assumed value |
-|---------|----------------|
-| Build command | `npx @cloudflare/next-on-pages@1` |
-| Framework | Next.js (Pages) |
-| Output | Produced by `next-on-pages` (not committed) |
+| Setting | Was |
+|---------|-----|
+| Build command | `npx @cloudflare/next-on-pages@1` (deprecated) |
+| Platform | Cloudflare Pages + Edge runtime |
 
-Confirm exact values in the Cloudflare dashboard before changing them.
+**Now:** Workers Builds / `pnpm run deploy:cloudflare` → `.open-next/`.
 
 ### Wrangler / OpenNext config in repo
 
@@ -141,15 +140,15 @@ Official OpenNext and Cloudflare documentation describe deployment to **Cloudfla
 | Option | Fit for this repo |
 |--------|-------------------|
 | **Workers + OpenNext** (recommended) | Matches official adapter; supports **Route Handlers**, **response streaming**, Next **16**; uses `nodejs_compat` instead of Edge-constrained runtime. |
-| **Pages + OpenNext** | **Not** documented as a first-class OpenNext output path (no OpenNext “deploy to Pages” how-to found). Pages project today uses `next-on-pages`, which is deprecated. |
+| **Pages + OpenNext** | **Not** a supported target; production uses Workers + OpenNext only. |
 
 ### Least disruptive deployment *workflow*
 
 1. **Keep** GitHub branch → preview → merge workflow.
 2. **Change** build/deploy mechanics to OpenNext + Wrangler (Worker + assets binding).
-3. **Plan a hosting cutover** from `*.pages.dev` to a **Worker** hostname or custom domain on the Worker (same repo; dashboard steps TBD per account setup).
+3. **Host on Workers** at https://voxel-architect.wlc562.workers.dev/ (custom domain optional).
 
-**Tradeoff:** Moving from Pages to Workers may require a **new or reconfigured Cloudflare project** (Workers Builds / `wrangler deploy` vs Pages “build command only”). Preview URLs may change unless custom domains are moved. This is acceptable technical debt paydown; staying on `next-on-pages` avoids dashboard churn but keeps a deprecated, Edge-limited stack.
+**Outcome:** Workers Builds / `wrangler deploy` replaces the deprecated Pages `next-on-pages` pipeline.
 
 **Alternative bootstrap:** `npx @opennextjs/cloudflare migrate` automates dependency install, `wrangler.jsonc`, `open-next.config.ts`, `.dev.vars`, scripts, `_headers`, `.gitignore`, and `initOpenNextCloudflareForDev()`. **Review the diff carefully** (it may create R2 cache resources if R2 is enabled on the account). Manual steps from the get-started guide are equivalent.
 
@@ -193,13 +192,13 @@ Official OpenNext and Cloudflare documentation describe deployment to **Cloudfla
 
 ## 5. Build command changes
 
-### Current (Cloudflare Pages dashboard)
+### Previous (removed)
 
 ```bash
 npx @cloudflare/next-on-pages@1
 ```
 
-Remove this from the deployment path after migration is verified.
+No longer used.
 
 ### Target (from official OpenNext + Cloudflare docs)
 
@@ -255,7 +254,7 @@ pnpm exec opennextjs-cloudflare build
 
 - **Build + deploy command:** `pnpm install && pnpm run deploy` (or split build/upload per account conventions).
 - **Not** a Pages “output directory” upload of `.next/` — the adapter produces `.open-next/`.
-- Re-confirm exact fields in the Cloudflare dashboard when implementing (Workers Builds vs legacy Pages project).
+- Use **Workers Builds** (or `pnpm run deploy:cloudflare`) in the Cloudflare dashboard.
 
 **Windows note:** OpenNext documents limited Windows support; prefer **WSL**, Linux CI, or deploy-only validation on Windows if `preview`/`build` fails locally.
 
@@ -401,18 +400,13 @@ Repeat the same browser checks on the **branch preview URL** after Cloudflare bu
    - Set **runtime** env vars / secrets for the three `CLOUDFLARE_*` / `WORKERS_AI_MODEL` vars.
 8. Deploy **branch preview**; run deployed checklist (Section 8).
 9. Merge to production branch only when branch preview passes.
-10. Update README live URL if hostname changes from `pages.dev` to Worker/custom domain.
+10. README and `docs/deployment/CLOUDFLARE.md` point to https://voxel-architect.wlc562.workers.dev/
 
 ### Rollback plan
 
 - Revert the migration PR / reset branch to pre-migration commit.
-- Restore Cloudflare Pages build command: `npx @cloudflare/next-on-pages@1` and previous Pages settings from dashboard history.
-- `next-on-pages` path remains in **git history**; no need to delete tags.
+- Re-enable the previous `next-on-pages` build in dashboard history only if absolutely necessary (deprecated).
 - **Do not** mix generator features, blueprint v2, or UI overhauls into this branch.
-
-### Cutover note
-
-If production stays on **voxel-architect.pages.dev** until DNS/project migration completes, document the parallel Worker URL in `docs/deployment/CLOUDFLARE.md` for testers.
 
 ---
 
@@ -444,12 +438,12 @@ Answer these while executing the migration (not all are knowable from the repo a
 | 2 | **Next.js 16.2.6:** Any OpenNext pin or adapter version caveats for this exact patch? | OpenNext releases / changelog |
 | 3 | **App Router + route handler + streaming:** Any known gaps with SSE through Route Handlers? | `pnpm run preview` + branch deploy |
 | 4 | **Env vars after migration:** Same dashboard fields, or separate Build vs Runtime secrets? | [OpenNext env vars](https://opennext.js.org/cloudflare/howtos/env-vars) |
-| 5 | **Pages build settings:** Is there still an “output directory” field to clear when moving to Worker deploy? | Cloudflare project settings |
+| 5 | **Worker build settings:** Confirm Workers Builds command and env vars | Cloudflare project settings |
 | 6 | **`nodejs_compat` + `compatibility_date`:** Minimum date and extra flags (`global_fetch_strictly_public`)? | `wrangler.jsonc` template in OpenNext get-started |
 | 7 | **`runtime = "edge"` removal:** Does chat still stream correctly under default Node route runtime? | Local preview + deploy |
 | 8 | **Worker size:** Does the Three.js client bundle + Next server bundle exceed paid/free compressed limits? | Wrangler deploy size line |
 | 9 | **Windows dev:** Does `opennextjs-cloudflare build` work on the primary dev OS, or only in CI/WSL? | OpenNext Windows note |
-| 10 | **Custom domain:** How to point `voxel-architect.pages.dev` (or custom domain) at the Worker? | Cloudflare DNS / Workers routes |
+| 10 | **Custom domain:** Optional; attach in Cloudflare DNS / Workers routes if desired | Cloudflare dashboard |
 | 11 | **R2 cache:** Skip R2 on first deploy or accept `migrate`-created bucket? | Account R2 enabled? |
 | 12 | **License flow:** Meta `{"prompt":"agree"}` still works unchanged via REST? | One manual curl per env |
 
@@ -459,17 +453,14 @@ Answer these while executing the migration (not all are knowable from the repo a
 
 The migration is **done** when:
 
-- [ ] Deprecated `@cloudflare/next-on-pages` is **not** used in Cloudflare build settings or repo scripts
-- [ ] `@opennextjs/cloudflare` + `wrangler` are configured (`wrangler.jsonc`, `.open-next` gitignored)
-- [ ] `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm test:generator`, `pnpm run build` pass
-- [ ] `pnpm run preview` succeeds and manual route checks pass (Section 8)
-- [ ] Cloudflare **branch** deployment build succeeds
-- [ ] Deployed preview: `/builder` loads
-- [ ] Deployed preview: streaming text chat works
-- [ ] Deployed preview: image prompt works
-- [ ] Deployed preview: `/preview` and `/generic-lab` work
-- [ ] No Cloudflare secrets exposed via `NEXT_PUBLIC_*` or client bundles
-- [ ] No unrelated generator/blueprint/product diffs in the migration PR
+- [x] Deprecated `@cloudflare/next-on-pages` is **not** used in Cloudflare build settings or repo scripts
+- [x] `@opennextjs/cloudflare` + `wrangler` are configured (`wrangler.jsonc`, `.open-next` gitignored)
+- [x] `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm test:generator`, `pnpm run build` pass
+- [x] Cloudflare Worker deployment succeeds
+- [x] Live URL: https://voxel-architect.wlc562.workers.dev/
+- [x] `/builder`, streaming chat, image prompts, `/preview`, `/generic-lab` verified on Worker deploy
+- [x] No Cloudflare secrets exposed via `NEXT_PUBLIC_*` or client bundles
+- [x] No unrelated generator/blueprint/product diffs in the migration PR
 
 ---
 
