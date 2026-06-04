@@ -55,7 +55,7 @@ Rules:
 1. Save as `{nn}-{subject}-{sha}.png` in this directory.
 2. Add a row to the inventory table above.
 3. Embed the image in [`../DEVELOPMENT_TIMELINE.md`](../DEVELOPMENT_TIMELINE.md) in chronological order.
-4. Note the capture in [`docs/development/CHANGE.md`](../../development/CHANGE.md) when relevant.
+4. Note the capture in root [`CHANGE.md`](../../CHANGE.md) when relevant.
 
 ---
 
