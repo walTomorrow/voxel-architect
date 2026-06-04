@@ -1938,7 +1938,7 @@ When adding a new feature:
 8. Check block count.
 9. Check no duplicate coordinates.
 10. Check no floating blocks.
-11. Update `docs/development/CHANGE.md`.
+11. Update CHANGE.md.
 12. Consider whether the feature belongs in the developer visualizer.
 
 Do not add a new feature only because it seems visually cool. Add it because it strengthens the architectural grammar.
