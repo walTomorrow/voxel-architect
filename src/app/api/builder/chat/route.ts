@@ -8,7 +8,7 @@ import {
 import type { BuilderChatErrorResponse, BuilderChatSuccessResponse } from "@/src/lib/builder/builderChatTypes";
 import { parseBuilderChatRequestBody } from "@/src/lib/builder/validateChatRequest";
 
-export const runtime = "nodejs";
+export const runtime = "edge";
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
