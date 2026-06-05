@@ -8,12 +8,13 @@ import { BuilderPreviewPanel } from "@/src/app/builder/components/BuilderPreview
 import { BuilderChatPanel } from "@/src/app/builder/components/BuilderChatPanel";
 import type { BuilderMessageView } from "@/src/app/builder/components/BuilderMessage";
 import type { PendingImageReference } from "@/src/app/builder/components/BuilderPromptInput";
+import type { BuilderValidationIssueView } from "@/src/lib/builder/builderToolTypes";
 
 type Props = {
   readonly chat: BuilderChat;
   readonly messages: readonly BuilderMessageView[];
   readonly isLoading: boolean;
-  readonly validationWarnings: readonly string[];
+  readonly validationWarnings: readonly BuilderValidationIssueView[];
   readonly previewGenerationNonce: number;
   readonly onSendMessage: (text: string, image: PendingImageReference | null) => void;
   readonly onResetChat: () => void;

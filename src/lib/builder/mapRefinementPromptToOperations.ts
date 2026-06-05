@@ -8,6 +8,8 @@ import {
   findPrimaryFrontWindowGroup,
   findRootRoom,
 } from "@/src/lib/builder/blueprintComponentIndex";
+import { parseFacadeWindowIntent } from "@/src/lib/builder/windows/parseFacadeWindowIntent";
+import { getWindowFacadeAffordances } from "@/src/lib/builder/windows/windowFacadeAffordances";
 
 export type MapRefinementResult =
   | { readonly ok: true; readonly operations: readonly ApplyableBlueprintOperationV2[]; readonly planLabel: string }
@@ -363,35 +365,42 @@ export function mapRefinementPromptToOperations(
     }
   }
 
-  const windows = findPrimaryFrontWindowGroup(blueprint);
-  if (windows) {
-    if (/\b(more windows|add windows|extra windows)\b/.test(text)) {
-      return {
-        ok: true,
-        operations: [
-          {
-            op: "updateComponent",
-            id: windows.id,
-            componentType: "window_group",
-            patch: { type: "window_group", count: windows.count + 1 },
-          },
-        ],
-        planLabel: "Add front window",
-      };
+  const windowIntent = parseFacadeWindowIntent(prompt, getWindowFacadeAffordances(blueprint));
+  if (!windowIntent) {
+    const windows = findPrimaryFrontWindowGroup(blueprint);
+    if (windows && /\b(more windows|add windows|extra windows)\b/.test(text)) {
+      if (/\b(left|right|back|rear|side|sides|not|except|but not)\b/.test(text)) {
+        // defer to window façade domain / LLM
+      } else {
+        return {
+          ok: true,
+          operations: [
+            {
+              op: "updateComponent",
+              id: windows.id,
+              componentType: "window_group",
+              patch: { type: "window_group", count: windows.count + 1 },
+            },
+          ],
+          planLabel: "Add front window",
+        };
+      }
     }
-    if (/\b(fewer windows|less windows|remove a window)\b/.test(text)) {
-      return {
-        ok: true,
-        operations: [
-          {
-            op: "updateComponent",
-            id: windows.id,
-            componentType: "window_group",
-            patch: { type: "window_group", count: windows.count - 1 },
-          },
-        ],
-        planLabel: "Remove front window",
-      };
+    if (windows && /\b(fewer windows|less windows|remove a window)\b/.test(text)) {
+      if (!/\b(left|right|back|side)\b/.test(text)) {
+        return {
+          ok: true,
+          operations: [
+            {
+              op: "updateComponent",
+              id: windows.id,
+              componentType: "window_group",
+              patch: { type: "window_group", count: windows.count - 1 },
+            },
+          ],
+          planLabel: "Remove front window",
+        };
+      }
     }
   }
 

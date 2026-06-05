@@ -1,4 +1,5 @@
 import type { EntranceSide } from "@/src/lib/blueprints/types";
+import type { WindowTreatmentV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
 import type { ResolvedGenericBuildingV2 } from "@/src/lib/blueprints/types/resolvedGenericBuildingV2";
 import { localApertureKey } from "@/src/lib/generation/components/geometry/localKeys";
 import type { DerivedOpeningsV2 } from "./types";
@@ -36,6 +37,8 @@ function addDoorMask(
 function addWindowCell(
   windowMask: Set<string>,
   shellSkip: Set<string>,
+  treatmentByKey: Map<string, WindowTreatmentV2>,
+  treatment: WindowTreatmentV2,
   side: EntranceSide,
   W: number,
   D: number,
@@ -48,11 +51,13 @@ function addWindowCell(
     const key = localApertureKey(v, wy, lz);
     windowMask.add(key);
     shellSkip.add(key);
+    treatmentByKey.set(key, treatment);
   } else {
     const lx = side === "left" ? 0 : W - 1;
     const key = localApertureKey(lx, wy, v);
     windowMask.add(key);
     shellSkip.add(key);
+    treatmentByKey.set(key, treatment);
   }
 }
 
@@ -65,10 +70,11 @@ export function deriveApertureMasksV2(
   const shellSkipMask = new Set<string>();
   const windowMask = new Set<string>();
   const doorMask = new Set<string>();
+  const windowTreatmentByCellKey = new Map<string, WindowTreatmentV2>();
 
   const room = resolved.components.find((c) => c.id === resolved.rootRoomId && c.type === "room");
   if (!room || room.type !== "room") {
-    return { shellSkipMask, windowMask, doorMask };
+    return { shellSkipMask, windowMask, doorMask, windowTreatmentByCellKey };
   }
 
   const W = room.width;
@@ -89,9 +95,20 @@ export function deriveApertureMasksV2(
     const surface = resolved.surfaces.get(comp.aperture.surfaceRef);
     const axis = surface?.axis ?? (side === "front" || side === "back" ? "x" : "z");
     for (const v of slots) {
-      addWindowCell(windowMask, shellSkipMask, side, W, D, axis, v, wy);
+      addWindowCell(
+        windowMask,
+        shellSkipMask,
+        windowTreatmentByCellKey,
+        comp.aperture.windowTreatment,
+        side,
+        W,
+        D,
+        axis,
+        v,
+        wy,
+      );
     }
   }
 
-  return { shellSkipMask, windowMask, doorMask };
+  return { shellSkipMask, windowMask, doorMask, windowTreatmentByCellKey };
 }

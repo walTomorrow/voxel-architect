@@ -20,7 +20,27 @@ export type BuilderValidationIssueView = {
   readonly severity: "error" | "warning" | "note";
   readonly message: string;
   readonly code?: string;
+  readonly path?: string;
+  readonly componentId?: string;
+  readonly surface?: string;
 };
+
+/** Stable React list key for validation issue rows (message alone is not unique). */
+export function validationIssueReactKey(
+  issue: BuilderValidationIssueView,
+  index: number,
+): string {
+  return [
+    issue.severity,
+    issue.code ?? "issue",
+    issue.path,
+    issue.componentId,
+    issue.surface,
+    index,
+  ]
+    .filter((part) => part !== undefined && part !== "")
+    .join("|");
+}
 
 export type GenerateBuildingPreviewRequest = {
   readonly prompt: string;
@@ -33,8 +53,9 @@ export type RefineBuildingPreviewRequest = {
 };
 
 import type { PlannerRejectionCode } from "@/src/lib/builder/plannerRejection";
+import type { OperationOutcomeSummary } from "@/src/lib/builder/semantic/operationResultSummary";
 
-export type BuilderPlannerPath = "deterministic" | "llm" | "none";
+export type BuilderPlannerPath = "deterministic" | "window_det" | "llm" | "none";
 
 export type BuilderToolResult = {
   readonly ok: boolean;
@@ -49,6 +70,7 @@ export type BuilderToolResult = {
   readonly validationIssues?: readonly BuilderValidationIssueView[];
   readonly activityEvents: readonly BuilderActivityEvent[];
   readonly appliedOperations?: readonly string[];
+  readonly operationOutcomes?: readonly OperationOutcomeSummary[];
   readonly plannerPath?: BuilderPlannerPath;
   readonly rationaleSummary?: string;
   readonly rejectionCode?: PlannerRejectionCode;

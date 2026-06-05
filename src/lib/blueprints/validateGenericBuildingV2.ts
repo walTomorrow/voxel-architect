@@ -10,6 +10,10 @@ import type {
   BlueprintMaterialPalette,
   ComponentMaterialOverride,
 } from "./types/materials";
+import {
+  isWindowTreatmentV2,
+  normalizeWindowTreatment,
+} from "@/src/lib/blueprints/windowTreatment";
 import type {
   ChimneyComponentV2,
   ComponentId,
@@ -515,7 +519,7 @@ export function validateGenericBuildingBlueprintV2(
             } else if (comp.count >= Math.max(1, maxSlots - 1) && maxSlots >= 3) {
               pushWarning({
                 code: "window_count_high",
-                message: `window_group count (${comp.count}) is near the façade capacity (${maxSlots}).`,
+                message: `window_group count (${comp.count}) is near the façade capacity (${maxSlots} on ${attach.targetSurface}).`,
                 path: `${basePath}/count`,
                 componentId: comp.id,
                 surface: attach.targetSurface,
@@ -817,6 +821,24 @@ function validateWindowGroupDraft(
       code: "invalid_window_layout",
       message: `window_group layout must be "symmetric" or "even".`,
       path: `${path}/layout`,
+      componentId: win.id,
+    });
+  }
+
+  if (win.windowTreatment !== undefined && !isWindowTreatmentV2(win.windowTreatment)) {
+    pushError({
+      code: "invalid_window_treatment",
+      message: 'window_group windowTreatment must be "glass_block", "glass_pane", or "open".',
+      path: `${path}/windowTreatment`,
+      componentId: win.id,
+    });
+  }
+  if (win.windowTreatment === undefined) {
+    win.windowTreatment = normalizeWindowTreatment(undefined);
+    pushNote({
+      code: "window_treatment_defaulted",
+      message: 'window_group windowTreatment defaulted to "glass_block".',
+      path: `${path}/windowTreatment`,
       componentId: win.id,
     });
   }

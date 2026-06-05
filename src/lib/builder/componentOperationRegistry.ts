@@ -242,6 +242,10 @@ function materializeChimney(
 }
 
 import {
+  DEFAULT_WINDOW_TREATMENT,
+  parseWindowTreatmentFromPrompt,
+} from "@/src/lib/blueprints/windowTreatment";
+import {
   inferWindowCountFromPrompt,
   sanitizeWindowGroupComponent,
   sanitizeWindowLayout,
@@ -277,6 +281,10 @@ function materializeWindowGroup(
 
   const count = inferWindowCountFromPrompt(userPrompt, opts?.count, targetSurface, blueprint);
   const layout = sanitizeWindowLayout(opts?.layout, targetSurface);
+  const windowTreatment =
+    opts?.windowTreatment ??
+    (userPrompt ? parseWindowTreatmentFromPrompt(userPrompt) : undefined) ??
+    DEFAULT_WINDOW_TREATMENT;
 
   const component = sanitizeWindowGroupComponent(
     {
@@ -290,6 +298,7 @@ function materializeWindowGroup(
       count,
       layout,
       heightBand: "mid",
+      windowTreatment,
     },
     blueprint,
   );

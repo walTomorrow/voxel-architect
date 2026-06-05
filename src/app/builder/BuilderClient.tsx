@@ -16,6 +16,7 @@ import type {
   BuilderChatWithToolSuccessResponse,
 } from "@/src/lib/builder/builderChatTypes";
 import { buildActivityEventsFromToolResult } from "@/src/lib/builder/builderActivityFromTool";
+import type { BuilderValidationIssueView } from "@/src/lib/builder/builderToolTypes";
 import { buildMockActivitySteps } from "@/src/lib/builder/mockBuilderActivity";
 import { shouldRunGenerationTool } from "@/src/lib/builder/shouldRunGenerationTool";
 import {
@@ -74,7 +75,9 @@ export function BuilderClient() {
   const [activeChatId, setActiveChatId] = useState(DEFAULT_BUILDER_CHAT_ID);
   const [isLoading, setIsLoading] = useState(false);
   const [messageViews, setMessageViews] = useState<Record<string, BuilderMessageView[]>>({});
-  const [validationWarnings, setValidationWarnings] = useState<readonly string[]>([]);
+  const [validationWarnings, setValidationWarnings] = useState<
+    readonly BuilderValidationIssueView[]
+  >([]);
   const [previewGenerationNonce, setPreviewGenerationNonce] = useState(0);
   const resetSnapshots = useRef(
     new Map(INITIAL_BUILDER_CHATS.map((c) => [c.id, cloneChatMessages(c)])),
@@ -349,9 +352,7 @@ export function BuilderClient() {
             lastRejectionDetail: undefined,
           }));
           setValidationWarnings(
-            (toolResult.validationIssues ?? [])
-              .filter((i) => i.severity === "warning")
-              .map((i) => i.message),
+            (toolResult.validationIssues ?? []).filter((i) => i.severity === "warning"),
           );
           setPreviewGenerationNonce((n) => n + 1);
         } else if (toolResult && !toolResult.ok) {

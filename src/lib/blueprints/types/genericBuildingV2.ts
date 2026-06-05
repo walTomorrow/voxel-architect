@@ -80,12 +80,17 @@ export type WindowLayoutV2 = "symmetric" | "even";
 
 export type WindowHeightBandV2 = "auto" | "mid" | "upper";
 
+/** How window aperture cells are filled at generation time. */
+export type WindowTreatmentV2 = "glass_block" | "glass_pane" | "open";
+
 export interface WindowGroupComponentV2 extends ComponentBaseV2 {
   readonly type: "window_group";
   readonly attach: SurfaceAttachment;
   readonly count: number;
   readonly layout: WindowLayoutV2;
   readonly heightBand?: WindowHeightBandV2;
+  /** Defaults to glass_block when omitted (normalized on validate). */
+  readonly windowTreatment?: WindowTreatmentV2;
 }
 
 export type PorchWidthModeV2 = "door_only" | "full_facade";

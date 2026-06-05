@@ -8,6 +8,7 @@ import type {
   RoomSurfaceRef,
   ShedOrientationV2,
   WindowLayoutV2,
+  WindowTreatmentV2,
 } from "@/src/lib/blueprints/types/genericBuildingV2";
 import type {
   BlueprintMaterialPalette,
@@ -30,6 +31,7 @@ export type AddComponentOptions =
       readonly kind: "window_group";
       readonly count?: number;
       readonly layout?: WindowLayoutV2;
+      readonly windowTreatment?: WindowTreatmentV2;
     };
 
 /** Planner-facing add intent (Option B). Server materializes to full component. */
@@ -66,6 +68,7 @@ export type ComponentPatchV2 =
       readonly type: "window_group";
       readonly count?: number;
       readonly layout?: WindowLayoutV2;
+      readonly windowTreatment?: WindowTreatmentV2;
     }
   | {
       readonly type: "porch";

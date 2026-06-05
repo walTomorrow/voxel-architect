@@ -16,11 +16,18 @@ export function emitWindowsFromMaskV2(
   let i = startIndex;
 
   for (const key of ctx.plan.openings.windowMask) {
+    const treatment = ctx.plan.openings.windowTreatmentByCellKey.get(key) ?? "glass_block";
+    if (treatment === "open") {
+      continue;
+    }
+
     const { lx, y, lz } = parseLocalApertureKey(key);
     const axis = paneAxisForWindowCell(lx, lz, W, D);
     const usePane =
+      treatment === "glass_pane" &&
       axis !== undefined &&
       isShapeAllowedForBlockType(ctx.plan.materials.window, "pane");
+
     out.push({
       x: worldX(ctx, lx),
       y,

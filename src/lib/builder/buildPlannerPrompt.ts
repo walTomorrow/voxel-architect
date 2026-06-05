@@ -1,14 +1,9 @@
 import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
-import {
-  buildAllowedOperationsSchema,
-  renderAllowedOperationsSchemaText,
-  renderPlannerContextBlocks,
-} from "@/src/lib/builder/buildAllowedOperationsSchema";
-import {
-  renderBlueprintSummaryText,
-  summarizeBlueprintForPlanner,
-} from "@/src/lib/builder/summarizeBlueprintForPlanner";
 import { MAX_PLANNER_OPERATIONS } from "@/src/lib/builder/plannerTypes";
+import {
+  buildPlannerContextForLlm,
+  renderPlannerContextText,
+} from "@/src/lib/builder/semantic/buildPlannerContextForLlm";
 
 export const PLANNER_EXAMPLES_BLOCK = `Canonical examples (follow these shapes exactly):
 
@@ -27,8 +22,8 @@ Add windows on left:
 Wider porch:
 {"status":"ok","operations":[{"op":"updateComponent","id":"front-porch","componentType":"porch","patch":{"type":"porch","widthMode":"full_facade","aroundDoor":null}}],"rationaleSummary":"Expanded the porch to full facade width."}
 
-More welcoming (multi-op allowed):
-{"status":"ok","operations":[{"op":"addComponent","componentType":"porch","targetSurface":"main-room.front","placement":"center","options":{"kind":"porch","depth":2,"widthMode":"door_only"}},{"op":"updateComponent","id":"front-windows","componentType":"window_group","patch":{"type":"window_group","count":3}}],"rationaleSummary":"Added a porch and increased front windows."}
+More welcoming (multi-op allowed; prefer porch + side windows when front at capacity):
+{"status":"ok","operations":[{"op":"addComponent","componentType":"porch","targetSurface":"main-room.front","placement":"center","options":{"kind":"porch","depth":2,"widthMode":"door_only"}},{"op":"addComponent","componentType":"window_group","targetSurface":"main-room.right","options":{"kind":"window_group","count":1}}],"rationaleSummary":"Added a porch and a right-side window for a welcoming entrance."}
 
 Unsupported second floor:
 {"status":"unsupported","unsupportedReason":"Adding a second floor is not supported by the current component operation system."}`;
@@ -75,18 +70,16 @@ export function buildPlannerUserPrompt(
   userRequest: string,
   options?: { presetId?: string },
 ): string {
-  const summary = summarizeBlueprintForPlanner(blueprint, options);
-  const schema = buildAllowedOperationsSchema(blueprint);
-  const affordances = renderPlannerContextBlocks(blueprint);
+  const context = buildPlannerContextForLlm(blueprint, {
+    presetId: options?.presetId,
+    userRequest,
+  });
   return [
-    renderBlueprintSummaryText(summary),
-    "",
-    affordances,
-    "",
-    renderAllowedOperationsSchemaText(schema),
+    renderPlannerContextText(context),
     "",
     `User edit request: ${userRequest.trim()}`,
     "",
     "Return JSON only. Use minimum operations for direct component requests.",
+    "Window counts in updates are totals on that surface, not deltas.",
   ].join("\n");
 }

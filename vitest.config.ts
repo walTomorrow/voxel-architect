@@ -7,6 +7,8 @@ export default defineConfig({
     include: [
       "src/lib/blueprints/__tests__/**/*.test.ts",
       "src/lib/builder/__tests__/**/*.test.ts",
+      "src/lib/builder/semantic/__tests__/**/*.test.ts",
+      "src/lib/builder/windows/__tests__/**/*.test.ts",
       "src/lib/generation/__tests__/**/*.test.ts",
       "src/lib/generation/components/__tests__/**/*.test.ts",
       "src/lib/voxel/__tests__/**/*.test.ts",

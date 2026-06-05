@@ -26,6 +26,9 @@ import { materializePlannerOperations } from "@/src/lib/builder/materializePlann
 import type { ApplyableBlueprintOperationV2 } from "@/src/lib/builder/blueprintOperationsV2";
 import type { PlannerRejection, PlannerRejectionCode } from "@/src/lib/builder/plannerRejection";
 import { validateOverbroadPlannerPlan } from "@/src/lib/builder/validateOverbroadPlannerPlan";
+import { parseFacadeWindowIntent } from "@/src/lib/builder/windows/parseFacadeWindowIntent";
+import { getWindowFacadeAffordances } from "@/src/lib/builder/windows/windowFacadeAffordances";
+import { validatePlanAgainstIntentScope } from "@/src/lib/builder/windows/validatePlanAgainstIntentScope";
 
 const PALETTE_KEYS = new Set(["wall", "floor", "roof", "window", "door", "accent"]);
 
@@ -132,7 +135,7 @@ function validateRoofPatch(
 }
 
 function validateWindowPatch(patch: Record<string, unknown>): ValidationFail | null {
-  const allowed = ["type", "count", "layout"] as const;
+  const allowed = ["type", "count", "layout", "windowTreatment"] as const;
   const unk = rejectUnknownFields("UNSUPPORTED_PATCH_FIELD", "window_group patch", patch, allowed);
   if (unk) return unk;
   if (patch.type !== "window_group") {
@@ -145,6 +148,12 @@ function validateWindowPatch(patch: Record<string, unknown>): ValidationFail | n
   }
   if (patch.layout !== undefined && !["symmetric", "even"].includes(String(patch.layout))) {
     return reject("UNSUPPORTED_PATCH_FIELD", "invalid window layout");
+  }
+  if (
+    patch.windowTreatment !== undefined &&
+    !["glass_block", "glass_pane", "open"].includes(String(patch.windowTreatment))
+  ) {
+    return reject("UNSUPPORTED_PATCH_FIELD", "invalid windowTreatment");
   }
   return null;
 }
@@ -427,16 +436,22 @@ export function parsePlannerJsonResponse(
   };
 }
 
+export type ValidatePlannerOperationsOptions = {
+  readonly userPrompt?: string;
+  /** Server-authored window_det plans may exceed the LLM operation cap. */
+  readonly skipOperationCountCap?: boolean;
+};
+
 export function validatePlannerOperations(
   blueprint: GenericBuildingBlueprintV2,
   operations: readonly unknown[],
-  options?: { userPrompt?: string },
+  options?: ValidatePlannerOperationsOptions,
 ): { ok: true; operations: readonly ApplyableBlueprintOperationV2[] } | ValidationFail {
   const schema = buildAllowedOperationsSchema(blueprint);
   if (operations.length === 0) {
     return reject("EMPTY_OPERATIONS", "operations must not be empty.");
   }
-  if (operations.length > MAX_PLANNER_OPERATIONS) {
+  if (!options?.skipOperationCountCap && operations.length > MAX_PLANNER_OPERATIONS) {
     return reject("TOO_MANY_OPERATIONS", `At most ${MAX_PLANNER_OPERATIONS} operations allowed.`);
   }
 
@@ -519,6 +534,19 @@ export function validatePlannerJsonAndOperations(
         unsupportedReason: overbroad.rejection.detail,
         rejectionCode: overbroad.rejection.code,
         rejectionDetail: overbroad.rejection.detail,
+      };
+    }
+    const windowIntent = parseFacadeWindowIntent(
+      options.userPrompt,
+      getWindowFacadeAffordances(blueprint),
+    );
+    const scope = validatePlanAgainstIntentScope(json.operations, windowIntent, blueprint);
+    if (!scope.ok) {
+      return {
+        ok: false,
+        unsupportedReason: scope.rejection.detail,
+        rejectionCode: scope.rejection.code,
+        rejectionDetail: scope.rejection.detail,
       };
     }
   }

@@ -1,15 +1,10 @@
 import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
-import {
-  buildAllowedOperationsSchema,
-  renderAllowedOperationsSchemaText,
-  renderPlannerContextBlocks,
-} from "@/src/lib/builder/buildAllowedOperationsSchema";
-import {
-  renderBlueprintSummaryText,
-  summarizeBlueprintForPlanner,
-} from "@/src/lib/builder/summarizeBlueprintForPlanner";
 import type { PlannerRejectionCode } from "@/src/lib/builder/plannerRejection";
 import { PLANNER_EXAMPLES_BLOCK } from "@/src/lib/builder/buildPlannerPrompt";
+import {
+  buildPlannerContextForLlm,
+  renderPlannerContextText,
+} from "@/src/lib/builder/semantic/buildPlannerContextForLlm";
 
 const REPAIRABLE_CODES: ReadonlySet<PlannerRejectionCode> = new Set([
   "JSON_PARSE_FAILED",
@@ -49,16 +44,13 @@ export function buildPlannerRepairUserPrompt(input: {
   readonly badResponseSnippet?: string;
   readonly presetId?: string;
 }): string {
-  const summary = summarizeBlueprintForPlanner(input.blueprint, { presetId: input.presetId });
-  const schema = buildAllowedOperationsSchema(input.blueprint);
-  const affordances = renderPlannerContextBlocks(input.blueprint);
+  const context = buildPlannerContextForLlm(input.blueprint, {
+    presetId: input.presetId,
+    userRequest: input.userRequest,
+  });
 
   const lines = [
-    renderBlueprintSummaryText(summary),
-    "",
-    affordances,
-    "",
-    renderAllowedOperationsSchemaText(schema),
+    renderPlannerContextText(context),
     "",
     `Original user edit request: ${input.userRequest.trim()}`,
     "",
