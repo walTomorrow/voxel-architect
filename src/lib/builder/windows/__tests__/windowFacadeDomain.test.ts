@@ -152,6 +152,16 @@ describe("parseFacadeWindowIntent", () => {
     expect(i?.requestedCount).toBe(2);
   });
 
+  it("parses remove all and then add one to left and right side", () => {
+    const i = intentFor(
+      "remove all windows and then add one to the left and right side of the building",
+    );
+    expect(i?.removeAllWindows).toBe(true);
+    expect(i?.addOrUpdateFaces).toEqual(expect.arrayContaining(["left", "right"]));
+    expect(i?.perFaceRequestedCounts?.left).toBe(1);
+    expect(i?.perFaceRequestedCounts?.right).toBe(1);
+  });
+
   it("parses no front windows but one on each side", () => {
     const i = intentFor("make there be no front windows, but add one window on each side");
     expect(i?.removeFaces).toContain("front");
@@ -268,6 +278,29 @@ describe("buildWindowOperationsFromIntent", () => {
     if (!result.ok) return;
     expect(result.operations[0]).toMatchObject({ op: "removeComponent", id: "front-windows" });
     expect(result.operations.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("remove all and then add one to left and right side", () => {
+    const bp = workshopWithAllFaceWindows();
+    const result = builtOps(
+      "remove all windows and then add one to the left and right side of the building",
+      bp,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.operations.filter((op) => op.op === "removeComponent").length).toBe(4);
+    const touchesLeft = result.operations.some(
+      (op) =>
+        (isAddComponentIntent(op) && op.targetSurface === "main-room.left") ||
+        (op.op === "updateComponent" && op.id === "left-windows"),
+    );
+    const touchesRight = result.operations.some(
+      (op) =>
+        (isAddComponentIntent(op) && op.targetSurface === "main-room.right") ||
+        (op.op === "updateComponent" && op.id === "right-windows"),
+    );
+    expect(touchesLeft).toBe(true);
+    expect(touchesRight).toBe(true);
   });
 
   it("remove all and add two to back", () => {

@@ -57,6 +57,15 @@ describe("getRichBlueprintAffordancesForPlanner", () => {
     expect(text).not.toContain("Legacy affordance");
   });
 
+  it("renders palette roof and room hints", () => {
+    const rich = getRichBlueprintAffordancesForPlanner(clonePresetBlueprintV2("stone_workshop_v2"));
+    const text = renderRichAffordancesText(rich);
+    expect(text).toContain("palette:");
+    expect(text).toContain("roof:");
+    expect(text).toContain("room:");
+    expect(text).toMatch(/pure style/i);
+  });
+
   it("workshop with chimney shows removable id", () => {
     let bp = clonePresetBlueprintV2("stone_workshop_v2");
     const mat = materializeAddComponent(bp, { op: "addComponent", componentType: "chimney" });

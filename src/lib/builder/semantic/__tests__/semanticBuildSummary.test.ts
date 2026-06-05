@@ -51,6 +51,12 @@ describe("getSemanticBuildSummaryForPlanner — stone_workshop_v2", () => {
     expect(summary.suggestedNextMoves.some((m) => m.includes("right"))).toBe(true);
   });
 
+  it("includes window crowding summary", () => {
+    expect(summary.windowCrowdingSummary).toMatch(/faces have window groups/);
+    const text = renderSemanticBuildSummaryText(summary);
+    expect(text).toContain("window crowding:");
+  });
+
   it("renders readable text block", () => {
     const text = renderSemanticBuildSummaryText(summary);
     expect(text).toContain("Semantic build summary:");
@@ -74,6 +80,13 @@ describe("getSemanticBuildSummaryForPlanner — porch_house_v2", () => {
 
   it("does not suggest widen porch when already full_facade", () => {
     expect(summary.suggestedNextMoves.some((m) => m.includes("widen porch"))).toBe(false);
+  });
+
+  it("notes already-present style cues", () => {
+    expect(summary.alreadyPresentStyleCues.some((c) => c.includes("porch"))).toBe(true);
+    expect(summary.alreadyPresentStyleCues.some((c) => c.includes("roof"))).toBe(true);
+    const text = renderSemanticBuildSummaryText(summary);
+    expect(text).toContain("already present:");
   });
 
   it("renders porch and front windows", () => {

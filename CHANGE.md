@@ -1,5 +1,30 @@
 # Change report — Builder semantic affordances
 
+## Semantic affordance finish — Option 3 (2026-06-03)
+
+**Branch:** `feature/builder-semantic-affordances`
+
+- **Structured conditional style guidance:** `styleIntentGuidance.ts` — per-line `omitWhen` filters (affordance-aware), `filterStyleGuidanceForPlanner()`, minimal `buildStyleGapHints()` (max 2 lines), `renderAestheticRestraintForStylePrompt()`; `bright` skips window-treatment-only phrasing.
+- **Planner context:** `buildPlannerContextForLlm.ts` — restraint block + filtered style guidance wired into `buildPlannerUserPrompt` and `plannerRepair`; context order: summary → affordances → allowed ops → restraint → style.
+- **Summary polish:** `getSemanticBuildSummaryForPlanner.ts` — `alreadyPresentStyleCues`, `windowCrowdingSummary` in rendered summary text.
+- **Affordance polish:** `richAffordances.ts` — brief palette/roof/room hints (room changes discouraged for pure style).
+- **Planner example fix:** `buildPlannerPrompt.ts` — welcoming example uses porch + side window instead of front window bump.
+- **Window parser fix:** `parseFacadeWindowIntent.ts` — `and then add` mixed clause; `one to the left and right side` face/count parsing.
+- **Tests:** expanded `styleIntentGuidance`, `semanticBuildSummary`, `richAffordances`, `windowFacadeDomain`; new `plannerContext.test.ts`.
+- **Deferred:** Stage 5 style validation (`validateStylePlannerPlan`) — prompt/context restraint preferred.
+
+### Validation
+
+```bash
+pnpm exec tsc --noEmit
+pnpm test:generator
+pnpm run build
+```
+
+See `docs/plans/SEMANTIC_AFFORDANCE_FINISH_PLAN.md`.
+
+---
+
 ## Window façade follow-up — mixed ops & operation cap (2026-06-04)
 
 **Branch:** `feature/builder-semantic-affordances`

@@ -13,12 +13,14 @@ import {
 } from "@/src/lib/builder/semantic/richAffordances";
 import {
   detectStyleIntents,
+  renderAestheticRestraintForStylePrompt,
   renderStyleIntentGuidanceForPlanner,
 } from "@/src/lib/builder/semantic/styleIntentGuidance";
 
 export type PlannerContextBlocks = {
   readonly semanticSummary: string;
   readonly affordances: string;
+  readonly aestheticRestraint: string;
   readonly styleGuidance: string;
   readonly allowedOperations: string;
 };
@@ -36,16 +38,22 @@ export function buildPlannerContextForLlm(
   const styleIntents =
     options?.userRequest != null ? detectStyleIntents(options.userRequest) : [];
 
+  const filterCtx = { summary: semantic, rich };
+
   return {
     semanticSummary: renderSemanticBuildSummaryText(semantic),
     affordances: renderRichAffordancesText(rich),
-    styleGuidance: renderStyleIntentGuidanceForPlanner(styleIntents),
+    aestheticRestraint: renderAestheticRestraintForStylePrompt(styleIntents),
+    styleGuidance: renderStyleIntentGuidanceForPlanner(styleIntents, filterCtx),
     allowedOperations: renderAllowedOperationsSchemaText(schema),
   };
 }
 
 export function renderPlannerContextText(blocks: PlannerContextBlocks): string {
   const parts = [blocks.semanticSummary, blocks.affordances, blocks.allowedOperations];
+  if (blocks.aestheticRestraint.length > 0) {
+    parts.push(blocks.aestheticRestraint);
+  }
   if (blocks.styleGuidance.length > 0) {
     parts.push(blocks.styleGuidance);
   }

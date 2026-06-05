@@ -20,6 +20,9 @@ import {
 
 const ALL_FACES: readonly RoomFace[] = ["front", "back", "left", "right"];
 
+/** Matches mixed remove-then-add clauses, including "and then add". */
+const MIXED_ADD_CLAUSE = /\b(?:but|and)(?:\s+then)?\s+(?:add|put|place)\b/;
+
 
 
 function hasWindowIntentSignals(text: string): boolean {
@@ -100,10 +103,11 @@ function facesFromSegment(text: string, options?: { sidesAsLeftRight?: boolean }
 
   }
 
-  if (/\b(left and right|right and left|both (?:the )?(?:left and right|sides))\b/.test(text)) {
-
+  if (
+    /\b(left and right|right and left|both (?:the )?(?:left and right|sides))\b/.test(text) ||
+    /\b(?:left\s+and\s+right|right\s+and\s+left)(?:\s+side)?\b/.test(text)
+  ) {
     faces.push("left", "right");
-
   }
 
   if (/\bfront\b/.test(text)) faces.push("front");
@@ -168,7 +172,7 @@ function parseRemoveFaces(text: string): RoomFace[] {
 
 
 
-  const removeSegments = text.split(/\band\s+(?:add|put|place)\b/);
+  const removeSegments = text.split(MIXED_ADD_CLAUSE);
 
   const removeText = removeSegments[0] ?? text;
 
@@ -307,7 +311,7 @@ function parseAddOrUpdateFaces(text: string): RoomFace[] {
   const faces: RoomFace[] = [];
 
   const hasMixedAdd =
-    /\b(?:but|and)\s+(?:add|put|place)\b/.test(text) ||
+    MIXED_ADD_CLAUSE.test(text) ||
     /\b(add|put|place|more)\s+(?:\w+\s+){0,6}windows?\b/.test(text);
 
   if (/\b(remove|delete|take off|get rid of)\b/.test(text) && !hasMixedAdd) {
@@ -316,7 +320,7 @@ function parseAddOrUpdateFaces(text: string): RoomFace[] {
 
   }
 
-  const addSegments = text.split(/\b(?:but|and)\s+(?:add|put|place)\b/);
+  const addSegments = text.split(MIXED_ADD_CLAUSE);
 
   const addText = addSegments.length > 1 ? addSegments[addSegments.length - 1]! : text;
 
@@ -327,15 +331,17 @@ function parseAddOrUpdateFaces(text: string): RoomFace[] {
 
 
   for (const seg of segments) {
-
-    if (!/\b(add|put|place|more|windows?)\b/.test(seg)) continue;
-
-    for (const face of facesFromSegment(seg, { sidesAsLeftRight: /\bside/.test(seg) })) {
-
-      faces.push(face);
-
+    const isPostMixedClause = addSegments.length > 1 && seg === addText;
+    if (
+      !isPostMixedClause &&
+      !/\b(add|put|place|more|windows?)\b/.test(seg)
+    ) {
+      continue;
     }
 
+    for (const face of facesFromSegment(seg, { sidesAsLeftRight: /\bside/.test(seg) })) {
+      faces.push(face);
+    }
   }
 
 
@@ -372,7 +378,13 @@ function parseCountMode(text: string): {
 
 
 
-  if (/\bone\s+window\s+on\s+each\s+side\b/.test(text) || /\bone\s+on\s+each\s+side\b/.test(text)) {
+  if (
+    /\bone\s+(?:window\s+)?(?:to\s+)?(?:the\s+)?(?:left\s+and\s+right|right\s+and\s+left)\s+side/.test(
+      text,
+    ) ||
+    /\bone\s+window\s+on\s+each\s+side\b/.test(text) ||
+    /\bone\s+on\s+each\s+side\b/.test(text)
+  ) {
 
     perFaceRequestedCounts.left = 1;
 

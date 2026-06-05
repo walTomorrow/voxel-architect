@@ -33,6 +33,8 @@ export type SemanticBuildSummaryForPlanner = {
   readonly styleDescriptors: readonly string[];
   readonly roofSummary: string;
   readonly featureSummary: readonly string[];
+  readonly alreadyPresentStyleCues: readonly string[];
+  readonly windowCrowdingSummary: string;
   readonly windowsBySurface: readonly WindowSurfaceSummary[];
   readonly missingFeatures: readonly string[];
   readonly constraints: readonly string[];
@@ -177,6 +179,27 @@ function buildSuggestedNextMoves(
   return moves.slice(0, 8);
 }
 
+function buildAlreadyPresentStyleCues(blueprint: GenericBuildingBlueprintV2): string[] {
+  const cues: string[] = [];
+  const porch = findPorch(blueprint);
+  if (porch) cues.push(`porch (${porch.widthMode})`);
+  if (findChimney(blueprint)) cues.push("chimney");
+  const roof = findMainRoof(blueprint);
+  if (roof) cues.push(`${roof.kind} roof`);
+  return cues;
+}
+
+function buildWindowCrowdingSummary(windows: readonly WindowSurfaceSummary[]): string {
+  const withGroups = windows.filter((w) => w.groupId != null);
+  const atCapacity = windows.filter((w) => w.atCapacity && w.groupId != null);
+  const total = windows.filter((w) => w.maxSlots > 0).length;
+  if (withGroups.length === 0) return "no window groups yet";
+  const front = windows.find((w) => w.face === "front");
+  const frontNote =
+    front?.atCapacity ? "; front at capacity" : front?.groupId ? `; front ${front.count}/${front.maxSlots}` : "";
+  return `${withGroups.length}/${total} faces have window groups${atCapacity.length > 0 ? `; ${atCapacity.length} at capacity` : ""}${frontNote}`;
+}
+
 function buildRoofSummary(blueprint: GenericBuildingBlueprintV2): string {
   const roof = findMainRoof(blueprint);
   if (!roof) return "no roof component";
@@ -212,6 +235,8 @@ export function getSemanticBuildSummaryForPlanner(
     styleDescriptors,
     roofSummary: buildRoofSummary(blueprint),
     featureSummary: buildFeatureSummary(blueprint),
+    alreadyPresentStyleCues: buildAlreadyPresentStyleCues(blueprint),
+    windowCrowdingSummary: buildWindowCrowdingSummary(windowsBySurface),
     windowsBySurface,
     missingFeatures,
     constraints: [
@@ -238,6 +263,10 @@ export function renderSemanticBuildSummaryText(
   }
   lines.push(`- roof: ${summary.roofSummary}`);
   lines.push(`- features: ${summary.featureSummary.join("; ")}`);
+  if (summary.alreadyPresentStyleCues.length > 0) {
+    lines.push(`- already present: ${summary.alreadyPresentStyleCues.join(", ")}`);
+  }
+  lines.push(`- window crowding: ${summary.windowCrowdingSummary}`);
 
   for (const w of summary.windowsBySurface) {
     const state = w.groupId

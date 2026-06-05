@@ -224,6 +224,16 @@ export function renderRichAffordancesText(
     lines.push(`- removable porch id: ${rich.removableIds.porch}`);
   }
 
+  lines.push(
+    "- palette: setMaterialPalette can adjust wall/floor/roof/window/door/accent (prefer palette before duplicate components).",
+  );
+  lines.push(
+    "- roof: updateComponent on main-roof can change layers/kind when allowed by schema.",
+  );
+  lines.push(
+    "- room: updateComponent on main-room can change width/depth/wallHeight — avoid for pure style unless user asked for size/proportions.",
+  );
+
   return lines.join("\n");
 }
 
