@@ -1,632 +1,558 @@
-# Plan — Deterministic builder tool expansion (semantic component operations)
+# PLAN: Builder Semantic Affordances
 
-**Branch:** `feature/builder-tool-expansion`  
-**Status:** Implemented — see `CHANGE.md` and tests under `src/lib/builder/__tests__/componentOperations.test.ts`.  
-**Prerequisite:** `feature/builder-agent-tools` merged to `main` (Workers AI chat, hybrid refinement planner, anti-hallucination guards).
+**Branch:** `feature/builder-semantic-affordances`  
+**Status:** Planning only — do not implement from this document until reviewed.  
+**Prerequisite:** `feature/builder-tool-expansion` merged (component operations, planner JSON Mode, stabilization). See [`CHANGE.md`](CHANGE.md) for what shipped.
 
-**Related docs:** [`docs/plans/GENERIC_BUILDING_V2.md`](docs/plans/GENERIC_BUILDING_V2.md), [`docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md`](docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md), [`docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md`](docs/blueprints/BLUEPRINT_FEATURE_CATALOG.md)
+**Related docs:** [`docs/plans/GENERIC_BUILDING_V2.md`](docs/plans/GENERIC_BUILDING_V2.md), [`docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md`](docs/generation/ARCHITECTURAL_COMPONENT_GRAMMAR.md), [`docs/plans/BUILDER_PLANNER_ROUTING_FIX.md`](docs/plans/BUILDER_PLANNER_ROUTING_FIX.md)
 
 ---
 
-## 1. Summary
+## 1. Current implementation summary
 
-This branch expands **deterministic builder tool capability** by introducing a **general semantic component operation framework** for `GenericBuildingBlueprintV2` — not a pile of one-off tools (`addPorchTool`, `addChimneyTool`, etc.).
-
-| What this branch is | What this branch is not |
-|---------------------|-------------------------|
-| New **`addComponent` / `removeComponent`** operation types with a **registry + defaults** | Primarily an LLM routing or chat UX branch |
-| Extending **`updateComponent`** where needed (e.g. porch `widthMode`) | New preset families, rooms, second floors, interiors |
-| Giving the **existing LLM planner** more **legal, validated actions** | Letting the model edit voxels, `ComponentPlan`, or full blueprints |
-
-**Product pipeline (unchanged boundary):**
+### End-to-end pipeline
 
 ```text
-User intent
-  → LLM proposes constrained semantic operations (JSON)
-  → server normalizes + validates operations
+User message (+ optional image, currentBlueprint)
+  → routing (generation | refinement tool | chat-only SSE/JSON)
+  → refinement: plan operations (deterministic | LLM)
+  → normalizePlannerOperations → validatePlannerOperations → materializePlannerOperations
   → applyBlueprintOperationsV2
   → validateBlueprint (v2)
-  → generateStructure (deterministic compiler)
-  → preview updates only on success
-  → assistant explains; server/toolResult + status banner are authoritative
+  → generateStructure → resolve → compileGenericBuildingV2Plan → emitFromComponentPlanV2
+  → preview updates only when toolResult.ok
+  → assistant turn via Workers AI + formatToolResultForModel (anti-hallucination rules)
 ```
 
-Initial allowlist: **`porch`**, **`chimney`**, **`window_group`**. The framework should make adding **`sign`**, **`awning`**, **`balcony`**, etc. a registry entry later — not a new tool path.
+The LLM never edits `ComponentPlanV2`, voxel coordinates, or full `GenericBuildingBlueprintV2` JSON. It only proposes constrained operations; the server owns materialization and validation.
 
----
+### Builder chat entry
 
-## 2. Current implementation audit
+| Layer | File / function | Role |
+|--------|-----------------|------|
+| HTTP | `src/app/api/builder/chat/route.ts` | Parses body via `parseBuilderChatRequestBody`; branches on `shouldUseRefinementJsonTurn` / `shouldUseGenerationJsonTurn` / stream |
+| Refine JSON | `runBuilderRefinementChatTurn` in `src/lib/builder/runBuilderChatTurn.ts` | Calls `planAndRefineBuildingPreview`, then `formatToolResultForModel` + `callWorkersAiChat` |
+| Generate JSON | `runBuilderGenerationChatTurn` | `generateBuildingPreview` (preset clone) |
+| Chat-only | `streamWorkersAiChat` / `callWorkersAiChat` + `applyChatOnlyResponseSafety` | No tool; `guardNoToolChangeClaims` strips false “I updated…” claims |
+| Standalone refine API | `src/app/api/builder/refine/route.ts` | Same `planAndRefineBuildingPreview` with explicit `plannerMode` |
 
-### 2.1 `BlueprintOperationV2` today
+### Generation vs refinement vs chat-only routing
 
-**File:** `src/lib/builder/blueprintOperationsV2.ts`
+| Gate | File | Behavior |
+|------|------|----------|
+| Generation | `shouldRunGenerationTool.ts`, `shouldStrongCreatePrompt` in `shouldRunRefinementTool.ts` | Strong create (“make me a workshop”) with blueprint present → generate, not refine |
+| Refinement | `shouldRunRefinementTool.ts`, `looksLikeComponentEditRequest.ts` | Active blueprint + edit signals → refine JSON turn |
+| Design feedback | `looksLikeDesignFeedback` | “What do you think?” → chat with `[Current build context]` via `augmentChatWithBuildContext.ts` |
+| Chat stream | `shouldStreamBuilderChat` in `callWorkersAiChat.ts` | Image-only or non-tool paths |
 
-| Operation | Status | Notes |
-|-----------|--------|-------|
-| `updateComponent` | Implemented | Patches scoped by `ComponentPatchV2` |
-| `setMaterialPalette` | Implemented | Partial palette keys |
-| `setMaterialOverride` | Typed only | **Rejected** in `validatePlannerOperations` (`INVALID_OP_TYPE`) |
-| `addComponent` | **Missing** | — |
-| `removeComponent` | **Missing** | — |
+Refinement planning is centralized in `planAndRefineBuildingPreview.ts` → `resolveRefinementPlan`.
 
-**`ComponentPatchV2` supported fields:**
+### Planner mode routing (`auto` | `deterministic` | `llm`)
 
-| Component | Patch fields | Applied in `applyBlueprintOperationsV2` |
-|-----------|--------------|----------------------------------------|
-| `room` | `width`, `depth`, `wallHeight` | Yes (clamped) |
-| `roof` | `kind`, `layers`, `overhang`, `orientation` | Yes |
-| `window_group` | `count`, `layout` | Yes |
-| `porch` | `depth` only | Yes — **`widthMode` / `aroundDoor` not patchable** |
-| `chimney` | `targetFace`, `placementHorizontal` | Yes (rewrites `attach.targetSurface`) |
-| `door`, `step` | — | No `updateComponent` support |
+`resolveRefinementPlan` in `planAndRefineBuildingPreview.ts`:
 
-### 2.2 `applyBlueprintOperationsV2`
+1. **`llm`:** Always `planBlueprintOperationsWithLlm`.
+2. **`deterministic`:** Always `mapRefinementPromptToOperations`; failure → `PLANNER_UNSUPPORTED`.
+3. **`auto`:** `classifyRefinementPrompt` in `classifyRefinementPrompt.ts`:
+   - `semantic` | `structural` → LLM first.
+   - Else try `mapRefinementPromptToOperations`; on success → deterministic.
+   - Else LLM with deterministic failure as fallback context.
 
-**File:** `src/lib/builder/applyBlueprintOperationsV2.ts`
+**Important:** `mapRefinementPromptToOperations.ts` still maps broad phrases like `more windows` / `add windows` to **front** `findPrimaryFrontWindowGroup` updates (lines ~366–395), which can override side/back intent before the LLM runs.
 
-- Mutates blueprint via `structuredClone`.
-- **`updateComponent`**: requires existing id + type match; no create/delete.
-- **`setMaterialPalette` / `setMaterialOverride`**: palette/override with `CLASSIC_MATERIAL_KEYS` check.
-- Returns `appliedLabels` strings consumed by tool results / activity.
-- Error codes: `UNKNOWN_COMPONENT`, `TYPE_MISMATCH`, `UNSUPPORTED_FIELD`, `INVALID_VALUE`.
+### LLM planner invocation
 
-### 2.3 Planner validation
-
-**Files:** `validatePlannerOperations.ts`, `buildAllowedOperationsSchema.ts`, `normalizePlannerOperation.ts`
-
-- **`buildAllowedOperationsSchema`**: `allowedOpTypes: ["setMaterialPalette", "updateComponent"]` only.
-- **Explicit unsupported list** includes: *"add or remove components"*, *"porch width changes"*, `setMaterialOverride`, metadata/constraints, voxels/ComponentPlan.
-- **`validatePlannerOperations`**: per-op validation; unknown op → `INVALID_OP_TYPE`; `setMaterialOverride` hard-rejected.
-- **`normalizePlannerOperation`**: coerces LLM aliases (`componentId`, hoisted patch fields); only knows `setMaterialPalette` / `updateComponent`.
-- **`MAX_PLANNER_OPERATIONS`**: 3 (`plannerTypes.ts`).
-- **Workers AI JSON schema** (`callWorkersAiJsonPlanner.ts`): `op` enum `setMaterialPalette` | `updateComponent` only.
-
-### 2.4 `GenericBuildingBlueprintV2` component types
-
-**File:** `src/lib/blueprints/types/genericBuildingV2.ts`
-
-| Type | Authoring fields (high level) |
-|------|-------------------------------|
-| `room` | `width`, `depth`, `wallHeight`, `role`, … |
-| `roof` | `targetRoom`, `kind`, `layers`, … |
-| `door` | `attach.targetSurface`, `width`, `height` |
-| `window_group` | `attach`, `count`, `layout`, `heightBand?` |
-| `porch` | `attach`, `depth`, `widthMode`, `aroundDoor?` |
-| `chimney` | `attach` |
-| `step` | `attach.targetDoor` |
-
-**Not in schema yet:** `sign`, `awning`, `balcony`, `dormer`, `stair`, `interior_zone`, extra rooms, second floor.
-
-### 2.5 v2 validation (`validateGenericBuildingV2`)
-
-**File:** `src/lib/blueprints/validateGenericBuildingV2.ts`
-
-**Already enforced (relevant to add/remove):**
-
-- Unique component ids (`duplicate_component_id`).
-- Exactly one root `room` (error if 0 or >1).
-- Surface refs must resolve (`main-room.{front,back,left,right,roof}`).
-- **Porch:** `widthMode` `door_only` \| `full_facade`; `aroundDoor` required/forbidden per mode; depth 1–8; `aroundDoor` must reference a `door`.
-- **Chimney:** attach required; **error** `chimney_on_front` if on front face.
-- **Window_group:** count 0–12; capacity warnings/errors vs façade slots.
-- **Step:** at most one step per door; `targetDoor` must exist and be `door`.
-- Warnings: `no_door`, `no_windows` (allowed but warned).
-
-**Not enforced today:** max one porch/chimney globally (policy belongs in **registry**, not validator, unless we add soft warnings).
-
-### 2.6 v2 generation support
-
-**File:** `src/lib/generation/components/v2/compileGenericBuildingV2Plan.ts`
-
-Compiler already maps authoring types → internal plan:
-
-- `window_group` → plan kind `window_group`
-- `porch` → plan kind `porch`
-- `chimney` → plan kind `chimney`
-
-**Tests:** `compileGenericBuildingV2Plan.test.ts` — presets compile with these kinds.
-
-**Implication:** Adding valid blueprint components is sufficient for preview updates; **no generator fork** required for initial milestone.
-
-### 2.7 v2 preset component IDs
-
-**File:** `src/lib/blueprints/sampleGenericBuildingBlueprintsV2.ts`
-
-| Preset | Notable components |
-|--------|-------------------|
-| `simple_cabin_v2` | `main-room`, `main-roof`, `front-door`, `front-windows`, **`chimney`**, `front-step` — **no porch** |
-| `stone_workshop_v2` | above room/roof/door; `front-windows`, `left-windows` — **no porch, no chimney** |
-| `porch_house_v2` | + **`front-porch`** (`widthMode: full_facade`), `front-step` — **no chimney** |
-
-Shared conventions: root room id **`main-room`**, front door **`front-door`**, primary front windows **`front-windows`**.
-
-### 2.8 Builder chat / tool flow
-
-| Piece | Role |
-|-------|------|
-| `/api/builder/chat` | Routes refine JSON turn vs stream/sync chat (`shouldRunRefinementTool`, `shouldUseGenerationJsonTurn`) |
-| `planAndRefineBuildingPreview` | Classify prompt → deterministic map or LLM planner → apply → validate → generate |
-| `classifyRefinementPrompt` | **Problem for this branch:** `add/remove porch|chimney|…` → **`structural`** → LLM path, but planner schema **still forbids** add/remove → graceful rejection only |
-| `mapRefinementPromptToOperations` | Literal mechanical edits only (dimensions, materials, roof kind, porch **depth**, chimney move, window count on **existing** groups) |
-| `planBlueprintOperationsWithLlm` | JSON planner + `validatePlannerJsonAndOperations` |
-| Anti-hallucination | `guardNoToolChangeClaims`, `applyChatOnlyResponseSafety`, stream finalize guard |
-| UI authority | `buildToolResultStatusBanner` — “Preview updated” / “Preview unchanged” from `toolResult` |
-
-### 2.9 Gap summary
-
-| Capability | Exists | Missing |
-|------------|--------|---------|
-| Patch room/roof/windows/porch depth/chimney face | Yes | Porch `widthMode`, `aroundDoor` patch |
-| Add/remove components | No | `addComponent`, `removeComponent`, registry |
-| Planner legal add/remove | No | Schema, prompt, validation, normalization |
-| Deterministic “add a porch” | No | Mapper could delegate to registry later |
-| Structural add/remove routing | Misaligned | Classifier treats as structural; planner rejects |
-| Affordances in planner context | Partial (component list) | “can add porch”, “has chimney”, semantic descriptors |
-
----
-
-## 3. First-principles architecture
-
-```text
-Level 0 — User intent (natural language)
-  "make it more welcoming"
-
-Level 1 — Planner operations (public, constrained JSON)
-  addComponent(porch), updateComponent(front-windows, count+1), setMaterialPalette(accent warmer)
-
-Level 2 — Authoring blueprint (GenericBuildingBlueprintV2)
-  semantic components: room, roof, door, window_group, porch, chimney, step
-
-Level 3 — Validation + normalization
-  validateGenericBuildingV2, id/surface/dependency rules
-
-Level 4 — Compiler IR (private)
-  ComponentPlanV2 — NEVER exposed to LLM or API consumers
-
-Level 5 — Output
-  VoxelBlock[] → preview
-```
-
-**This branch expands Levels 1–2** (new ops + registry materialization) and **Level 3** (operation validation). It must **not** bypass Level 3–5 or edit Level 4 directly.
-
-**Hierarchy example:**
-
-| User says | Planner may emit | Blueprint change | Compiler |
-|-----------|------------------|------------------|----------|
-| “add a chimney” | `addComponent` intent → server builds `ChimneyComponentV2` | new `chimney` on `main-room.back` | existing chimney emitter |
-| “make the porch wider” | `updateComponent` on `front-porch` patch `widthMode: full_facade` | porch authoring fields | existing porch emitter |
-| “more welcoming” | combo: add porch + palette + windows (≤3 ops) | multiple components | unchanged pipeline |
-
----
-
-## 4. Proposed operation model
-
-### 4.1 Extended `BlueprintOperationV2`
-
-Refine types in `blueprintOperationsV2.ts`:
-
-```ts
-export type BlueprintOperationV2 =
-  | UpdateComponentOperation
-  | SetMaterialPaletteOperation
-  | SetMaterialOverrideOperation  // still optional for planner; keep rejected until needed
-  | AddComponentOperation
-  | RemoveComponentOperation;
-```
-
-### 4.2 Recommended: Option B — constrained add intent (planner-facing)
-
-**Planner-facing** add operation (new type, not full component blob):
-
-```ts
-export type AddComponentIntentOperation = {
-  readonly op: "addComponent";
-  readonly componentType: AddableComponentKind; // allowlist
-  readonly id?: string; // optional; server assigns if omitted
-  readonly targetSurface?: RoomSurfaceRef; // e.g. main-room.front
-  readonly placement?: "left" | "center" | "right";
-  readonly options?: AddComponentOptions; // type-specific, constrained
-};
-
-export type AddComponentOptions =
-  | { readonly kind: "porch"; readonly depth?: number; readonly widthMode?: PorchWidthModeV2 }
-  | { readonly kind: "chimney"; readonly placementHorizontal?: "left" | "center" | "right" }
-  | { readonly kind: "window_group"; readonly count?: number; readonly layout?: WindowLayoutV2 };
-```
-
-**Server-internal** after materialization (apply layer):
-
-```ts
-export type AddComponentOperation = {
-  readonly op: "addComponent";
-  readonly component: GenericBuildingComponentV2;
-};
-```
-
-Flow: `normalizePlannerOperation` → validate intent → **`materializeAddComponent(intent, blueprint, registry)`** → canonical `AddComponentOperation` → append to `components[]`.
-
-### 4.3 Remove operation
-
-```ts
-export type RemoveComponentIntentOperation = {
-  readonly op: "removeComponent";
-  readonly id: ComponentId;
-};
-
-// Internal: same shape; apply deletes by id after dependency checks
-```
-
-**Policy:** Only ids that exist and are **removable kinds** (initially `porch`, `chimney`, `window_group` — not `room`, `roof`, `door`, `step` unless explicit step policy).
-
-### 4.4 Extend `updateComponent` (porch width)
-
-Add to `ComponentPatchV2` for `porch`:
-
-```ts
-| { readonly type: "porch"; readonly depth?: number; readonly widthMode?: PorchWidthModeV2; readonly aroundDoor?: ComponentId | null }
-```
-
-Validation must mirror `validateGenericBuildingV2` rules when applying patches.
-
-### 4.5 Why not Option A (full component from LLM)
-
-| Risk | Option A | Option B |
-|------|----------|----------|
-| Invented fields / types | High | Low |
-| Invalid `aroundDoor` / `widthMode` combos | High | Registry enforces |
-| Stable IDs | LLM may collide | Server generates |
-| Extensibility | Copy-paste per type | Registry entry |
-
-**Recommendation:** **Option B** for planner JSON; server materialization is the only place that constructs full `GenericBuildingComponentV2`.
-
-Option A may be used **only in tests** or internal fixtures, not in planner schema.
-
----
-
-## 5. Component registry / defaults
-
-**New module (proposed):** `src/lib/builder/componentOperationRegistry.ts`
-
-```ts
-export type AddableComponentKind = "porch" | "chimney" | "window_group";
-
-export type RemovableComponentKind = AddableComponentKind; // phase 1
-
-export type ComponentOperationSpec<K extends AddableComponentKind> = {
-  readonly type: K;
-  readonly canAdd: (blueprint: GenericBuildingBlueprintV2) => { ok: true } | { ok: false; reason: string };
-  readonly defaultIntent: (ctx: MaterializeContext) => AddComponentIntentOperation;
-  readonly materialize: (intent: AddComponentIntentOperation, blueprint: GenericBuildingBlueprintV2) => GenericBuildingComponentV2;
-  readonly validateNew: (blueprint: GenericBuildingBlueprintV2, component: GenericBuildingComponentV2) => ValidationIssue[];
-  readonly onRemove?: (blueprint: GenericBuildingBlueprintV2, id: ComponentId) => GenericBuildingBlueprintV2;
-};
-```
-
-### 5.1 Stable unique IDs
-
-Algorithm (server-only):
-
-1. Base slug: `{type}-{face}` from target surface (`porch-front`, `chimney-back`, `windows-left`).
-2. If collision, suffix `-2`, `-3`, …
-3. Reject if id matches reserved roots (`main-room`, `main-roof`, `front-door`) or existing id.
-
-Planner may suggest `id`; validator rejects unknown format / collision / reserved.
-
-### 5.2 Default target surfaces
-
-| Kind | Default `targetSurface` | Fallback logic |
-|------|-------------------------|----------------|
-| `porch` | `main-room.front` | Requires root room + front door for `door_only` default |
-| `chimney` | `main-room.back` | If back invalid, try `right` / `left` (never `front` — validator error) |
-| `window_group` | Parse prompt: left/right/back/front; else `main-room.front` if no group on front, else first free side |
-
-Use `findRootRoom`, `findFrontDoor`, `findPorch`, `findChimney`, existing window groups by surface.
-
-### 5.3 Duplicate prevention
-
-| Kind | Phase-1 policy |
+| Step | File / function |
 |------|----------------|
-| `porch` | **At most one** porch per blueprint (`canAdd` fails if `findPorch`) |
-| `chimney` | **At most one** chimney (`canAdd` fails if `findChimney`) |
-| `window_group` | **Multiple allowed** on different surfaces; `canAdd` fails if group already on same surface |
+| User prompt assembly | `buildPlannerUserPrompt` in `buildPlannerPrompt.ts` |
+| Workers AI call | `callWorkersAiJsonPlanner` / `fetchPlannerText` in `callWorkersAiJsonPlanner.ts` |
+| JSON Mode | `buildWorkersAiPlannerResponseFormat()` in `plannerResponseSchema.ts` — `response_format: { type: "json_schema", json_schema: PLANNER_RESPONSE_JSON_SCHEMA }` |
+| Parse | `parsePlannerJsonResponse` in `validatePlannerOperations.ts` |
+| Validate + materialize | `validatePlannerJsonAndOperations` → `validatePlannerOperations` → `materializePlannerOperations` |
+| Overbroad guard | `validateOverbroadPlannerPlan` + `detectDirectComponentRequest` for single-op direct component requests |
+| Repair | `planBlueprintOperationsWithLlm.ts`: one repair fetch via `plannerRepair.ts` on repairable rejection codes; parse repair in `callWorkersAiJsonPlanner` |
 
-### 5.4 Dependencies
+Test override: `setLlmPlannerForTests` in `planBlueprintOperationsWithLlm.ts`.
 
-| Scenario | Behavior |
-|----------|----------|
-| Porch `door_only` | Set `aroundDoor: front-door` when front door exists; else `full_facade` or reject add |
-| Porch add on workshop | No porch today — add with `depth: 2`, `widthMode: door_only`, `aroundDoor: front-door` |
-| Step on remove porch | **Keep step** (attached to door, not porch) — `porch_house_v2` pattern |
-| Remove door | **Out of scope** — do not allow `removeComponent` on doors in phase 1 |
-| Remove window_group | Allowed; warn if last window group removed (`no_windows` already warned) |
-| Remove chimney | Allowed; no cascade |
+### Planner response schema (emitted shape)
 
-### 5.5 `getBlueprintAffordancesForPlanner()` (recommended, small)
+Top-level (`plannerResponseSchema.ts`):
 
-**New helper:** `src/lib/builder/getBlueprintAffordancesForPlanner.ts`
+- `{ status: "ok", operations: [...], rationaleSummary }` or `{ status: "unsupported", unsupportedReason }`.
 
-Returns compact facts for planner prompt + deterministic hints:
+Operations (`blueprintOperationsV2.ts`), per-op `oneOf` in JSON Schema:
+
+| `op` | Planner-facing shape |
+|------|----------------------|
+| `setMaterialPalette` | `{ patch: { wall?, roof?, … } }` |
+| `updateComponent` | `{ id, componentType, patch }` — patch typed per component |
+| `addComponent` | **Intent only:** `{ componentType, targetSurface?, placement?, options? }` — no full `component` |
+| `removeComponent` | `{ id }` |
+
+`MAX_PLANNER_OPERATIONS` = 3 (`plannerTypes.ts`).
+
+### Normalize / repair
+
+- **`normalizePlannerOperation.ts`:** Coerces aliases (`componentId`, hoisted patch fields, wrapped op keys).
+- **`plannerRepair.ts`:** Repair user prompt includes rejection code, detail, affordances text, bad snippet; repair uses same JSON Mode.
+- Rejection codes: `plannerRejection.ts` (`INVALID_PLANNER_JSON`, `OVERBROAD_OPERATION_PLAN`, `JSON_MODE_FAILED`, `ADD_NOT_ALLOWED`, etc.).
+
+### Validation before apply
+
+`validatePlannerOperations.ts`:
+
+- Rejects full `component` blob on `addComponent` before normalize.
+- Per-op field allowlists; `canAddComponent` / `canRemoveComponent` from `componentOperationRegistry.ts`.
+- Simulates batch state (materialize add intents into working blueprint for duplicate checks).
+- Final `materializePlannerOperations.ts` converts intents → `AddComponentOperation` with full `GenericBuildingComponentV2`.
+
+### Materialize add intents
+
+`componentOperationRegistry.ts`:
+
+- **`materializeAddComponent`:** porch / chimney / window_group defaults.
+- **`inferWindowSurfaceFromPrompt`:** left/right/back/front from user text when `targetSurface` omitted.
+- **`windowFacadeCapacity.ts`:** layout sanitize (`symmetric` / `even`), count clamp, singular “a window” → count 1.
+- Porch: `door_only` + `aroundDoor` when front door exists; chimney: avoids front face default.
+
+### Apply operations
+
+`applyBlueprintOperationsV2.ts`:
+
+- `structuredClone` blueprint; applies palette, add/remove, `updateComponent` patches (clamped).
+- Window adds/updates run through `sanitizeWindowGroupComponent`.
+- Returns `appliedLabels: string[]` (human-readable, not structured diffs).
+
+### Blueprint validation and voxel generation
+
+- **`validateBlueprint`** → `validateGenericBuildingV2.ts` for v2 (façade window capacity, layout, porch `aroundDoor`, etc.).
+- On post-apply failure: `buildValidationFailureSuggestion.ts` + affordances in `planAndRefineBuildingPreview.ts`.
+- **`generateStructure`** → `generateGenericBuildingV2` → `compileGenericBuildingV2Plan` → **`ComponentPlanV2`** (internal IR in `src/lib/generation/components/v2/types.ts`) → `emitFromComponentPlanV2`. Not exposed to planner or chat.
+
+### Tool result and UI
+
+- **`BuilderToolResult`** (`builderToolTypes.ts`): `ok`, `assistantSummary`, `appliedOperations`, `plannerPath`, `rejectionCode` / `rejectionDetail`, `blueprint`, `blocks`, `activityEvents`.
+- **`formatToolResultForModel.ts`:** Injects `BUILDER_TOOL_STATUS`, `PREVIEW_UPDATED`, `OPERATIONS` (joined labels), `SUMMARY` for follow-up chat.
+- **`BuilderClient.tsx`:** Applies `toolResult` to preview state only when `ok`; activity from `builderActivityFromTool.ts`.
+- **`builderSystemPrompt.ts`:** Tool-result authority rules; chat-only must not claim edits.
+
+### Anti-hallucination safeguards
+
+| Mechanism | Location |
+|-----------|----------|
+| No tool → no change claims | `guardNoToolChangeClaims.ts`, `applyChatOnlyResponseSafety.ts` |
+| Tool failure instructions | `formatToolResultForModel` failed branch |
+| Planner must not output voxels / ComponentPlan / full blueprint | `buildPlannerPrompt.ts`, `buildAllowedOperationsSchema.ts` unsupported list |
+| Preview only on `toolResult.ok` | `planAndRefineBuildingPreview`, `BuilderClient` |
+
+### Planner context today
+
+Injected in `buildPlannerUserPrompt` (in order):
+
+1. **`summarizeBlueprintForPlanner`** + `renderBlueprintSummaryText` — per-component lines (dimensions, surfaces, counts); raw material keys; no style semantics.
+2. **`getBlueprintAffordancesForPlanner`** + `renderAffordancesText` — booleans per face, trial-validated `canIncreaseCount`, `frontWindowsAtCapacity`, removable ids; **no `because` reasons** on denials.
+3. **`buildAllowedOperationsSchema`** + `renderAllowedOperationsSchemaText` — allowlist ids, patch ranges, unsupported list.
+
+Chat-only feedback uses the same summary via `buildCurrentBuildContextBlock` (no affordances).
+
+---
+
+## 2. Current semantic planner limitations
+
+| Gap | Evidence in code / manual test |
+|-----|--------------------------------|
+| **Building style is shallow** | Summary lists material keys (`limestone_bricks`, `slate_tiles`) but not descriptors (rustic, medieval, welcoming). No silhouette/proportion narrative beyond room W×D×H. |
+| **Material semantics absent** | No mapping from `CLASSIC_MATERIAL_KEYS` / palette slots to style tags for the planner. |
+| **Why an action is unavailable** | Affordances expose `canAdd.porch: false` but not “porch already exists”; rejections may come from wrong component path (porch vs window). |
+| **Surface-specific windows incomplete** | `inferWindowSurfaceFromPrompt` is single-surface; compound “left and right” needs 2 ops (max 3) but routing/classifier may not enter refine or deterministic front-window matcher wins. |
+| **Add vs update not distinguished in summaries** | `appliedLabels` say “Updated window group (2 windows)” or “Added window group”; `formatToolResultForModel` passes opaque `OPERATIONS` string; assistant invents “two additional” vs “now 2 total”. |
+| **Abstract style prompts under-guided** | `classifyRefinementPrompt` sends “more welcoming” to LLM, but prompt only has generic examples + boolean affordances — no structured style→operation hints. |
+| **Deterministic mapper overrides semantics** | `mapRefinementPromptToOperations` front-window `more windows` / `add windows` runs before LLM in `auto` literal path; no surface-aware deterministic for side/back. |
+| **Compound multi-surface plans** | Planner schema allows up to 3 ops but no first-class “surfaces requested” in context; LLM may pack invalid multi-surface plans or single wrong surface. |
+| **Affordance / rejection mismatch** | `buildValidationFailureSuggestion` uses coarse string matching; planner repair prompt may not tie rejection to requested component type. |
+
+---
+
+## 3. Design goals for this branch
+
+### In scope
+
+1. **Semantic build summary** — human- and machine-readable picture of the current build (type, proportions, style, features, constraints).
+2. **Material/style descriptor library** — keyed by real classic material IDs used in palettes.
+3. **Richer explanatory affordances** — availability + **reason** + **alternatives**.
+4. **Better surface-specific window affordances** — per-face add/update/capacity/exclusions (e.g. “not on front”).
+5. **Better operation-result summaries** — structured diffs for assistant/UI (added vs updated, count before→after).
+6. **Style-intent guidance** — welcoming / rustic / bright / medieval as planner hints, not new deterministic ops.
+
+### Out of scope (branch guardrails)
+
+- Many new component types, second floors, interiors, side rooms.
+- Image-to-build planning, persistence, auth, D1/R2, AI Gateway, Cloudflare Agents.
+- Raw voxel editing or LLM access to `ComponentPlanV2` internals.
+- Replacing server validation or letting the model skip materialize/validate.
+
+---
+
+## 4. Proposed semantic build summary
+
+### Proposed API
 
 ```ts
-{
-  hasPorch: boolean;
-  hasChimney: boolean;
-  surfacesWithWindows: RoomSurfaceRef[];
-  canAdd: { porch: boolean; chimney: boolean; window_group: Record<face, boolean> };
-  removableIds: { porch?: string; chimney?: string; windowGroups: string[] };
-  descriptors?: string[]; // future: "no porch", "compact workshop"
-}
+// src/lib/builder/semantic/getSemanticBuildSummaryForPlanner.ts (proposed)
+
+export type SemanticBuildSummaryForPlanner = {
+  readonly buildingType: string;           // e.g. "stone workshop", "porch house"
+  readonly proportions: readonly string[]; // e.g. ["compact", "low", "wide"]
+  readonly materialSummary: readonly string[];
+  readonly styleDescriptors: readonly string[]; // derived from materials + features
+  readonly roofSummary: string;
+  readonly featureSummary: readonly string[];   // porch, chimney, step, door
+  readonly windowsBySurface: readonly WindowSurfaceSummary[];
+  readonly missingFeatures: readonly string[];
+  readonly constraints: readonly string[];
+  readonly suggestedNextMoves: readonly string[]; // from affordances, not LLM-authored
+};
 ```
 
-**Recommendation:** Add in **Phase B** (registry design) — low cost, high value for Option B planner and for semantic multi-op plans (“more welcoming” → add porch if `canAdd.porch`).
+`getSemanticBuildSummaryForPlanner(blueprint, options?: { presetId?, userPrompt? })` would compose:
+
+- Existing `summarizeBlueprintForPlanner` / `findRootRoom` / roof helpers.
+- New material descriptor map (§5).
+- Rich affordances (§6) for `suggestedNextMoves` and `missingFeatures`.
+
+### Example target (text block for prompt)
+
+```text
+building type: stone workshop
+proportions: compact, low, wide (11×9, wallHeight 4)
+materials: limestone_bricks walls, slate_tiles roof, glass windows — stone-heavy, utilitarian
+roof: shed, 2 layers, front_back
+features: front door (wide), front windows (2, symmetric), left windows (2), no porch, no chimney
+windows: front at capacity; right/back can add group; left has group (can increase if slots allow)
+missing: porch, chimney
+valid next moves: add chimney, add right window_group, add porch, setMaterialPalette (warm wood accents)
+```
+
+### JSON vs text vs both
+
+| Format | Pros | Cons |
+|--------|------|------|
+| **Text only** | Easy for LLM; matches current `renderBlueprintSummaryText` pattern | Harder to unit-test field-by-field; repair prompts verbose |
+| **JSON only** | Testable; could extend JSON Schema context later | Model may ignore nested fields; redundant with operation JSON |
+| **Both (recommended)** | JSON for tests + typed builders; compact text block in `buildPlannerUserPrompt` | Slight duplication; keep single builder function |
+
+**Recommendation:** Build a typed object, render a stable text block via `renderSemanticBuildSummaryText`, optionally attach a minified JSON appendix behind a dev flag first.
 
 ---
 
-## 6. Initial add/remove component behavior
+## 5. Proposed material/style descriptor system
 
-### 6.1 Porch
+### Source of truth for material IDs
 
-**Add (defaults):**
+Palette keys use **`CLASSIC_MATERIAL_KEYS`** from `src/app/generic-lab/genericLabUtils.ts` (keys of `CLASSIC_BLOCK_PACK` in `src/lib/voxel/blocks/packs/classic.ts`). Builder ops validate palette values against this list (`applyBlueprintOperationsV2.ts`, `buildAllowedOperationsSchema.ts`).
 
-- `targetSurface`: `main-room.front`
-- `placement`: `center`
-- `depth`: `2`
-- `widthMode`: `door_only` if `front-door` exists, else `full_facade`
-- `aroundDoor`: `front-door` when `door_only`
-- `id`: `front-porch` or generated
+Preset examples (from `sampleGenericBuildingBlueprintsV2.ts`):
 
-**Remove:**
+- **stone_workshop_v2:** `limestone_bricks`, `cobblestone`, `slate_tiles`, `glass`, `oak_planks`
+- **simple_cabin_v2 / porch_house_v2:** often `cobblestone`, `oak_planks`, `slate_tiles`, `glass`
 
-- Remove porch component only.
-- Do not auto-remove `front-step`.
+### Proposed descriptor map (starter)
 
-**Update (existing + extend patch):**
+File: `src/lib/builder/semantic/materialStyleDescriptors.ts` (proposed)
 
-- `depth` — already supported
-- **`widthMode`** — add patch support; `door_only` → `full_facade` for “wider porch” / “full width porch”
-- When switching to `full_facade`, clear `aroundDoor` (validator requires)
+| Material key (classic) | Style tags (starter) |
+|----------------------|----------------------|
+| `cobblestone` | sturdy, medieval, rustic, heavy, gray |
+| `limestone_bricks` | bright, clean, refined, pale, formal |
+| `limestone` | pale, clean, accent |
+| `oak_planks` | warm, wooden, rustic, cozy |
+| `beech_planks` | warm, light wood |
+| `slate_tiles` | dark, formal, roof-like, medieval |
+| `glass` | bright, open, transparent |
+| `mud` / `grass_block` | earthy, informal (floor/ground) |
+| `andesite` | cool, gray, modern |
 
-**Deterministic mapper (optional Phase G):** literal “add a porch” → materialized `addComponent` without LLM.
+Slot-level aggregation: map `blueprint.materials.wall` + `roof` + `window` + `door` → combined `styleDescriptors[]` (deduped).
 
-### 6.2 Chimney
+### Design choices
 
-**Add:**
-
-- Default `main-room.back`, `placement.horizontal: center`
-- `id`: `chimney` if free, else `chimney-back`
-- Reject if chimney already exists
-
-**Remove:**
-
-- Remove by id `chimney` or sole chimney component
-
-**Update:** existing chimney face / horizontal patch unchanged
-
-### 6.3 Window group
-
-**Add:**
-
-- `targetSurface` from prompt (`left`, `right`, `back`, `front`)
-- `count`: `2`, `layout`: `even` (side) or `symmetric` (front)
-- `heightBand`: inherit preset style (`mid` for workshop) or `auto`
-- `id`: `left-windows`, `right-windows`, etc.
-
-**Remove:**
-
-- By explicit id from affordances, or “remove side windows” → remove `left-windows` if unambiguous
-- Allow removing all groups (warning only)
-
-**Update vs add:** If group exists on target surface, prefer `updateComponent` count/layout instead of second group (validator may allow two on same surface but registry should discourage — **policy: one group per surface**).
-
-### 6.4 Semantic combo example (“more welcoming”)
-
-Within `MAX_PLANNER_OPERATIONS = 3`:
-
-1. `addComponent` porch (if `canAdd.porch`)
-2. `updateComponent` `front-windows` count +1
-3. `setMaterialPalette` accent/window warmer materials
-
-If porch exists: swap (1) for porch `widthMode: full_facade` or depth bump.
+| Question | Recommendation |
+|----------|----------------|
+| Where it lives | `src/lib/builder/semantic/` module(s), not in planner prompt strings |
+| Keying | By material ID string; unknown keys → `["neutral"]` or empty + note in summary |
+| Planner-only vs validation | **Planner context only** for this branch; do not relax `validateGenericBuildingV2` based on tags |
+| One file vs split | **Split:** `materialStyleDescriptors.ts` + `styleIntentGuidance.ts` (§8) |
 
 ---
 
-## 7. Planner schema update
+## 6. Proposed richer planner affordances
 
-### 7.1 Allowed op types
+### Proposed shape
+
+Extend or wrap `BlueprintAffordancesForPlanner` into `RichBlueprintAffordancesForPlanner`:
 
 ```ts
-allowedOpTypes: ["setMaterialPalette", "updateComponent", "addComponent", "removeComponent"]
+type AffordanceAction = {
+  readonly available: boolean;
+  readonly reason?: string;              // human-readable why false
+  readonly alternatives?: readonly string[]; // e.g. "add right window_group instead"
+};
+
+type RichWindowSurfaceAffordance = WindowSurfaceAffordance & {
+  readonly addGroup: AffordanceAction;
+  readonly increaseCount: AffordanceAction;
+  readonly removeGroup?: AffordanceAction;
+};
+
+type RichBlueprintAffordancesForPlanner = {
+  readonly porch: PorchAffordance & {
+    readonly add: AffordanceAction;
+    readonly widen: AffordanceAction;
+    readonly deepen: AffordanceAction;
+    readonly remove: AffordanceAction;
+  };
+  readonly chimney: ChimneyAffordance & { readonly add: AffordanceAction; readonly remove: AffordanceAction };
+  readonly windows: readonly RichWindowSurfaceAffordance[];
+  readonly updateableComponents: readonly { id: string; type: string; patchHints: readonly string[] }[];
+  // ... legacy fields for backward compat during migration
+};
 ```
 
-Remove from **unsupported** list: “add or remove components”.  
-Move “porch width changes” to **supported** via `updateComponent` porch `widthMode` patch.
-
-### 7.2 Planner JSON examples (Option B)
-
-**Add porch:**
-
-```json
-{
-  "op": "addComponent",
-  "componentType": "porch",
-  "targetSurface": "main-room.front",
-  "placement": "center",
-  "options": { "kind": "porch", "depth": 2, "widthMode": "door_only" }
-}
-```
-
-**Add chimney:**
-
-```json
-{ "op": "addComponent", "componentType": "chimney", "targetSurface": "main-room.back", "placement": "center" }
-```
-
-**Add side windows:**
-
-```json
-{
-  "op": "addComponent",
-  "componentType": "window_group",
-  "targetSurface": "main-room.left",
-  "options": { "kind": "window_group", "count": 2, "layout": "even" }
-}
-```
-
-**Remove:**
-
-```json
-{ "op": "removeComponent", "id": "chimney" }
-```
-
-**Wider porch:**
-
-```json
-{
-  "op": "updateComponent",
-  "id": "front-porch",
-  "componentType": "porch",
-  "patch": { "type": "porch", "widthMode": "full_facade", "aroundDoor": null }
-}
-```
-
-### 7.3 `PLANNER_SYSTEM_PROMPT` + affordances block
-
-Update `buildPlannerPrompt.ts`:
-
-- Document `addComponent` / `removeComponent` intent shapes.
-- Inject `renderAffordancesText(getBlueprintAffordancesForPlanner(blueprint))`.
-- List **removable ids** explicitly for `removeComponent`.
-- Keep: no voxels, no ComponentPlan, max 3 ops, unsupported status.
-
-### 7.4 Workers AI `PLANNER_RESPONSE_FORMAT`
-
-Extend `callWorkersAiJsonPlanner.ts` JSON schema `op` enum and per-op property shapes (still loose `patch` object for update, constrained keys for add intent).
-
-### 7.5 `classifyRefinementPrompt` alignment
-
-**Change required:** Remove `add/remove porch|chimney` from `hasStructuralUnsupportedSignals` once ops exist.
-
-| Class | Routing after change |
-|-------|---------------------|
-| “add a chimney” | **literal** or **semantic** → LLM/deterministic with legal ops |
-| “add a second floor” | **structural** → unsupported |
-| “make the porch wider” | **literal** if porch exists (widthMode patch) |
-
----
-
-## 8. Operation validation and normalization
-
-### 8.1 `normalizePlannerOperation`
-
-- Map aliases: `component_type`, `target_surface`, nested `options`.
-- Coerce `removeComponent` `componentId` → `id`.
-- Do **not** accept full raw component blobs from LLM without passing through materializer.
-
-### 8.2 `validatePlannerOperations`
-
-New checks:
-
-| Check | Code (proposed) |
-|-------|-----------------|
-| `addComponent.componentType` in allowlist | `INVALID_ADD_TYPE` |
-| `canAdd` registry rule | `ADD_NOT_ALLOWED` |
-| `targetSurface` matches `^.+\.(front\|back\|left\|right\|roof)$` and room exists | `INVALID_SURFACE` |
-| `removeComponent.id` exists + removable kind | `NOT_REMOVABLE` / `UNKNOWN_COMPONENT_ID` |
-| Materialized component passes `validateNew` | `ADD_VALIDATION_FAILED` |
-| Porch patch `widthMode` + `aroundDoor` consistency | `UNSUPPORTED_PATCH_FIELD` |
-| Unknown op keys | `UNSUPPORTED_PATCH_FIELD` |
-| Op count ≤ 3 | `TOO_MANY_OPERATIONS` |
-
-Pipeline:
+Example rendered lines:
 
 ```text
-raw ops → normalizePlannerOperations → validateOperation (intent)
-  → materializeAddComponents (per add op) → validateOperation (canonical)
-  → validated BlueprintOperationV2[]
+porch.add: false — porch already exists (id front-porch). Alternatives: widen to full_facade, deepen.
+chimney.add: true — no chimney present.
+window.front.increaseCount: false — front at capacity (2/2 slots). Alternatives: add right window_group, add back window_group.
+window.right.addGroup: true — surface main-room.right has no window_group.
 ```
 
-### 8.3 `applyBlueprintOperationsV2`
+### Merge with semantic summary vs separate
 
-- Handle `addComponent`: append after uniqueness check.
-- Handle `removeComponent`: filter out id; optional registry `onRemove` hook.
-- Extend porch patch application for `widthMode` / `aroundDoor`.
-- New error codes: `DUPLICATE_COMPONENT`, `ADD_NOT_ALLOWED`, `NOT_REMOVABLE`.
+| Approach | Pros | Cons |
+|----------|------|------|
+| **Merged** | Single “build context” section; less prompt tokens | Large blob; harder to test affordances alone |
+| **Separate (recommended)** | `renderSemanticBuildSummaryText` + `renderRichAffordancesText`; clear ownership | Two sections in prompt; need cross-links (“see valid next moves”) |
+| **Summary embeds affordances** | `suggestedNextMoves` derived once | Duplication if affordances also listed in detail |
 
-### 8.4 Post-apply invariant
+**Recommendation:** Keep separate render functions; summary’s `suggestedNextMoves` is a **short** deduped list derived from rich affordances (top 5–8), not a full dump.
 
-Unchanged: `planAndRefineBuildingPreview` still runs `validateBlueprint` then `generateStructure`. Any blueprint-level error → failed tool result, preview unchanged.
+Implementation path: `getRichBlueprintAffordancesForPlanner` builds on existing `getBlueprintAffordancesForPlanner` + reason helpers (no second trial-validate loop where possible).
 
 ---
 
-## 9. Semantic material and build summary connection
+## 7. Proposed window affordance improvements
 
-**Not in scope:** full semantic material library.
+### Current behavior (baseline)
 
-**In scope (planning):**
+| Concern | Current code |
+|---------|----------------|
+| Per-surface state | `getBlueprintAffordancesForPlanner` → `windows[]` per `RoomFace` |
+| Capacity | `getMaxWindowSlotsForSurface` / `windowFacadeCapacity.ts`; `canIncreaseCount` via trial apply + `validateBlueprint` |
+| Materialize | `inferWindowSurfaceFromPrompt`, defaults `even` on sides, `symmetric` on front |
+| Routing risk | `mapRefinementPromptToOperations` → front group for `add windows` / `more windows` |
+| Multi-op | Up to 3 planner ops; no explicit “requested surfaces” list in context |
 
-- Document how future planner context will include **material descriptors** (rustic, sturdy, medieval) mapped to **palette ops** only.
-- **`getBlueprintAffordancesForPlanner()`** supplies **structural affordances**: `canAdd.porch`, `hasChimney`, `surfacesWithWindows`, `no porch`.
-- Optional **build descriptors** derived from summary (compact, squat, workshop-like) — read-only strings in prompt; no new ops.
+### Plan
 
-**Connection:**
+**A. Context (this branch — primary)**
 
-```text
-Affordances + summary → LLM chooses legal add/remove/update
-Material semantics → setMaterialPalette + update existing components only
-```
+1. **`WindowSurfaceSummary`** in semantic summary: face, surface ref, groupId, count, maxSlots, atCapacity, recommended op (`addComponent` vs `updateComponent` with id).
+2. **Compound request hints:** Parse user prompt lightly (server-side, not LLM) for surface list: `detectRequestedWindowSurfaces(prompt)` → `["left","right"]`; include in planner user prompt as “User requested surfaces: left, right (needs up to 2 operations)”.
+3. **Exclusion hints:** “not on the front” → `excludedFaces: ["front"]` in prompt constraints.
+4. **Rich reasons** when `canAddGroup` false because group exists: “use updateComponent on `left-windows`”.
+
+**B. Routing (small, targeted — same branch if low risk)**
+
+1. Narrow deterministic matcher: only map `more windows` / `add windows` to **front** when prompt lacks side/back/right/left signals (reuse `inferWindowSurfaceFromPrompt` negative check).
+2. `classifyRefinementPrompt`: treat multi-surface window phrases as `semantic` (or new `literal_multi`) so LLM plans 2× `addComponent` rather than deterministic front bump.
+3. `shouldRunRefinementTool`: ensure compound window phrases always gate refine (extend `looksLikeComponentEditRequest`).
+
+**C. Validation / materialize (already mostly done)**
+
+- Keep clamp/sanitize in `windowFacadeCapacity.ts`; document in planner prompt that counts are **totals**, not deltas.
+
+**D. Tests (§12)**
+
+- Table-driven: prompt → expected surfaces detected; affordance text includes reason strings; planner mock (existing `setLlmPlannerForTests`) for left+right and back-only.
+
+**Defer if scope tight:** Full deterministic mapper for multi-surface adds (prefer planner + better context first).
 
 ---
 
-## 10. API and orchestration
+## 8. Proposed style-intent guidance
 
-| Endpoint / module | Impact |
-|-------------------|--------|
-| `/api/builder/chat` | No route change; refine path uses expanded planner |
-| `/api/builder/refine` | Same pipeline if shared with `planAndRefineBuildingPreview` |
-| `planAndRefineBuildingPreview` | New apply paths; activity labels for add/remove |
-| `mapRefinementPromptToOperations` | Optional: literal add/remove/wider porch without LLM |
-| `formatToolResultForModel` | Include applied add/remove in `APPLIED_OPERATIONS` |
-| Anti-hallucination | Unchanged — still keyed on `toolResult.ok` |
+### Intent examples (not deterministic ops)
 
-**Success path unchanged:**
+| User phrase | Suggested operation families (from affordances) |
+|-------------|--------------------------------------------------|
+| welcoming | add porch, widen porch, warm palette (`oak_planks`), side windows if front full |
+| rustic | cobblestone/oak palette, chimney, pitched roof |
+| sturdy | stone-heavy palette, compact proportions, chimney |
+| bright | glass windows, lighter walls (`limestone_bricks`), more window count on available faces |
+| medieval | stone, slate roof, chimney, smaller window counts |
+| refined | limestone_bricks, symmetric front windows, less rustic tags |
 
-```text
-planner → normalize/validate → materialize → apply → validateBlueprint → generate → toolResult.ok
-```
+### Representation options
+
+| Option | Pros | Cons |
+|--------|------|------|
+| **A. Static prompt paragraphs** | Fastest; no new types | Drifts from affordances; hard to test |
+| **B. Structured library** | Testable; versioned; maps intent → candidate op types + palette hints | Must stay in sync with allowlist |
+| **C. Hybrid (recommended)** | `styleIntentGuidance.ts` exports records; `renderStyleIntentGuidanceForPlanner(request)` injects only matching intents (token-efficient) | Slightly more code |
+
+**Recommendation:** **Option C** — e.g. `STYLE_INTENT_HINTS: Record<string, StyleIntentHint>` keyed by normalized triggers (`welcoming`, `rustic`, …), rendered when `detectStyleIntents(userPrompt)` matches. Hints reference affordance fields (“if `frontWindowsAtCapacity`, prefer `window.right.addGroup`”).
+
+Do **not** add deterministic `makeWelcoming()` operations in this branch.
 
 ---
 
-## 11. Activity events and UI
+## 9. Proposed operation-result summary improvements
 
-**New labels (server-authored, in `planAndRefineBuildingPreview` / apply):**
+### Current flow
 
-- Planned component addition
-- Materialized porch component
-- Added porch on front surface
-- Removed chimney component
-- Added window group on left surface
-- Validated updated blueprint
-- Regenerated voxel structure
+- `applyBlueprintOperationsV2` → `appliedLabels: string[]` (e.g. `"Updated window group (2 windows)"`, `"Added chimney component (chimney)"`).
+- `planAndRefineBuildingPreview` → `assistantSummary: \`${plan.planLabel} (${blockCount} blocks)\``.
+- `formatToolResultForModel` → `OPERATIONS: label1; label2`, `SUMMARY: assistantSummary`.
 
-**UI:** No redesign. Continue **`buildToolResultStatusBanner`** for preview updated/unchanged. Assistant text remains non-authoritative.
+No before/after component snapshot; LLM infers deltas incorrectly.
+
+### Proposed structured diff
+
+```ts
+// src/lib/builder/operationResultSummary.ts (proposed)
+
+export type OperationOutcomeKind =
+  | "added_component"
+  | "removed_component"
+  | "updated_component"
+  | "updated_palette"
+  | "rejected"
+  | "noop";
+
+export type OperationOutcomeSummary = {
+  readonly kind: OperationOutcomeKind;
+  readonly componentId?: string;
+  readonly componentType?: string;
+  readonly surface?: string;
+  readonly field?: string;           // e.g. "count", "widthMode"
+  readonly before?: string | number;
+  readonly after?: string | number;
+  readonly deltaDescription: string; // "window count 1 → 2 on main-room.right"
+  readonly userFacingShort: string;  // "Set right windows to 2 (was 1)"
+};
+
+export function summarizeOperationOutcomes(
+  before: GenericBuildingBlueprintV2,
+  after: GenericBuildingBlueprintV2,
+  operations: readonly ApplyableBlueprintOperationV2[],
+  appliedLabels: readonly string[],
+): readonly OperationOutcomeSummary[];
+```
+
+Wire into:
+
+- `BuilderToolResult.operationSummaries` (new optional field).
+- `formatToolResultForModel`: emit `OUTCOME: …` lines with explicit **total vs delta** wording instructions.
+- `assistantSummary` template: prefer `userFacingShort` joined, not raw `planLabel` alone.
+
+### Cases to cover
+
+| Case | `deltaDescription` pattern |
+|------|----------------------------|
+| New window group | “Added window_group on main-room.right (count 2)” |
+| Count update | “window_group front-windows count 2 → 3 (total 3)” — never “added 3 windows” |
+| Remove chimney | “Removed chimney (chimney)” |
+| Palette only | “Palette roof: slate_tiles → oak_planks” |
+| Validation fail | No outcomes; rejection detail only |
+| Deterministic front +1 | Same count semantics |
+
+---
+
+## 10. Implementation options
+
+### Option 1: Minimal planner-context patch
+
+**Scope:** Summary text helper, material descriptor map, extend `renderAffordancesText` with reasons, prompt paragraphs for style intents, light `formatToolResultForModel` wording fix without full diff types.
+
+| | |
+|--|--|
+| **Pros** | Small diff; shippable in days; low regression risk |
+| **Cons** | Window routing bugs may remain; summaries still partly brittle |
+| **Risk** | Low |
+| **Files** | `buildPlannerPrompt.ts`, `getBlueprintAffordancesForPlanner.ts`, new `semantic/*.ts`, tests for render output |
+| **Fit** | Good if we need quick wins only |
+
+### Option 2: Formal semantic context module (recommended)
+
+**Scope:** `src/lib/builder/semantic/` exporting summary, descriptors, rich affordances, style hints, `buildPlannerContextForLlm(blueprint, userRequest)` consumed by `buildPlannerUserPrompt`. Structured operation summaries. Targeted routing tweak for front-window deterministic override.
+
+| | |
+|--|--|
+| **Pros** | Clear boundary; testable; matches branch name; fixes known manual-test themes |
+| **Cons** | ~1–2 weeks touch many builder files |
+| **Risk** | Medium — prompt size growth; must monitor token limits |
+| **Files** | New `semantic/*`, `buildPlannerPrompt.ts`, `getBlueprintAffordancesForPlanner.ts`, `formatToolResultForModel.ts`, `builderToolTypes.ts`, `applyBlueprintOperationsV2` or wrapper for diffs, `mapRefinementPromptToOperations.ts` (narrow), tests |
+| **Fit** | **Best balance for `feature/builder-semantic-affordances`** |
+
+### Option 3: Larger refactor
+
+**Scope:** Extract `plannerContext/` package, typed operation IR with before/after on every op, refactor `resolveRefinementPlan` orchestration, comprehensive golden tests per prompt class.
+
+| | |
+|--|--|
+| **Pros** | Long-term clean architecture |
+| **Cons** | Too large for one branch; conflicts with “no over-refactor” |
+| **Risk** | High |
+| **Fit** | Defer to follow-up epic |
+
+### Recommendation
+
+**Option 2** — formal semantic module + rich affordances + operation outcome summaries + minimal routing fix for side-window deterministic collision.
+
+---
+
+## 11. Recommended implementation plan
+
+1. **Inventory** — Document current prompt token budget; list all `render*Text` call sites (`buildPlannerPrompt`, `augmentChatWithBuildContext`, `plannerRepair`).
+2. **Material descriptors** — `materialStyleDescriptors.ts` + unit tests for known preset palettes.
+3. **Semantic build summary** — `getSemanticBuildSummaryForPlanner` + `renderSemanticBuildSummaryText`; wire into planner prompt (keep legacy summary behind flag for one commit if needed).
+4. **Rich affordances** — `getRichBlueprintAffordancesForPlanner` with `reason` / `alternatives`; refactor `renderAffordancesText` to use it (preserve existing boolean fields for tests).
+5. **Window surfaces** — `detectRequestedWindowSurfaces(prompt)`; enrich per-face lines; planner prompt section “Requested surfaces”.
+6. **Style intents** — `styleIntentGuidance.ts` + conditional render in user prompt.
+7. **Operation summaries** — `summarizeOperationOutcomes(before, after, ops)`; extend `BuilderToolResult` + `formatToolResultForModel` + `assistantSummary` builder in `planAndRefineBuildingPreview`.
+8. **Routing tweak** — Guard front-window deterministic mapping when side/back/right/left detected in `mapRefinementPromptToOperations`.
+9. **Feed context** — Replace ad-hoc blocks in `buildPlannerUserPrompt` with `buildPlannerContextForLlm`; update `plannerRepair` to include semantic summary snippet.
+10. **Tests** — See §12; keep `setLlmPlannerForTests` for abstract style cases.
+11. **Docs** — Update `CHANGE.md` on branch; keep manual-test checklist.
+12. **Validate** — `pnpm exec tsc --noEmit`, `pnpm test:generator`, `pnpm run build`.
 
 ---
 
 ## 12. Testing plan
 
-### 12.1 Unit tests (new/updated)
+### Unit tests (new / extended)
 
-| Area | Cases |
-|------|-------|
-| Registry | `canAdd` porch/chimney/window; ID generation; defaults |
-| Materialize | intent → full component; invalid surface |
-| `applyBlueprintOperationsV2` | add porch to workshop; add when porch exists (fail); remove porch; add/remove chimney; add left windows; remove window group |
-| Validation | duplicate id; invalid surface; not removable; dangling refs |
-| Planner | schema includes add/remove; sample JSON validates; normalize aliases |
-| Integration | apply → `validateBlueprint` → `generateStructure` succeeds |
-| classify | “add a porch” not structural unsupported |
+| Area | Test file (proposed) | Cases |
+|------|----------------------|-------|
+| Semantic summary | `semanticBuildSummary.test.ts` | stone_workshop_v2; with porch+chimney+windows |
+| Material descriptors | `materialStyleDescriptors.test.ts` | cobblestone, limestone_bricks, unknown key |
+| Rich affordances | `richAffordances.test.ts` | porch exists → add false + reason; front at capacity |
+| Window surfaces | `windowSurfaceIntent.test.ts` | right only; left+right; back; “not on front” |
+| Style intents | `styleIntentGuidance.test.ts` | welcoming/rustic/bright triggers render hints |
+| Operation summaries | `operationResultSummary.test.ts` | add vs update count 1→2; remove; palette |
+| Routing | extend `mapRefinementPromptToOperations.test.ts` | “add windows on the right” ≠ front update |
+| Planner integration | extend `planAndRefineBuildingPreview.test.ts` | mocked LLM receives context containing `at capacity` |
 
-### 12.2 Commands
+### Manual retest (after implementation)
+
+1. Stone workshop → “add windows to the right and back” (two groups or clear unsupported).
+2. “add a window to the left and right” → refine runs, plausible plan.
+3. “make it more welcoming” with front full → side windows or porch, not front count 4.
+4. Update front windows 1→2 → assistant says “2 windows total”, not “two additional”.
+5. Window request when porch exists → rejection mentions windows, not porch (if still failing, file follow-up).
+
+### Commands
 
 ```bash
 pnpm exec tsc --noEmit
@@ -634,89 +560,59 @@ pnpm test:generator
 pnpm run build
 ```
 
-### 12.3 Manual tests
+---
 
-1. Generate **stone workshop** (`stone_workshop_v2`).
-2. “add a chimney” → preview updates, chimney visible.
-3. “remove the chimney” → preview updates.
-4. “add a porch” → porch on front.
-5. “make the porch wider” → `widthMode` `full_facade` (porch house or after add).
-6. “add windows on the left side” → `left-windows` group.
-7. “remove the side windows” → group removed.
-8. “make it more welcoming” → multi-op or unsupported with clear reason.
-9. “add a second floor” → graceful unsupported, preview unchanged.
+## 13. Open decisions/questions
+
+1. **Semantic summary format:** Text-only in prompt first, or JSON appendix from day one?
+2. **Style intents:** Hybrid library (recommended) vs prompt-only for v1?
+3. **Affordances:** Replace `BlueprintAffordancesForPlanner` type or extend with optional `rich` nested object?
+4. **Operation diffs:** Required for branch success, or phase 2 if `formatToolResultForModel` INSTRUCTION patch is enough?
+5. **Window routing:** Context-only in planner vs also change `mapRefinementPromptToOperations` / `classifyRefinementPrompt`?
+6. **Token budget:** Max size for new context block; trim order (style hints first vs affordance details)?
+7. **Chat-only context:** Should `augmentChatWithBuildContext` use semantic summary (feedback quality) or planner-only?
+8. **MINIMUM scope:** Ship summaries + rich affordances + descriptors without routing change — acceptable?
 
 ---
 
-## 13. Cloudflare / runtime considerations
+## 14. Non-goals
 
-- No Cloudflare Agents, D1, R2, AI Gateway, persistence.
-- Same Workers AI env vars; planner call pattern unchanged.
-- All new logic **server-side deterministic** TypeScript.
-- No route runtime changes.
-
----
-
-## 14. Out of scope
-
-- Multiple rooms, side rooms, second floors
-- Interiors / zones
-- Selected-region editing
-- Canonical screenshots, image-aware planning
-- Full free-form blueprint generation from LLM
-- Raw voxel coordinates, `ComponentPlan` editing
-- `door` / `step` add-remove (unless explicitly deferred sub-task)
-- Persistence, auth, Cloudflare data plane
-- New component types beyond porch / chimney / window_group in phase 1
+- Image-to-build / vision planner context expansion (beyond existing attachment chat).
+- New major component families (sign, balcony, dormer, second floor, interior zones).
+- Multiple rooms / side rooms / bedroom wings.
+- Persistence, versioning, auth, Cloudflare Agents, D1, R2, AI Gateway integration.
+- Raw voxel coordinate editing or LLM-authored `ComponentPlanV2` / compile IR.
+- Full blueprint JSON rewrites from the LLM.
+- Weakening `validateGenericBuildingV2` rules to satisfy the model.
+- Large deterministic phrase tables for style (`makeWelcoming()` etc.).
 
 ---
 
-## 15. Implementation phases
+## 15. Final recommendation
 
-| Phase | Deliverable |
-|-------|-------------|
-| **A — Audit + operation design** | Finalize types (`AddComponentIntent`, canonical apply shape); porch `widthMode` patch spec; classifier changes doc |
-| **B — Registry + defaults** | `componentOperationRegistry.ts`, `materializeAddComponent`, `getBlueprintAffordancesForPlanner` |
-| **C — Validation + normalization** | `validatePlannerOperations`, `normalizePlannerOperation`, materialize pass |
-| **D — applyBlueprintOperationsV2** | add/remove apply, porch patch extension, labels |
-| **E — Planner schema + prompt** | `buildAllowedOperationsSchema`, `PLANNER_SYSTEM_PROMPT`, Workers AI JSON schema |
-| **F — Activity + tool formatting** | Events, `appliedOperations`, banner detail strings |
-| **G — Tests + docs** | Unit/integration tests; update `CHANGE.md`; optional deterministic mapper for literal add/remove |
+**Take Option 2:** add `src/lib/builder/semantic/` as the single source of planner-facing context (summary, material tags, rich affordances, style-intent hints), wire it through `buildPlannerUserPrompt` and repair prompts, and add **structured operation outcome summaries** so the assistant stops misreporting window counts.
+
+**First implementation step:** Add `materialStyleDescriptors.ts` + `getSemanticBuildSummaryForPlanner` with tests for `stone_workshop_v2` and `porch_house_v2`, without changing routing or LLM calls — validate rendered text in snapshots, then integrate into the planner user prompt in step 2.
+
+This keeps the AI/code boundary intact (operations → materialize → validate → generate) while giving the planner the semantic and surface-specific judgment layer manual testing showed is missing.
 
 ---
 
-## 16. Success criteria
+## Appendix: Key file index (current repo)
 
-- [x] `addComponent` and `removeComponent` exist as **general** operation types (not per-component tools).
-- [x] **porch**, **chimney**, **window_group** work through registry + materialization.
-- [x] LLM planner requests adds via **Option B** intent; server builds components.
-- [x] Preview updates only after **validateBlueprint** + **generateStructure** succeed.
-- [x] Existing chat, streaming, anti-hallucination, and refinement routing still work.
-- [x] `pnpm exec tsc --noEmit`, `pnpm test:generator`, `pnpm run build` pass.
-
----
-
-## 18. Long-term architecture (semantic layer above geometry)
-
-`GenericBuildingBlueprintV2` components are the **semantic authoring layer**. They preserve architectural meaning for the LLM and user: porch, chimney, window_group, roof, room, and so on.
-
-This branch expands the **semantic component operation framework** (`addComponent` / `removeComponent` registry). These components must **not** become permanent isolated generator islands.
-
-**Intended long-term hierarchy:**
-
-```text
-User intent
-  → semantic operations (constrained JSON)
-  → GenericBuildingBlueprintV2 components
-  → private ComponentPlanV2
-  → reusable geometric primitives / shared emitters
-  → validated VoxelBlock[]
-```
-
-Future geometric primitives may include volumes, wall segments, slabs, posts, roof planes, openings/cutouts, trim bands, stairs, and simple shape primitives. The LLM should edit **semantic components and operations**, not raw geometry, voxel coordinates, or `ComponentPlanV2`.
-
-The phase-1 registry is an **extensible semantic layer** above that future reusable geometry — new component types register defaults and validation rather than new one-off API tools.
-
----
-
-*Plan approved and implemented on `feature/builder-tool-expansion`.*
+| Concern | Primary files |
+|---------|----------------|
+| Chat route | `src/app/api/builder/chat/route.ts` |
+| Tool orchestration | `src/lib/builder/runBuilderChatTurn.ts`, `planAndRefineBuildingPreview.ts` |
+| Routing | `shouldRunRefinementTool.ts`, `shouldRunGenerationTool.ts`, `classifyRefinementPrompt.ts` |
+| Deterministic ops | `mapRefinementPromptToOperations.ts` |
+| LLM planner | `planBlueprintOperationsWithLlm.ts`, `callWorkersAiJsonPlanner.ts`, `buildPlannerPrompt.ts` |
+| Schema | `plannerResponseSchema.ts`, `blueprintOperationsV2.ts` |
+| Validate / materialize | `validatePlannerOperations.ts`, `normalizePlannerOperation.ts`, `materializePlannerOperations.ts`, `componentOperationRegistry.ts` |
+| Apply | `applyBlueprintOperationsV2.ts` |
+| Window capacity | `windowFacadeCapacity.ts`, `validateGenericBuildingV2.ts` |
+| Affordances | `getBlueprintAffordancesForPlanner.ts`, `buildAllowedOperationsSchema.ts` |
+| Generator IR | `compileGenericBuildingV2Plan.ts`, `emitFromComponentPlanV2.ts`, `generateStructure.ts` |
+| Tool → model | `formatToolResultForModel.ts`, `builderSystemPrompt.ts` |
+| Safety | `guardNoToolChangeClaims.ts`, `applyChatOnlyResponseSafety.ts` |
+| Tests | `src/lib/builder/__tests__/*.test.ts` (279 tests in generator suite) |

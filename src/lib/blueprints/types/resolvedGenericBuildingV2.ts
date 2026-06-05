@@ -13,6 +13,7 @@ import type {
   ShedOrientationV2,
   WindowHeightBandV2,
   WindowLayoutV2,
+  WindowTreatmentV2,
 } from "./genericBuildingV2";
 import type { PlanBoundsV2, ResolvedMaterialPaletteV2 } from "@/src/lib/generation/components/v2/types";
 
@@ -59,6 +60,7 @@ export interface ResolvedWindowApertureV2 {
   readonly horizontal: HorizontalPlacementV2["horizontal"];
   readonly slots: readonly number[];
   readonly wy: number;
+  readonly windowTreatment: WindowTreatmentV2;
 }
 
 export interface ResolvedFacadeOpeningsV2 {

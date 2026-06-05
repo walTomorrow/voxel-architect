@@ -1,4 +1,5 @@
 import type { BuilderToolResult } from "@/src/lib/builder/builderToolTypes";
+import { formatOutcomesForToolResult } from "@/src/lib/builder/semantic/operationResultSummary";
 
 /**
  * Injected into the Workers AI context so the model can summarize tool output.
@@ -34,8 +35,9 @@ export function formatToolResultForModel(toolResult: BuilderToolResult): string 
       : "none";
 
   const plannerPath = toolResult.plannerPath ?? "none";
+  const outcomesBlock = formatOutcomesForToolResult(toolResult.operationOutcomes ?? []);
 
-  return [
+  const lines = [
     `TOOL_KIND: ${kind}`,
     "BUILDER_TOOL_STATUS: success",
     `PLANNER_PATH: ${plannerPath}`,
@@ -46,8 +48,20 @@ export function formatToolResultForModel(toolResult: BuilderToolResult): string 
     `VALIDATION_WARNINGS: ${warnings}`,
     "PREVIEW_UPDATED: yes",
     `SUMMARY: ${toolResult.assistantSummary}`,
-    kind === "refine"
-      ? "INSTRUCTION: Describe the specific refinement applied. Do not say you rebuilt from scratch unless the whole preset changed."
-      : "INSTRUCTION: Summarize what was generated. Do not output voxel coordinates or blueprint JSON.",
-  ].join("\n");
+  ];
+
+  if (outcomesBlock.length > 0) {
+    lines.push(outcomesBlock);
+    lines.push(
+      "INSTRUCTION: Describe the refinement using OUTCOME lines. For window_group count changes, state the final total count, not how many were added.",
+    );
+  } else {
+    lines.push(
+      kind === "refine"
+        ? "INSTRUCTION: Describe the specific refinement applied. Do not say you rebuilt from scratch unless the whole preset changed."
+        : "INSTRUCTION: Summarize what was generated. Do not output voxel coordinates or blueprint JSON.",
+    );
+  }
+
+  return lines.join("\n");
 }

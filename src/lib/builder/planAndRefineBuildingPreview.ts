@@ -3,16 +3,15 @@ import {
   isBlueprintValidationResultV2,
   validateBlueprint,
 } from "@/src/lib/blueprints/validateBlueprint";
-import type { BlueprintValidationResultV2 } from "@/src/lib/blueprints/types/validationResult";
 import { generateStructure } from "@/src/lib/generation/generateStructure";
 import { applyBlueprintOperationsV2 } from "@/src/lib/builder/applyBlueprintOperationsV2";
 import type { ApplyableBlueprintOperationV2 } from "@/src/lib/builder/blueprintOperationsV2";
 import type {
   BuilderActivityEvent,
   BuilderPlannerPath,
-  BuilderValidationIssueView,
   BuilderToolResult,
 } from "@/src/lib/builder/builderToolTypes";
+import { mapBuilderValidationIssues } from "@/src/lib/builder/mapBuilderValidationIssues";
 import { classifyRefinementPrompt } from "@/src/lib/builder/classifyRefinementPrompt";
 import { mapRefinementPromptToOperations } from "@/src/lib/builder/mapRefinementPromptToOperations";
 import { planBlueprintOperationsWithLlm } from "@/src/lib/builder/planBlueprintOperationsWithLlm";
@@ -23,6 +22,11 @@ import { isBuilderDevMode } from "@/src/lib/builder/builderDevMode";
 import { summarizeBlueprintForPlanner } from "@/src/lib/builder/summarizeBlueprintForPlanner";
 import { getBlueprintAffordancesForPlanner } from "@/src/lib/builder/getBlueprintAffordancesForPlanner";
 import { buildValidationFailureSuggestion } from "@/src/lib/builder/buildValidationFailureSuggestion";
+import {
+  buildAssistantSummaryFromOutcomes,
+  summarizeOperationOutcomes,
+} from "@/src/lib/builder/semantic/operationResultSummary";
+import { tryResolveWindowFacadePlan } from "@/src/lib/builder/windows/resolveWindowFacadePlan";
 
 function appendPlannerDebugEvents(
   events: BuilderActivityEvent[],
@@ -37,22 +41,6 @@ function appendPlannerDebugEvents(
       status: "error" as const,
     },
   ];
-}
-
-function mapValidationIssues(
-  result: BlueprintValidationResultV2,
-): readonly BuilderValidationIssueView[] {
-  const issues: BuilderValidationIssueView[] = [];
-  for (const e of result.errors) {
-    issues.push({ severity: "error", message: e.message, code: e.code });
-  }
-  for (const w of result.warnings) {
-    issues.push({ severity: "warning", message: w.message, code: w.code });
-  }
-  for (const n of result.notes) {
-    issues.push({ severity: "note", message: n.message, code: n.code });
-  }
-  return issues;
 }
 
 function failResult(
@@ -185,6 +173,31 @@ async function resolveRefinementPlan(
     return runLlmPlannerPath(request, events, { skipSemanticClassEvent: true });
   }
 
+  const windowAttempt = tryResolveWindowFacadePlan(request.prompt, request.blueprint, events);
+  if (windowAttempt.kind === "success") {
+    return {
+      ok: true,
+      plan: {
+        operations: windowAttempt.plan.operations,
+        planLabel: windowAttempt.plan.planLabel,
+        plannerPath: "window_det",
+      },
+      events: windowAttempt.events,
+    };
+  }
+  if (windowAttempt.kind === "reject") {
+    return {
+      ok: false,
+      failure: {
+        reason: windowAttempt.reason,
+        rejectionCode: "PLANNER_UNSUPPORTED",
+        rejectionDetail: windowAttempt.reason,
+        plannerPath: "window_det",
+      },
+      events: windowAttempt.events,
+    };
+  }
+
   if (mode === "deterministic") {
     const mapped = mapRefinementPromptToOperations(request.prompt, request.blueprint);
     if (!mapped.ok) {
@@ -230,6 +243,31 @@ async function resolveRefinementPlan(
 
   if (promptClass === "semantic" || promptClass === "structural") {
     return runLlmPlannerPath(request, events);
+  }
+
+  const windowAuto = tryResolveWindowFacadePlan(request.prompt, request.blueprint, events);
+  if (windowAuto.kind === "success") {
+    return {
+      ok: true,
+      plan: {
+        operations: windowAuto.plan.operations,
+        planLabel: windowAuto.plan.planLabel,
+        plannerPath: "window_det",
+      },
+      events: windowAuto.events,
+    };
+  }
+  if (windowAuto.kind === "reject") {
+    return {
+      ok: false,
+      failure: {
+        reason: windowAuto.reason,
+        rejectionCode: "PLANNER_UNSUPPORTED",
+        rejectionDetail: windowAuto.reason,
+        plannerPath: "window_det",
+      },
+      events: windowAuto.events,
+    };
   }
 
   const mapped = mapRefinementPromptToOperations(request.prompt, request.blueprint);
@@ -290,7 +328,7 @@ function applyAndGenerate(
     );
   }
 
-  const validationIssues = mapValidationIssues(validation);
+  const validationIssues = mapBuilderValidationIssues(validation);
   if (!validation.ok) {
     const err = validation.errors[0]?.message ?? "Blueprint validation failed.";
     const affordances = getBlueprintAffordancesForPlanner(blueprint);
@@ -352,17 +390,30 @@ function applyAndGenerate(
     status: "success",
   });
 
-  const warningNote =
-    validationIssues.filter((i) => i.severity === "warning").length > 0
-      ? ` (${validationIssues.filter((i) => i.severity === "warning").length} validation warning(s))`
-      : "";
+  const warningCount = validationIssues.filter((i) => i.severity === "warning").length;
+  const operationOutcomes = summarizeOperationOutcomes(
+    blueprint,
+    normalized,
+    plan.operations,
+  );
 
   return {
     ok: true,
     toolKind: "refine",
-    assistantSummary: `${plan.planLabel} (${blockCount.toLocaleString()} blocks)${warningNote}.`,
+    assistantSummary: buildAssistantSummaryFromOutcomes(
+      operationOutcomes,
+      blockCount,
+      warningCount,
+      {
+        before: blueprint,
+        after: normalized,
+        operations: plan.operations,
+        plannerPath: plan.plannerPath,
+      },
+    ),
     blueprint: normalized,
     appliedOperations: [...applied.appliedLabels],
+    operationOutcomes,
     schemaVersion: 2,
     blocks,
     blockCount,

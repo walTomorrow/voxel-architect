@@ -60,6 +60,7 @@ export function compileGenericBuildingV2Plan(
             slots: comp.aperture.slots,
             wy: comp.aperture.wy,
             surfaceRef: comp.aperture.surfaceRef,
+            windowTreatment: comp.aperture.windowTreatment,
           },
         });
         break;

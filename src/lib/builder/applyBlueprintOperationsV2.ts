@@ -84,6 +84,7 @@ function applyWindowPatch(
     ...wg,
     count,
     layout: patch.layout ?? wg.layout,
+    windowTreatment: patch.windowTreatment ?? wg.windowTreatment,
   };
   return sanitizeWindowGroupComponent(next, blueprint);
 }

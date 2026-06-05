@@ -15,11 +15,15 @@ import {
 } from "@/src/lib/voxel/layerView";
 import { VoxelViewer } from "@/src/components/voxel/VoxelViewer";
 import type { VoxelStructure } from "@/src/lib/voxel/types";
+import {
+  validationIssueReactKey,
+  type BuilderValidationIssueView,
+} from "@/src/lib/builder/builderToolTypes";
 
 type Props = {
   readonly presetId: string;
   readonly generatedStructure: VoxelStructure | null;
-  readonly validationWarnings?: readonly string[];
+  readonly validationWarnings?: readonly BuilderValidationIssueView[];
   readonly previewGenerationNonce?: number;
 };
 
@@ -245,8 +249,8 @@ export function BuilderPreviewPanel({
 
         {validationWarnings.length > 0 ? (
           <div className="shrink-0 border-t border-amber-900/40 bg-amber-950/30 px-3 py-2 text-[11px] text-amber-200/90">
-            {validationWarnings.map((w) => (
-              <p key={w}>{w}</p>
+            {validationWarnings.map((issue, index) => (
+              <p key={validationIssueReactKey(issue, index)}>{issue.message}</p>
             ))}
           </div>
         ) : null}

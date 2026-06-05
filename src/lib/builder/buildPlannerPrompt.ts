@@ -1,14 +1,9 @@
 import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
-import {
-  buildAllowedOperationsSchema,
-  renderAllowedOperationsSchemaText,
-  renderPlannerContextBlocks,
-} from "@/src/lib/builder/buildAllowedOperationsSchema";
-import {
-  renderBlueprintSummaryText,
-  summarizeBlueprintForPlanner,
-} from "@/src/lib/builder/summarizeBlueprintForPlanner";
 import { MAX_PLANNER_OPERATIONS } from "@/src/lib/builder/plannerTypes";
+import {
+  buildPlannerContextForLlm,
+  renderPlannerContextText,
+} from "@/src/lib/builder/semantic/buildPlannerContextForLlm";
 
 export const PLANNER_EXAMPLES_BLOCK = `Canonical examples (follow these shapes exactly):
 
@@ -75,18 +70,16 @@ export function buildPlannerUserPrompt(
   userRequest: string,
   options?: { presetId?: string },
 ): string {
-  const summary = summarizeBlueprintForPlanner(blueprint, options);
-  const schema = buildAllowedOperationsSchema(blueprint);
-  const affordances = renderPlannerContextBlocks(blueprint);
+  const context = buildPlannerContextForLlm(blueprint, {
+    presetId: options?.presetId,
+    userRequest,
+  });
   return [
-    renderBlueprintSummaryText(summary),
-    "",
-    affordances,
-    "",
-    renderAllowedOperationsSchemaText(schema),
+    renderPlannerContextText(context),
     "",
     `User edit request: ${userRequest.trim()}`,
     "",
     "Return JSON only. Use minimum operations for direct component requests.",
+    "Window counts in updates are totals on that surface, not deltas.",
   ].join("\n");
 }

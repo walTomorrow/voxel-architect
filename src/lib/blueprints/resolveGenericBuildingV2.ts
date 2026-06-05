@@ -1,4 +1,5 @@
 import type { EntranceSide } from "./types";
+import { normalizeWindowTreatment } from "@/src/lib/blueprints/windowTreatment";
 import { parseRoomSurfaceRef } from "./parseRoomSurfaceRef";
 import { resolveMaterialPaletteV2 } from "./resolveMaterialPaletteV2";
 import type {
@@ -319,6 +320,7 @@ export function resolveGenericBuildingV2(
           horizontal,
           slots,
           wy: windowYFromBand(rootRoom.wallHeight, heightBand),
+          windowTreatment: normalizeWindowTreatment(comp.windowTreatment),
         };
         pushWindow(aperture);
         resolvedComponents.push({

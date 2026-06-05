@@ -46,18 +46,9 @@ describe("mapRefinementPromptToOperations", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("maps more windows to the front window group only", () => {
-    const windows = findPrimaryFrontWindowGroup(cabin)!;
+  it("defers generic add more windows to the window façade domain (not legacy mapper)", () => {
     const result = mapRefinementPromptToOperations("add more windows", cabin);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.operations[0]).toMatchObject({
-        op: "updateComponent",
-        id: windows.id,
-        componentType: "window_group",
-        patch: { type: "window_group", count: windows.count + 1 },
-      });
-    }
+    expect(result.ok).toBe(false);
   });
 
   it("maps deeper porch on porch house preset", () => {

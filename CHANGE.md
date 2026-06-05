@@ -1,3 +1,54 @@
+# Change report — Builder semantic affordances
+
+## Window façade follow-up — mixed ops & operation cap (2026-06-04)
+
+**Branch:** `feature/builder-semantic-affordances`
+
+- **Deterministic `window_det` operation cap:** server-authored window plans may exceed `MAX_PLANNER_OPERATIONS` (3) via `skipOperationCountCap` in `validatePlannerOperations`; the LLM planner cap is unchanged.
+- **Mixed remove + add/update:** `FacadeWindowIntent` now includes `removeFaces`, `addOrUpdateFaces`, `sourceFaces`, `removeAllWindows`, and optional `perFaceRequestedCounts` for compound window-only requests in one plan.
+- **Remove-all path:** phrases like “remove all (of the) windows”, “no windows”, and “walls with no windows” remove every `window_group` through `window_det` (including >3 groups).
+- **Move/rebalance phrasing:** “move windows from the front to the sides”, “take windows off the front and put them on the back”, “move side windows to the back”, etc. emit remove-then-add/update ops deterministically.
+- **Scope validation:** mixed window plans still reject porch/chimney/palette/room/roof ops; excluded faces cannot receive add/update.
+- **Summaries:** `buildWindowFacadeAssistantSummary` gives per-face remove/add wording (e.g. which faces were removed vs left unchanged) instead of misleading global window totals.
+
+### Validation
+
+```bash
+pnpm exec tsc --noEmit
+pnpm test:generator
+pnpm run build
+```
+
+---
+
+## Semantic affordances checkpoint (2026-06-04)
+
+**Branch:** `feature/builder-semantic-affordances`
+
+- Added the initial builder semantic module under `src/lib/builder/semantic/` (`materialStyleDescriptors.ts`, `getSemanticBuildSummaryForPlanner.ts`, `richAffordances.ts`, `styleIntentGuidance.ts`, `buildPlannerContextForLlm.ts`, `operationResultSummary.ts`, `detectNonFrontWindowIntent.ts`).
+- Added semantic build summary support for planner-facing context (building type, proportions, palette style tags, per-face windows, missing features, suggested next moves).
+- Added tests for `semanticBuildSummary` (`stone_workshop_v2`, `porch_house_v2`).
+- Added `detectNonFrontWindowIntent` coverage, including “not on the front” and routing guard tests in `mapRefinementPromptToOperations`.
+- Added `operationResultSummary` coverage (add/remove/update/palette; window totals as before → after).
+- Added `richAffordances` and `styleIntentGuidance` tests; wired semantic context into `buildPlannerUserPrompt` and `plannerRepair`; operation outcomes in `formatToolResultForModel` / `planAndRefineBuildingPreview`.
+- Fixed the “not on the front” detection edge case (evaluate front exclusions before the front-only short-circuit; allow `not on the front` / `but not on the front` phrasing).
+- Fixed operation summary formatting expectations around locale-formatted numbers (e.g. `1,000` vs `1000` in assertions).
+
+### Validation status
+
+- Semantic targeted tests: **16/16 passing** (`semanticBuildSummary`, `richAffordances`, `styleIntentGuidance`, `detectNonFrontWindowIntent`, `operationResultSummary`).
+- Broader generator suite: **279 passing**.
+
+```bash
+pnpm exec tsc --noEmit
+pnpm test:generator
+pnpm run build
+```
+
+See `PLAN.md` (Builder Semantic Affordances) for scope and manual retest checklist.
+
+---
+
 # Change report — Builder tool expansion
 
 ## Component operation framework (2026-06-04)
@@ -42,12 +93,12 @@ Pipeline unchanged: parse → normalize → validate → materialize → apply �
 
 ### Known limitations from manual testing
 
-These are follow-up issues for the semantic affordance / build-summary layer, not blockers for the component-operation framework.
+Partially addressed on `feature/builder-semantic-affordances` (see semantic checkpoint above). Remaining follow-ups:
 
-- **Surface-specific window requests are still inconsistent.** For example, “add windows to the right and back” may be misrouted or reduced to a front-window deterministic edit.
-- **Compound side-window requests** such as “left and right” may miss the refine tool or be rejected incorrectly.
+- **Multi-surface window planning** — deterministic front-window mapping is guarded when side/back/left/right or “not on the front” is detected; compound “left and right” / “right and back” still relies on the LLM planner with better context, not full `detectRequestedWindowSurfaces` wiring.
+- **Compound side-window requests** may still miss the refine tool gate (`shouldRunRefinementTool` / `classifyRefinementPrompt` unchanged).
 - **Some planner failures may reference the wrong component affordance**, e.g. a porch-related rejection during a window request.
-- **Assistant summaries can overstate count deltas**, e.g. saying “two additional windows” when the tool updated an existing window group to count 2.
+- **Assistant window count wording** — structured operation outcomes and `formatToolResultForModel` OUTCOME lines should reduce delta misreports; needs manual retest on live chat.
 
 ---
 

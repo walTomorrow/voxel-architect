@@ -255,4 +255,15 @@ describe("validateGenericBuildingBlueprintV2", () => {
     expect(r.ok).toBe(false);
     expect(codes(r)).toContain("window_count_exceeds_facade");
   });
+
+  it("window_count_high warning message includes target surface", () => {
+    const bp = clonePreset("stone_workshop_v2");
+    const wins = bp.components.find((c) => c.id === "front-windows");
+    if (wins?.type === "window_group") {
+      wins.count = 2;
+    }
+    const r = validateGenericBuildingBlueprintV2(bp);
+    const high = r.warnings.find((w) => w.code === "window_count_high");
+    expect(high?.message).toMatch(/on main-room\.front/);
+  });
 });

@@ -1,3 +1,4 @@
+import { normalizeWindowTreatment } from "@/src/lib/blueprints/windowTreatment";
 import type {
   GenericBuildingBlueprintV2,
   RoomFace,
@@ -139,5 +140,6 @@ export function sanitizeWindowGroupComponent(
     layout,
     count,
     heightBand: component.heightBand ?? "mid",
+    windowTreatment: normalizeWindowTreatment(component.windowTreatment),
   };
 }

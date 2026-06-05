@@ -13,6 +13,7 @@ import type {
   ShedOrientationV2,
   WindowHeightBandV2,
   WindowLayoutV2,
+  WindowTreatmentV2,
 } from "@/src/lib/blueprints/types/genericBuildingV2";
 import type { BlockTypeId } from "@/src/lib/voxel/blocks/registry-types";
 
@@ -30,6 +31,8 @@ export interface DerivedOpeningsV2 {
   readonly shellSkipMask: ReadonlySet<string>;
   readonly windowMask: ReadonlySet<string>;
   readonly doorMask: ReadonlySet<string>;
+  /** Per aperture cell key — how to fill window openings at emit time. */
+  readonly windowTreatmentByCellKey: ReadonlyMap<string, WindowTreatmentV2>;
 }
 
 export interface PlanBoundsV2 {
@@ -69,6 +72,7 @@ export interface WindowAperturePlanV2 {
   readonly slots: readonly number[];
   readonly wy: number;
   readonly surfaceRef: RoomSurfaceRef;
+  readonly windowTreatment: WindowTreatmentV2;
 }
 
 export interface PlanRoomShellV2 {

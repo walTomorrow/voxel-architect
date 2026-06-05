@@ -4,31 +4,14 @@ import {
   isBlueprintValidationResultV2,
   validateBlueprint,
 } from "@/src/lib/blueprints/validateBlueprint";
-import type { BlueprintValidationResultV2 } from "@/src/lib/blueprints/types/validationResult";
 import { generateStructure } from "@/src/lib/generation/generateStructure";
 import type {
   BuilderActivityEvent,
   BuilderToolResult,
-  BuilderValidationIssueView,
   GenerateBuildingPreviewRequest,
 } from "@/src/lib/builder/builderToolTypes";
+import { mapBuilderValidationIssues } from "@/src/lib/builder/mapBuilderValidationIssues";
 import { resolvePresetFromPrompt } from "@/src/lib/builder/resolvePresetFromPrompt";
-
-function mapValidationIssues(
-  result: BlueprintValidationResultV2,
-): readonly BuilderValidationIssueView[] {
-  const issues: BuilderValidationIssueView[] = [];
-  for (const e of result.errors) {
-    issues.push({ severity: "error", message: e.message, code: e.code });
-  }
-  for (const w of result.warnings) {
-    issues.push({ severity: "warning", message: w.message, code: w.code });
-  }
-  for (const n of result.notes) {
-    issues.push({ severity: "note", message: n.message, code: n.code });
-  }
-  return issues;
-}
 
 function failResult(
   error: string,
@@ -109,7 +92,7 @@ export function generateBuildingPreview(
     );
   }
 
-  const validationIssues = mapValidationIssues(validation);
+  const validationIssues = mapBuilderValidationIssues(validation);
   if (!validation.ok) {
     const err =
       validation.errors[0]?.message ?? "Blueprint validation failed.";

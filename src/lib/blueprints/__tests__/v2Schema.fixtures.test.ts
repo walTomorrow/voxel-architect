@@ -78,6 +78,7 @@ describe("GenericBuildingBlueprint v2 schema fixtures", () => {
         shellSkipMask: new Set(),
         windowMask: new Set(),
         doorMask: new Set(),
+        windowTreatmentByCellKey: new Map(),
       },
       components: [
         {
