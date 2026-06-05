@@ -1,5 +1,6 @@
 import type { ComponentId, RoomSurfaceRef } from "./genericBuildingV2";
 import type { GenericBuildingBlueprintV2 } from "./genericBuildingV2";
+import type { LandmarkTowerBlueprint } from "./landmarkTower";
 
 export type ValidationSeverity = "error" | "warning" | "note";
 
@@ -25,4 +26,12 @@ export interface BlueprintValidationResultV2 {
   readonly warnings: readonly ValidationIssue[];
   readonly notes: readonly ValidationIssue[];
   readonly normalized?: GenericBuildingBlueprintV2;
+}
+
+export interface LandmarkBlueprintValidationResult {
+  readonly ok: boolean;
+  readonly errors: readonly ValidationIssue[];
+  readonly warnings: readonly ValidationIssue[];
+  readonly notes: readonly ValidationIssue[];
+  readonly normalized?: LandmarkTowerBlueprint;
 }

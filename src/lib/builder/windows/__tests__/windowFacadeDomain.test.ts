@@ -8,6 +8,7 @@ import { applyBlueprintOperationsV2 } from "@/src/lib/builder/applyBlueprintOper
 import { materializeAddComponent } from "@/src/lib/builder/componentOperationRegistry";
 import { findPorch, findPrimaryFrontWindowGroup } from "@/src/lib/builder/blueprintComponentIndex";
 import { mapRefinementPromptToOperations } from "@/src/lib/builder/mapRefinementPromptToOperations";
+import { assertGenericBuildingBlueprintV2 } from "@/src/lib/builder/builderToolTypes";
 import { planAndRefineBuildingPreview } from "@/src/lib/builder/planAndRefineBuildingPreview";
 import { MAX_PLANNER_OPERATIONS } from "@/src/lib/builder/plannerTypes";
 import { buildWindowFacadeAssistantSummary } from "@/src/lib/builder/semantic/operationResultSummary";
@@ -244,7 +245,9 @@ describe("buildWindowOperationsFromIntent", () => {
     });
     expect(refined.ok).toBe(true);
     if (!refined.ok) return;
-    const wg = refined.blueprint!.components.find((c) => c.id === "right-windows");
+    const wg = assertGenericBuildingBlueprintV2(refined.blueprint).components.find(
+      (c) => c.id === "right-windows",
+    );
     expect(wg?.type === "window_group" && wg.windowTreatment).toBe("glass_block");
   });
 
@@ -342,7 +345,7 @@ describe("buildWindowOperationsFromIntent", () => {
     });
     expect(refined.ok).toBe(true);
     if (!refined.ok) return;
-    const wg = refined.blueprint!.components.find(
+    const wg = assertGenericBuildingBlueprintV2(refined.blueprint).components.find(
       (c) => c.type === "window_group" && c.attach.targetSurface === "main-room.back",
     );
     expect(wg?.type === "window_group" && wg.windowTreatment).toBe("glass_pane");
@@ -360,7 +363,11 @@ describe("operation cap", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.plannerPath).toBe("window_det");
-    expect(result.blueprint!.components.some((c) => c.type === "window_group")).toBe(false);
+    expect(
+      assertGenericBuildingBlueprintV2(result.blueprint).components.some(
+        (c) => c.type === "window_group",
+      ),
+    ).toBe(false);
   });
 
   it("LLM planner MAX_PLANNER_OPERATIONS remains unchanged", () => {
@@ -499,7 +506,9 @@ describe("planAndRefineBuildingPreview window_det", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.plannerPath).toBe("window_det");
-    const front = result.blueprint!.components.find((c) => c.id === "front-windows");
+    const front = assertGenericBuildingBlueprintV2(result.blueprint).components.find(
+      (c) => c.id === "front-windows",
+    );
     expect(front?.type === "window_group" && front.count).toBe(2);
   });
 
@@ -512,8 +521,9 @@ describe("planAndRefineBuildingPreview window_det", () => {
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(findPorch(result.blueprint!)).toBeDefined();
-    const front = findPrimaryFrontWindowGroup(result.blueprint!);
+    const refinedBp = assertGenericBuildingBlueprintV2(result.blueprint);
+    expect(findPorch(refinedBp)).toBeDefined();
+    const front = findPrimaryFrontWindowGroup(refinedBp);
     expect(front?.count).toBe(1);
   });
 
@@ -526,8 +536,9 @@ describe("planAndRefineBuildingPreview window_det", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.plannerPath).toBe("window_det");
-    expect(result.blueprint!.components.some((c) => c.id === "left-windows")).toBe(true);
-    expect(result.blueprint!.components.some((c) => c.id === "right-windows")).toBe(true);
+    const bp = assertGenericBuildingBlueprintV2(result.blueprint);
+    expect(bp.components.some((c) => c.id === "left-windows")).toBe(true);
+    expect(bp.components.some((c) => c.id === "right-windows")).toBe(true);
   });
 });
 
@@ -559,12 +570,13 @@ describe("windowTreatment generation", () => {
     });
     expect(refined.ok).toBe(true);
     if (!refined.ok) return;
-    const wg = refined.blueprint!.components.find(
+    const refinedBp = assertGenericBuildingBlueprintV2(refined.blueprint);
+    const wg = refinedBp.components.find(
       (c) => c.type === "window_group" && c.attach.targetSurface === "main-room.back",
     );
     expect(wg?.type === "window_group" && wg.windowTreatment).toBe("open");
     const windowBlocks = refined.blocks!.filter(
-      (b) => b.blockTypeId === refined.blueprint!.materials.window,
+      (b) => b.blockTypeId === refinedBp.materials.window,
     );
     expect(windowBlocks.length).toBe(0);
   });

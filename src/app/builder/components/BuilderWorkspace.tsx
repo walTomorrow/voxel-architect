@@ -16,7 +16,7 @@ type Props = {
   readonly isLoading: boolean;
   readonly validationWarnings: readonly BuilderValidationIssueView[];
   readonly previewGenerationNonce: number;
-  readonly onSendMessage: (text: string, image: PendingImageReference | null) => void;
+  readonly onSendMessage: (text: string, images: readonly PendingImageReference[]) => void;
   readonly onResetChat: () => void;
 };
 

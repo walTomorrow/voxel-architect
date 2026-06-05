@@ -4,6 +4,7 @@ import {
   BUILDER_IMAGE_MIME_TYPES,
   BUILDER_MAX_CHAT_MESSAGES,
   BUILDER_MAX_IMAGE_BYTES,
+  BUILDER_MAX_IMAGES_PER_MESSAGE,
   BUILDER_MAX_MESSAGE_CHARS,
   type BuilderChatMessageInput,
   type BuilderChatRequestBody,
@@ -29,6 +30,66 @@ function estimateBase64DecodedBytes(base64: string): number {
   const trimmed = base64.replace(/\s/g, "");
   const padding = trimmed.endsWith("==") ? 2 : trimmed.endsWith("=") ? 1 : 0;
   return Math.floor((trimmed.length * 3) / 4) - padding;
+}
+
+function parseImageAttachment(raw: unknown): BuilderImageAttachmentInput | { error: string } {
+  if (!isRecord(raw)) {
+    return { error: "Each attachment must be an object." };
+  }
+  if (raw.type !== "image") {
+    return { error: "attachment.type must be image." };
+  }
+  if (raw.source !== "user_reference") {
+    return { error: "Only user_reference images are supported in this phase." };
+  }
+  const mimeType = parseMimeType(raw.mimeType);
+  if (!mimeType) {
+    return { error: "Unsupported image type. Use PNG, JPEG, or WebP." };
+  }
+  if (typeof raw.dataBase64 !== "string" || raw.dataBase64.length === 0) {
+    return { error: "attachment.dataBase64 is required." };
+  }
+  const data = raw.dataBase64.replace(/^data:[^;]+;base64,/, "").trim();
+  if (estimateBase64DecodedBytes(data) > BUILDER_MAX_IMAGE_BYTES) {
+    return {
+      error: `Image exceeds ${Math.round(BUILDER_MAX_IMAGE_BYTES / (1024 * 1024))} MB limit.`,
+    };
+  }
+  const name =
+    typeof raw.name === "string" && raw.name.trim().length > 0
+      ? raw.name.trim().slice(0, MAX_NAME_CHARS)
+      : "reference.png";
+  return {
+    type: "image",
+    source: "user_reference",
+    mimeType,
+    dataBase64: data,
+    name,
+  };
+}
+
+function parseAttachments(body: Record<string, unknown>): BuilderImageAttachmentInput[] | { error: string } {
+  const rawList: unknown[] = [];
+
+  if (Array.isArray(body.attachments)) {
+    rawList.push(...body.attachments);
+  } else if (body.attachment != null) {
+    rawList.push(body.attachment);
+  }
+
+  if (rawList.length > BUILDER_MAX_IMAGES_PER_MESSAGE) {
+    return {
+      error: `Too many images (max ${BUILDER_MAX_IMAGES_PER_MESSAGE} per message).`,
+    };
+  }
+
+  const attachments: BuilderImageAttachmentInput[] = [];
+  for (const item of rawList) {
+    const parsed = parseImageAttachment(item);
+    if ("error" in parsed) return parsed;
+    attachments.push(parsed);
+  }
+  return attachments;
 }
 
 export function parseBuilderChatRequestBody(
@@ -77,47 +138,11 @@ export function parseBuilderChatRequestBody(
   }
   const messages = prepared.messages;
 
-  let attachment: BuilderImageAttachmentInput | null = null;
-  if (body.attachment != null) {
-    if (!isRecord(body.attachment)) {
-      return { ok: false, error: "attachment must be an object or null." };
-    }
-    const a = body.attachment;
-    if (a.type !== "image") {
-      return { ok: false, error: "attachment.type must be image." };
-    }
-    if (a.source !== "user_reference") {
-      return {
-        ok: false,
-        error: "Only user_reference images are supported in this phase.",
-      };
-    }
-    const mimeType = parseMimeType(a.mimeType);
-    if (!mimeType) {
-      return { ok: false, error: "Unsupported image type. Use PNG, JPEG, or WebP." };
-    }
-    if (typeof a.dataBase64 !== "string" || a.dataBase64.length === 0) {
-      return { ok: false, error: "attachment.dataBase64 is required." };
-    }
-    const raw = a.dataBase64.replace(/^data:[^;]+;base64,/, "").trim();
-    if (estimateBase64DecodedBytes(raw) > BUILDER_MAX_IMAGE_BYTES) {
-      return {
-        ok: false,
-        error: `Image exceeds ${Math.round(BUILDER_MAX_IMAGE_BYTES / (1024 * 1024))} MB limit.`,
-      };
-    }
-    const name =
-      typeof a.name === "string" && a.name.trim().length > 0
-        ? a.name.trim().slice(0, MAX_NAME_CHARS)
-        : "reference.png";
-    attachment = {
-      type: "image",
-      source: "user_reference",
-      mimeType,
-      dataBase64: raw,
-      name,
-    };
+  const attachmentsParsed = parseAttachments(body);
+  if ("error" in attachmentsParsed) {
+    return { ok: false, error: attachmentsParsed.error };
   }
+  const attachments = attachmentsParsed;
 
   const last = messages[messages.length - 1]!;
   if (last.role !== "user") {
@@ -149,7 +174,7 @@ export function parseBuilderChatRequestBody(
     ok: true,
     data: {
       messages,
-      attachment,
+      attachments,
       currentBlueprint: currentBlueprint ?? null,
       ...(currentBlockCount != null ? { currentBlockCount } : {}),
     },

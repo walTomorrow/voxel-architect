@@ -1,14 +1,18 @@
 import type {
   GenericBuildingBlueprint,
   GenericBuildingBlueprintV2,
+  LandmarkTowerBlueprint,
   ResolvedStructure,
   StructureBlueprint,
 } from "@/src/lib/blueprints/types";
+import { isLandmarkTowerBlueprint } from "@/src/lib/blueprints/types/landmarkTower";
+import { validateLandmarkTowerBlueprint } from "@/src/lib/blueprints/validateLandmarkTower";
 import { resolveGenericBuildingV2 } from "@/src/lib/blueprints/resolveGenericBuildingV2";
 import { validateBlueprint } from "@/src/lib/blueprints/validateBlueprint";
 import { validateGenericBuildingBlueprintV2 } from "@/src/lib/blueprints/validateGenericBuildingV2";
 import { generateGenericBuilding } from "@/src/lib/generation/generators/generateGenericBuilding";
 import { generateGenericBuildingV2 } from "@/src/lib/generation/generators/generateGenericBuildingV2";
+import { generateLandmarkTower } from "@/src/lib/generation/generators/generateLandmarkTower";
 import type { VoxelBlock } from "@/src/lib/voxel/types";
 
 /**
@@ -16,6 +20,17 @@ import type { VoxelBlock } from "@/src/lib/voxel/types";
  * Throws if validation fails (use `validateBlueprint()` first for UI flows).
  */
 export function generateStructure(blueprint: StructureBlueprint): VoxelBlock[] {
+  if (isLandmarkTowerBlueprint(blueprint)) {
+    const result = validateLandmarkTowerBlueprint(blueprint);
+    if (!result.ok) {
+      throw new Error(result.errors.map((e) => e.message).join("; "));
+    }
+    if (!result.normalized) {
+      throw new Error("validateLandmarkTowerBlueprint returned no normalized blueprint.");
+    }
+    return generateLandmarkTower(result.normalized as LandmarkTowerBlueprint);
+  }
+
   if (blueprint.schemaVersion === 2) {
     const result = validateGenericBuildingBlueprintV2(
       blueprint as GenericBuildingBlueprintV2,

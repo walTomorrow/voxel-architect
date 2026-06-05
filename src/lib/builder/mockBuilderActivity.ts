@@ -11,7 +11,7 @@ export function buildMockActivitySteps(
 }
 
 export function hasImageAttachment(
-  attachment: BuilderImageAttachmentInput | null | undefined,
+  attachments: readonly BuilderImageAttachmentInput[] | null | undefined,
 ): boolean {
-  return attachment != null && attachment.type === "image";
+  return (attachments?.length ?? 0) > 0;
 }

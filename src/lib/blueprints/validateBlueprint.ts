@@ -1,18 +1,25 @@
 import type {
   GenericBuildingBlueprint,
   GenericBuildingBlueprintV2,
+  LandmarkTowerBlueprint,
   StructureBlueprint,
 } from "./types";
-import type { BlueprintValidationResultV2 } from "./types/validationResult";
+import { isLandmarkTowerBlueprint } from "./types/landmarkTower";
+import type {
+  BlueprintValidationResultV2,
+  LandmarkBlueprintValidationResult,
+} from "./types/validationResult";
 import {
   validateGenericBuildingBlueprint,
   type BlueprintValidationResult,
 } from "./validateGenericBuilding";
 import { validateGenericBuildingBlueprintV2 } from "./validateGenericBuildingV2";
+import { validateLandmarkTowerBlueprint } from "./validateLandmarkTower";
 
 export type { BlueprintValidationResult } from "./validateGenericBuilding";
 export { validateGenericBuildingBlueprint } from "./validateGenericBuilding";
 export { validateGenericBuildingBlueprintV2 } from "./validateGenericBuildingV2";
+export { validateLandmarkTowerBlueprint } from "./validateLandmarkTower";
 export type {
   BlueprintValidationResultV2,
   ValidationIssue,
@@ -21,12 +28,22 @@ export type {
 
 export type ValidateBlueprintResult =
   | BlueprintValidationResult
-  | BlueprintValidationResultV2;
+  | BlueprintValidationResultV2
+  | LandmarkBlueprintValidationResult;
+
+export function isLandmarkBlueprintValidationResult(
+  result: ValidateBlueprintResult,
+): result is LandmarkBlueprintValidationResult {
+  if ("resolved" in result || !("warnings" in result)) return false;
+  const normalized = result.normalized;
+  return normalized !== undefined && isLandmarkTowerBlueprint(normalized);
+}
 
 export function isBlueprintValidationResultV2(
   result: ValidateBlueprintResult,
 ): result is BlueprintValidationResultV2 {
-  return "warnings" in result;
+  if ("resolved" in result || !("warnings" in result)) return false;
+  return !isLandmarkBlueprintValidationResult(result);
 }
 
 export function validateBlueprint(
@@ -36,21 +53,30 @@ export function validateBlueprint(
   blueprint: GenericBuildingBlueprintV2,
 ): BlueprintValidationResultV2;
 export function validateBlueprint(
+  blueprint: LandmarkTowerBlueprint,
+): LandmarkBlueprintValidationResult;
+export function validateBlueprint(
   blueprint: StructureBlueprint,
 ): ValidateBlueprintResult;
-/**
- * Validates a generic building blueprint (v1 or v2).
- * v1 returns resolved structure when valid; v2 returns normalized blueprint (no resolved yet).
- */
 export function validateBlueprint(
   blueprint: StructureBlueprint,
 ): ValidateBlueprintResult {
+  if (isLandmarkTowerBlueprint(blueprint)) {
+    return validateLandmarkTowerBlueprint(blueprint);
+  }
+
   if (blueprint.structureType !== "generic_building") {
     return {
       ok: false,
       errors: [
-        `Unsupported structureType: ${(blueprint as { structureType?: string }).structureType ?? "?"}. Only generic_building is supported.`,
+        {
+          severity: "error",
+          code: "unsupported_structure_type",
+          message: `Unsupported structureType: ${(blueprint as { structureType?: string }).structureType ?? "?"}.`,
+          path: "/structureType",
+        },
       ],
+      warnings: [],
       notes: [],
     };
   }
@@ -66,8 +92,14 @@ export function validateBlueprint(
   return {
     ok: false,
     errors: [
-      `Unsupported schemaVersion: ${String(version)}. Supported values are 1 and 2.`,
+      {
+        severity: "error",
+        code: "unsupported_schema_version",
+        message: `Unsupported schemaVersion: ${String(version)}.`,
+        path: "/schemaVersion",
+      },
     ],
+    warnings: [],
     notes: [],
   };
 }

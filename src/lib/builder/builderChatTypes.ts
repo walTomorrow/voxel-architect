@@ -11,8 +11,14 @@ export const BUILDER_IMAGE_MIME_TYPES: readonly BuilderImageMimeType[] = [
   "image/webp",
 ] as const;
 
-/** Decoded image cap for dev testing (within ~2–4 MB band). */
+/** Decoded image cap per attachment (within ~2–4 MB band). */
 export const BUILDER_MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/** Max reference images per user message. */
+export const BUILDER_MAX_IMAGES_PER_MESSAGE = 4;
+
+/** JSON request body cap — room for up to 4 base64-encoded images. */
+export const BUILDER_MAX_REQUEST_BODY_BYTES = 28 * 1024 * 1024;
 
 /** Max conversation turns sent to Workers AI per request (dev guardrail). */
 export const BUILDER_MAX_CHAT_MESSAGES = 20;
@@ -38,10 +44,16 @@ export type BuilderImageAttachmentInput = {
 
 export type BuilderChatRequestBody = {
   readonly messages: readonly BuilderChatMessageInput[];
-  readonly attachment: BuilderImageAttachmentInput | null;
+  readonly attachments: readonly BuilderImageAttachmentInput[];
   readonly currentBlueprint: import("@/src/lib/blueprints/types/genericBuildingV2").GenericBuildingBlueprintV2 | null;
   readonly currentBlockCount?: number;
 };
+
+export function hasImageAttachments(
+  attachments: readonly BuilderImageAttachmentInput[] | null | undefined,
+): boolean {
+  return (attachments?.length ?? 0) > 0;
+}
 
 export type BuilderChatSuccessResponse = {
   readonly message: string;

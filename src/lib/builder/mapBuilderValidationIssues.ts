@@ -1,11 +1,16 @@
 import type {
   BlueprintValidationResultV2,
+  LandmarkBlueprintValidationResult,
   ValidationIssue,
 } from "@/src/lib/blueprints/types/validationResult";
 import type { BuilderValidationIssueView } from "@/src/lib/builder/builderToolTypes";
 
+type ValidationIssueBundle =
+  | Pick<BlueprintValidationResultV2, "errors" | "warnings" | "notes">
+  | Pick<LandmarkBlueprintValidationResult, "errors" | "warnings" | "notes">;
+
 export function mapBuilderValidationIssues(
-  result: BlueprintValidationResultV2,
+  result: ValidationIssueBundle,
 ): readonly BuilderValidationIssueView[] {
   const mapOne = (
     severity: BuilderValidationIssueView["severity"],

@@ -146,30 +146,33 @@ export function BuilderClient() {
   );
 
   const handleSendMessage = useCallback(
-    async (text: string, image: PendingImageReference | null) => {
+    async (text: string, images: readonly PendingImageReference[]) => {
       if (sendInFlightRef.current) return;
       const chatId = activeChatId;
+      const hasImages = images.length > 0;
 
       const content =
         text.trim() ||
-        (image ? "Please interpret this reference image for building intent." : "");
-      if (!content && !image) return;
+        (hasImages
+          ? images.length === 1
+            ? "Please interpret this reference image for building intent."
+            : "Please interpret these reference images for building intent."
+          : "");
+      if (!content && !hasImages) return;
 
       const userMsg: BuilderMessage = {
         id: newMessageId(),
         role: "user",
         content,
         createdAtLabel: "Just now",
-        attachments: image
-          ? [
-              {
-                id: newMessageId(),
-                type: "image",
-                source: "user_reference",
-                name: image.name,
-                previewUrl: image.previewUrl,
-              },
-            ]
+        attachments: hasImages
+          ? images.map((image) => ({
+              id: image.id,
+              type: "image" as const,
+              source: "user_reference" as const,
+              name: image.name,
+              previewUrl: image.previewUrl,
+            }))
           : undefined,
       };
 
@@ -186,23 +189,23 @@ export function BuilderClient() {
 
       const prepared = prepareMessagesForChatApi(toApiMessages(withUser));
       if (!prepared.ok) {
-        appendAssistantError(chatId, withUser, prepared.error, image != null);
+        appendAssistantError(chatId, withUser, prepared.error, hasImages);
         return;
       }
 
       sendInFlightRef.current = true;
       setIsLoading(true);
 
-      let attachmentPayload: {
+      let attachmentsPayload: {
         type: "image";
         source: "user_reference";
         mimeType: PendingImageReference["mimeType"];
         dataBase64: string;
         name: string;
-      } | null = null;
+      }[] = [];
 
       const assistantId = newMessageId();
-      const hasImage = image != null;
+      const hasImage = hasImages;
       const hasBlueprint = activeChat.activeBlueprint != null;
       const willRunRefine = shouldRunRefinementTool(content, hasBlueprint, hasImage);
       const willRunGenerate =
@@ -233,15 +236,16 @@ export function BuilderClient() {
       syncViews(chatId, withAssistant);
 
       try {
-        if (image) {
-          const dataBase64 = await fileToBase64(image.file);
-          attachmentPayload = {
-            type: "image",
-            source: "user_reference",
-            mimeType: image.mimeType,
-            dataBase64,
-            name: image.name,
-          };
+        if (hasImages) {
+          attachmentsPayload = await Promise.all(
+            images.map(async (image) => ({
+              type: "image" as const,
+              source: "user_reference" as const,
+              mimeType: image.mimeType,
+              dataBase64: await fileToBase64(image.file),
+              name: image.name,
+            })),
+          );
         }
 
         const res = await fetch("/api/builder/chat", {
@@ -249,7 +253,7 @@ export function BuilderClient() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             messages: prepared.messages,
-            attachment: attachmentPayload,
+            attachments: attachmentsPayload,
             currentBlueprint: activeChat.activeBlueprint,
             ...(activeChat.generatedStructure?.blocks.length != null
               ? { currentBlockCount: activeChat.generatedStructure.blocks.length }

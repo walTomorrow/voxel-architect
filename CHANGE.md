@@ -1,5 +1,32 @@
 # Change report — Builder semantic affordances
 
+## MVP landmark tower demo (2026-06-03)
+
+**Branch:** `feature/mvp-landmark-demo`
+
+- **Generic landmark tower pipeline:** `ReferenceBuildIntent` → `mapColorPaletteIntent` → `LandmarkTowerBlueprint` → `validateLandmarkTowerBlueprint` → `generateLandmarkTower` (deterministic emitter; no LLM voxel placement).
+- **Builder routing:** landmark tower prompts (`landmark tower`, `campus tower`, `Hoover Tower`, `Stanford tower`, etc.) route to `generateLandmarkTowerPreview`; refinements use deterministic `mapTowerRefinementPrompt` / `applyTowerBlueprintOperations` (not v2 `window_det` or generic LLM planner).
+- **Blueprint type:** `structureType: "landmark_tower"`, taller shaft (default 20 + base/crown → ~25 blocks), square/octagonal/circular_approx footprints, separate `LandmarkBlueprintValidationResult` (v2 `normalized` union unchanged).
+- **Demo-safe wording:** assistant summaries say approximate landmark tower inspired by reference, not exact reconstruction; palette mapping notes approximate colors.
+- **Tests:** `landmarkTowerDomain.test.ts` — validation, generation height, routing, palette mapping, Hoover vs generic shared pipeline, tower refinements.
+
+### Validation
+
+```bash
+pnpm exec tsc --noEmit
+pnpm test:generator
+pnpm run build
+```
+
+### Known limitations
+
+- Vision JSON extraction (Priority D) not implemented; text inference + `LANDMARK_TOWER_DEFAULT_INTENT` fallback only.
+- Octagonal/circular footprint polish is approximate (corner-cut shell).
+
+See `docs/plans/MVP_REFERENCE_TOWER_DEMO_PLAN.md`.
+
+---
+
 ## Semantic affordance finish — Option 3 (2026-06-03)
 
 **Branch:** `feature/builder-semantic-affordances`

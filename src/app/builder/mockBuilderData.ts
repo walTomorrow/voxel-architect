@@ -1,5 +1,5 @@
 import { DEFAULT_GENERIC_V2_PRESET_ID } from "@/src/lib/blueprints/sampleGenericBuildingBlueprintsV2";
-import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
+import type { BuilderBlueprint } from "@/src/lib/builder/builderToolTypes";
 import type { VoxelStructure } from "@/src/lib/voxel/types";
 
 export type BuilderMessageRole = "user" | "assistant" | "system";
@@ -34,7 +34,7 @@ export interface BuilderChat {
   /** In-memory generated preview; lost on refresh. */
   readonly generatedStructure: VoxelStructure | null;
   /** Current v2 blueprint used for refinement; lost on refresh. */
-  readonly activeBlueprint: GenericBuildingBlueprintV2 | null;
+  readonly activeBlueprint: BuilderBlueprint | null;
   /** Future: link to persisted blueprint record */
   readonly blueprintId?: string;
   readonly blueprintVersion?: number;

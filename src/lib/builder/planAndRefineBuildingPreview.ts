@@ -1,4 +1,6 @@
 import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
+import { isLandmarkTowerBlueprint } from "@/src/lib/blueprints/types/landmarkTower";
+import { planAndRefineLandmarkTowerPreview } from "@/src/lib/builder/landmarkTower/planAndRefineLandmarkTowerPreview";
 import {
   isBlueprintValidationResultV2,
   validateBlueprint,
@@ -80,8 +82,12 @@ type ResolvedPlan = {
   readonly rationaleSummary?: string;
 };
 
+type V2PlanRefineRequest = PlanRefineRequest & {
+  readonly blueprint: GenericBuildingBlueprintV2;
+};
+
 async function runLlmPlannerPath(
-  request: PlanRefineRequest,
+  request: V2PlanRefineRequest,
   events: BuilderActivityEvent[],
   options?: { skipSemanticClassEvent?: boolean; fallbackReason?: string },
 ): Promise<
@@ -151,7 +157,7 @@ async function runLlmPlannerPath(
 }
 
 async function resolveRefinementPlan(
-  request: PlanRefineRequest,
+  request: V2PlanRefineRequest,
   baseEvents: BuilderActivityEvent[],
 ): Promise<
   | { ok: true; plan: ResolvedPlan; events: BuilderActivityEvent[] }
@@ -427,12 +433,24 @@ function applyAndGenerate(
 export async function planAndRefineBuildingPreview(
   request: PlanRefineRequest,
 ): Promise<BuilderToolResult> {
+  if (isLandmarkTowerBlueprint(request.blueprint)) {
+    return planAndRefineLandmarkTowerPreview({
+      ...request,
+      blueprint: request.blueprint,
+    });
+  }
+
+  const v2Blueprint: GenericBuildingBlueprintV2 = request.blueprint;
+
   const baseEvents: BuilderActivityEvent[] = [
     { id: "parsed", label: "Parsed refinement request", status: "success" },
     { id: "blueprint", label: "Using current v2 blueprint", status: "success" },
   ];
 
-  const resolved = await resolveRefinementPlan(request, baseEvents);
+  const resolved = await resolveRefinementPlan(
+    { ...request, blueprint: v2Blueprint },
+    baseEvents,
+  );
   if (!resolved.ok) {
     const f = resolved.failure;
     return failResult(
@@ -447,5 +465,5 @@ export async function planAndRefineBuildingPreview(
     );
   }
 
-  return applyAndGenerate(request.blueprint, resolved.plan, resolved.events);
+  return applyAndGenerate(v2Blueprint, resolved.plan, resolved.events);
 }

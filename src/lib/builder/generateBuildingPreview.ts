@@ -11,6 +11,8 @@ import type {
   GenerateBuildingPreviewRequest,
 } from "@/src/lib/builder/builderToolTypes";
 import { mapBuilderValidationIssues } from "@/src/lib/builder/mapBuilderValidationIssues";
+import { generateLandmarkTowerPreview } from "@/src/lib/builder/landmarkTower/generateLandmarkTowerPreview";
+import { isLandmarkTowerRequest } from "@/src/lib/builder/reference/isLandmarkTowerRequest";
 import { resolvePresetFromPrompt } from "@/src/lib/builder/resolvePresetFromPrompt";
 
 function failResult(
@@ -33,10 +35,24 @@ function failResult(
  */
 export function generateBuildingPreview(
   request: GenerateBuildingPreviewRequest,
+  options?: {
+    hasImage?: boolean;
+    resolvedIntent?: import("@/src/lib/builder/reference/resolveReferenceBuildIntent").ResolveReferenceIntentResult;
+  },
 ): BuilderToolResult {
   const baseEvents: BuilderActivityEvent[] = [
     { id: "parsed", label: "Parsed building request", status: "success" },
   ];
+
+  const tryLandmarkTower =
+    isLandmarkTowerRequest(request.prompt) ||
+    (options?.hasImage === true &&
+      /\bbuild\s+something\s+like\b/i.test(request.prompt)) ||
+    (options?.hasImage === true &&
+      options.resolvedIntent?.intent.buildingFamily === "landmark_tower");
+  if (tryLandmarkTower) {
+    return generateLandmarkTowerPreview(request, options);
+  }
 
   if (request.mode === "modify_current") {
     return failResult(

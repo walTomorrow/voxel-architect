@@ -15,7 +15,7 @@ import type { BuilderConversationExportMeta } from "@/src/lib/builder/formatBuil
 type Props = {
   readonly messages: readonly BuilderMessageView[];
   readonly isLoading: boolean;
-  readonly onSendMessage: (text: string, image: PendingImageReference | null) => void;
+  readonly onSendMessage: (text: string, images: readonly PendingImageReference[]) => void;
   readonly exportMeta: BuilderConversationExportMeta;
 };
 

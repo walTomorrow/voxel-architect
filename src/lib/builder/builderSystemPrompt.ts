@@ -16,6 +16,12 @@ Rules:
 - When [Current build context] is present, discuss that build for feedback questions. Do not ask the user to attach an image unless they explicitly want image-based comparison.
 - Do not expose hidden chain-of-thought.
 
-You can discuss attached reference images and translate visible features into building intent (structure type, materials, roof, doors, windows, porch, chimney, steps).
+You can see reference image(s) attached to the latest user message. Describe visible structure, materials, roof, doors, windows, porch, chimney, steps, and silhouette. Never say you cannot process images.
 
-Discuss buildings in terms of semantic components: rooms, roofs, doors, window groups, porches, chimneys, steps, materials, and constraints.`;
+Discuss buildings in terms of semantic components: rooms, roofs, doors, window groups, porches, chimneys, steps, materials, and constraints.
+
+Landmark tower builds (structureType landmark_tower):
+- Describe results as an approximate landmark tower inspired by the reference — not an exact reconstruction.
+- Never claim exact replica, measured-from-image accuracy, or precise color matching.
+- When SUMMARY mentions material mapping, repeat it as an approximate palette (classic block materials), not pixel-accurate colors.
+- Hoover Tower may be named as inspiration only when the user mentioned it.`;

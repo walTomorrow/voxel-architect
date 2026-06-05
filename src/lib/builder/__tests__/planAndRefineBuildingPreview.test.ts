@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { clonePresetBlueprintV2 } from "@/src/lib/blueprints/clonePresetBlueprint";
 import { findPorch, findRootRoom } from "@/src/lib/builder/blueprintComponentIndex";
+import { assertGenericBuildingBlueprintV2 } from "@/src/lib/builder/builderToolTypes";
 import { planAndRefineBuildingPreview } from "@/src/lib/builder/planAndRefineBuildingPreview";
 import {
   planBlueprintOperationsWithLlm,
@@ -60,7 +61,9 @@ describe("planAndRefineBuildingPreview", () => {
     expect(result.ok).toBe(true);
     expect(result.plannerPath).toBe("deterministic");
     expect(llmCalled).toBe(false);
-    expect(findRootRoom(result.blueprint!)!.wallHeight).toBe(room.wallHeight + 1);
+    expect(findRootRoom(assertGenericBuildingBlueprintV2(result.blueprint))!.wallHeight).toBe(
+      room.wallHeight + 1,
+    );
     expect(result.activityEvents.some((e) => e.label === "Matched deterministic edit")).toBe(true);
   });
 
@@ -118,7 +121,9 @@ describe("planAndRefineBuildingPreview", () => {
     expect(result.ok).toBe(true);
     expect(result.plannerPath).toBe("deterministic");
     expect(llmCalled).toBe(false);
-    const updatedPorch = result.blueprint!.components.find((c) => c.id === porch.id);
+    const updatedPorch = assertGenericBuildingBlueprintV2(result.blueprint).components.find(
+      (c) => c.id === porch.id,
+    );
     expect(updatedPorch?.type).toBe("porch");
     if (updatedPorch?.type === "porch") {
       expect(updatedPorch.depth).toBe(porch.depth + 1);
@@ -197,7 +202,7 @@ describe("planAndRefineBuildingPreview", () => {
     });
     expect(wasLlmCalled()).toBe(false);
     expect(result.plannerPath).toBe("deterministic");
-    expect(result.blueprint?.materials.roof).toBe("oak_planks");
+    expect(assertGenericBuildingBlueprintV2(result.blueprint).materials.roof).toBe("oak_planks");
   });
 
   it("llm-only mode skips deterministic", async () => {

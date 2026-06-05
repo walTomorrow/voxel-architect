@@ -1,5 +1,5 @@
 const GENERATION_VERBS =
-  /\b(make|build|create|generate|design|construct|show me|give me)\b/i;
+  /\b(make|build|create|generate|design|construct|recreate|show me|give me)\b/i;
 
 /**
  * Server-controlled: run the deterministic builder tool only when the user text

@@ -1,10 +1,11 @@
 import type { BlockTypeId } from "@/src/lib/voxel/blocks/registry-types";
 import type { GenericBuildingBlueprintV2 } from "./types/genericBuildingV2";
+import type { LandmarkTowerBlueprint } from "./types/landmarkTower";
 
 /** Authoring-time material slot: classic pack local id (e.g. `cobblestone`). */
 export type ClassicMaterialKey = string;
 
-export type StructureType = "generic_building";
+export type StructureType = "generic_building" | "landmark_tower";
 
 export interface BlueprintMetadata {
   readonly name: string;
@@ -100,10 +101,11 @@ export interface GenericBuildingBlueprint {
   readonly constraints: BlueprintConstraints;
 }
 
-/** Authoring input accepted by `validateBlueprint()` (v1 and v2). */
+/** Authoring input accepted by `validateBlueprint()` (v1, v2 generic, landmark tower). */
 export type StructureBlueprint =
   | GenericBuildingBlueprint
-  | GenericBuildingBlueprintV2;
+  | GenericBuildingBlueprintV2
+  | LandmarkTowerBlueprint;
 
 /** Fully validated / normalized input for procedural generators (registry ids). */
 export type ResolvedStructure = ResolvedGenericBuilding;
@@ -184,3 +186,14 @@ export type {
   ValidationIssue,
   BlueprintValidationResultV2,
 } from "./types/validationResult";
+
+export type {
+  LandmarkTowerBlueprint,
+  LandmarkTowerMaterials,
+  LandmarkTowerParams,
+  TowerFootprintShape,
+  TowerCrownStyle,
+  TowerWindowTreatment,
+} from "./types/landmarkTower";
+
+export { isLandmarkTowerBlueprint } from "./types/landmarkTower";

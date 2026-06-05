@@ -1,5 +1,21 @@
 import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
+import {
+  isLandmarkTowerBlueprint,
+  type LandmarkTowerBlueprint,
+} from "@/src/lib/blueprints/types/landmarkTower";
 import type { VoxelBlock } from "@/src/lib/voxel/types";
+
+/** Active blueprint in builder chat (generic v2 or landmark tower). */
+export type BuilderBlueprint = GenericBuildingBlueprintV2 | LandmarkTowerBlueprint;
+
+export function assertGenericBuildingBlueprintV2(
+  blueprint: BuilderBlueprint | undefined,
+): GenericBuildingBlueprintV2 {
+  if (!blueprint || isLandmarkTowerBlueprint(blueprint)) {
+    throw new Error("Expected generic_building v2 blueprint.");
+  }
+  return blueprint;
+}
 
 export type BuilderToolMode =
   | "select_preset"
@@ -49,7 +65,7 @@ export type GenerateBuildingPreviewRequest = {
 
 export type RefineBuildingPreviewRequest = {
   readonly prompt: string;
-  readonly blueprint: GenericBuildingBlueprintV2;
+  readonly blueprint: BuilderBlueprint;
 };
 
 import type { PlannerRejectionCode } from "@/src/lib/builder/plannerRejection";
@@ -61,7 +77,7 @@ export type BuilderToolResult = {
   readonly ok: boolean;
   readonly toolKind: BuilderToolKind;
   readonly assistantSummary: string;
-  readonly blueprint?: GenericBuildingBlueprintV2;
+  readonly blueprint?: BuilderBlueprint;
   readonly presetId?: string;
   readonly presetLabel?: string;
   readonly schemaVersion: 2;

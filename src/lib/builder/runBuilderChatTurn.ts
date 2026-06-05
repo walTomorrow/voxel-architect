@@ -3,7 +3,8 @@ import type {
   BuilderChatMessageInput,
   BuilderImageAttachmentInput,
 } from "@/src/lib/builder/builderChatTypes";
-import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
+import { hasImageAttachments } from "@/src/lib/builder/builderChatTypes";
+import type { BuilderBlueprint } from "@/src/lib/builder/builderToolTypes";
 import type {
   BuilderChatToolSuccessResponse,
   BuilderToolResult,
@@ -11,6 +12,7 @@ import type {
 import { formatToolResultForModel } from "@/src/lib/builder/formatToolResultForModel";
 import { generateBuildingPreview } from "@/src/lib/builder/generateBuildingPreview";
 import { planAndRefineBuildingPreview } from "@/src/lib/builder/planAndRefineBuildingPreview";
+import { resolveReferenceBuildIntentAsync } from "@/src/lib/builder/reference/resolveReferenceBuildIntent";
 import { shouldRunGenerationTool } from "@/src/lib/builder/shouldRunGenerationTool";
 import {
   shouldRunRefinementTool,
@@ -29,23 +31,23 @@ export function lastUserMessageText(
 
 export function shouldUseRefinementJsonTurn(
   messages: readonly BuilderChatMessageInput[],
-  currentBlueprint: GenericBuildingBlueprintV2 | null,
-  attachment: BuilderImageAttachmentInput | null,
+  currentBlueprint: BuilderBlueprint | null,
+  attachments: readonly BuilderImageAttachmentInput[],
 ): boolean {
   return shouldRunRefinementTool(
     lastUserMessageText(messages),
     currentBlueprint != null,
-    attachment != null,
+    hasImageAttachments(attachments),
   );
 }
 
 export function shouldUseGenerationJsonTurn(
   messages: readonly BuilderChatMessageInput[],
-  currentBlueprint: GenericBuildingBlueprintV2 | null,
-  attachment: BuilderImageAttachmentInput | null,
+  currentBlueprint: BuilderBlueprint | null,
+  attachments: readonly BuilderImageAttachmentInput[],
 ): boolean {
   const text = lastUserMessageText(messages);
-  if (!shouldRunGenerationTool(text, attachment != null)) {
+  if (!shouldRunGenerationTool(text, hasImageAttachments(attachments))) {
     return false;
   }
   if (currentBlueprint == null) {
@@ -63,10 +65,7 @@ function augmentMessagesWithToolResult(
   if (last.role !== "user") {
     return [
       ...messages,
-      {
-        role: "user",
-        content: `[Server builder tool result]\n${toolNote}`,
-      },
+      { role: "user", content: `[Server builder tool result]\n${toolNote}` },
     ];
   }
   return [
@@ -80,7 +79,7 @@ function augmentMessagesWithToolResult(
 
 async function runToolChatTurn(
   messages: readonly BuilderChatMessageInput[],
-  attachment: BuilderImageAttachmentInput | null,
+  attachments: readonly BuilderImageAttachmentInput[],
   toolResult: BuilderToolResult,
 ): Promise<
   | { ok: true; payload: BuilderChatToolSuccessResponse }
@@ -90,41 +89,42 @@ async function runToolChatTurn(
     messages,
     formatToolResultForModel(toolResult),
   );
-
-  const aiResult = await callWorkersAiChat(augmented, attachment);
-  if (!aiResult.ok) {
-    return aiResult;
-  }
-
+  // Tool result already summarizes the build; narration is text-only.
+  const aiResult = await callWorkersAiChat(augmented, []);
+  if (!aiResult.ok) return aiResult;
   return {
     ok: true,
-    payload: {
-      message: aiResult.message,
-      model: aiResult.model,
-      toolResult,
-    },
+    payload: { message: aiResult.message, model: aiResult.model, toolResult },
   };
 }
 
 export async function runBuilderGenerationChatTurn(
   messages: readonly BuilderChatMessageInput[],
-  attachment: BuilderImageAttachmentInput | null,
+  attachments: readonly BuilderImageAttachmentInput[],
 ): Promise<
   | { ok: true; payload: BuilderChatToolSuccessResponse }
   | { ok: false; error: string; code: "CONFIG" | "UPSTREAM" | "LICENSE"; upstreamStatus?: number }
 > {
   const prompt = lastUserMessageText(messages);
-  const toolResult = generateBuildingPreview({
-    prompt,
-    mode: "create_from_prompt",
-  });
-  return runToolChatTurn(messages, attachment, toolResult);
+  const hasImage = hasImageAttachments(attachments);
+
+  // Vision extraction runs whenever images are present — the resolver handles
+  // fallback to text inference and the generic landmark default.
+  const resolvedIntent = hasImage
+    ? await resolveReferenceBuildIntentAsync(prompt, attachments)
+    : null;
+
+  const toolResult = generateBuildingPreview(
+    { prompt, mode: "create_from_prompt" },
+    { hasImage, resolvedIntent: resolvedIntent ?? undefined },
+  );
+  return runToolChatTurn(messages, attachments, toolResult);
 }
 
 export async function runBuilderRefinementChatTurn(
   messages: readonly BuilderChatMessageInput[],
-  attachment: BuilderImageAttachmentInput | null,
-  currentBlueprint: GenericBuildingBlueprintV2,
+  attachments: readonly BuilderImageAttachmentInput[],
+  currentBlueprint: BuilderBlueprint,
 ): Promise<
   | { ok: true; payload: BuilderChatToolSuccessResponse }
   | { ok: false; error: string; code: "CONFIG" | "UPSTREAM" | "LICENSE"; upstreamStatus?: number }
@@ -135,5 +135,5 @@ export async function runBuilderRefinementChatTurn(
     blueprint: currentBlueprint,
     plannerMode: "auto",
   });
-  return runToolChatTurn(messages, attachment, toolResult);
+  return runToolChatTurn(messages, attachments, toolResult);
 }

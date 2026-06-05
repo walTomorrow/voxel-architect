@@ -1,6 +1,10 @@
 import { friendlyWorkersAiError } from "@/src/lib/builder/builderChatGuardrails";
 import { buildBuilderSystemPromptWithContext } from "@/src/lib/builder/augmentChatWithBuildContext";
 import {
+  buildWorkersAiVisionMessages,
+  primaryImageDataUrl,
+} from "@/src/lib/builder/buildWorkersAiVisionMessages";
+import {
   encodeBuilderChatSse,
   transformWorkersAiStreamToBuilderSse,
 } from "@/src/lib/builder/workersAiSse";
@@ -14,6 +18,7 @@ import { applyChatOnlyResponseSafety } from "@/src/lib/builder/applyChatOnlyResp
 
 const DEFAULT_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 const MAX_TOKENS = 1024;
+const VISION_MAX_TOKENS = 2048;
 
 export type BuilderChatAiContext = {
   readonly currentBlueprint?: GenericBuildingBlueprintV2 | null;
@@ -89,23 +94,34 @@ function buildChatMessages(
 
 export function buildRequestBody(
   history: readonly BuilderChatMessageInput[],
-  attachment: BuilderImageAttachmentInput | null,
+  attachments: readonly BuilderImageAttachmentInput[],
   stream: boolean,
   context?: BuilderChatAiContext,
 ): Record<string, unknown> {
   const messages = buildChatMessages(history, context);
-  const body: Record<string, unknown> = { messages, max_tokens: MAX_TOKENS, stream };
-  if (attachment) {
-    body.image = `data:${attachment.mimeType};base64,${attachment.dataBase64}`;
-  }
-  return body;
+  return { messages, max_tokens: MAX_TOKENS, stream };
 }
 
-/** Text-only requests use streaming; image requests use sync (vision streaming not relied on). */
+export function buildVisionRequestBody(
+  history: readonly BuilderChatMessageInput[],
+  attachments: readonly BuilderImageAttachmentInput[],
+  context?: BuilderChatAiContext,
+  options?: { maxTokens?: number; temperature?: number },
+): Record<string, unknown> {
+  const image = primaryImageDataUrl(attachments);
+  return {
+    messages: buildWorkersAiVisionMessages(history, attachments, context),
+    ...(image ? { image } : {}),
+    max_tokens: options?.maxTokens ?? VISION_MAX_TOKENS,
+    temperature: options?.temperature ?? 0.4,
+  };
+}
+
+/** Text-only requests use streaming; image requests use sync vision completions. */
 export function shouldStreamBuilderChat(
-  attachment: BuilderImageAttachmentInput | null,
+  attachments: readonly BuilderImageAttachmentInput[],
 ): boolean {
-  return attachment == null;
+  return attachments.length === 0;
 }
 
 function extractAssistantText(json: CloudflareAiEnvelope, rawBodyLength = 0): string | null {
@@ -277,7 +293,7 @@ export async function streamWorkersAiChat(
   const config = getWorkersAiConfig();
   if (!config) return configError();
 
-  const body = buildRequestBody(history, null, true, context);
+  const body = buildRequestBody(history, [], true, context);
   const fetched = await fetchWorkersAi(config, body);
   if (!("response" in fetched)) return fetched;
   const response = fetched.response;
@@ -373,13 +389,18 @@ export async function streamWorkersAiChat(
 
 export async function callWorkersAiChat(
   history: readonly BuilderChatMessageInput[],
-  attachment: BuilderImageAttachmentInput | null,
+  attachments: readonly BuilderImageAttachmentInput[],
   context?: BuilderChatAiContext,
 ): Promise<CallWorkersAiResult> {
   const config = getWorkersAiConfig();
   if (!config) return configError();
 
-  const body = buildRequestBody(history, attachment, false, context);
+  if (attachments.length > 0) {
+    const body = buildVisionRequestBody(history, attachments, context);
+    return runWorkersAiSync(config, body);
+  }
+
+  const body = buildRequestBody(history, attachments, false, context);
   return runWorkersAiSync(config, body);
 }
 

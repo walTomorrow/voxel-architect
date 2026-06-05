@@ -85,6 +85,17 @@ export function extractWorkersAiResponseText(
     /* found top-level response */
   }
 
+  if (!output.text && isRecord(envelope) && Array.isArray(envelope.choices)) {
+    const choice0 = envelope.choices[0];
+    if (isRecord(choice0)) {
+      const message = choice0.message;
+      if (isRecord(message)) {
+        attempt("envelope.choices[0].message.content", message.content);
+      }
+      if (!output.text) attempt("envelope.choices[0].text", choice0.text);
+    }
+  }
+
   const result: unknown = isRecord(envelope) ? envelope.result : undefined;
 
   if (!output.text && typeof result === "string") {

@@ -1,4 +1,4 @@
-import type { GenericBuildingBlueprintV2 } from "@/src/lib/blueprints/types/genericBuildingV2";
+import type { BuilderBlueprint } from "@/src/lib/builder/builderToolTypes";
 import type {
   AddableComponentKind,
   ApplyableBlueprintOperationV2,
@@ -72,7 +72,7 @@ export type PlannerResult =
 
 export type PlanRefineRequest = {
   readonly prompt: string;
-  readonly blueprint: GenericBuildingBlueprintV2;
+  readonly blueprint: BuilderBlueprint;
   readonly plannerMode?: PlannerMode;
   readonly presetId?: string;
 };

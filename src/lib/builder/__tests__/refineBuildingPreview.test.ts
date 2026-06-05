@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { clonePresetBlueprintV2 } from "@/src/lib/blueprints/clonePresetBlueprint";
 import { findRootRoom } from "@/src/lib/builder/blueprintComponentIndex";
+import { assertGenericBuildingBlueprintV2 } from "@/src/lib/builder/builderToolTypes";
 import { planAndRefineBuildingPreview } from "@/src/lib/builder/planAndRefineBuildingPreview";
 import { refineBuildingPreview } from "@/src/lib/builder/refineBuildingPreview";
 import { setLlmPlannerForTests } from "@/src/lib/builder/planBlueprintOperationsWithLlm";
@@ -19,7 +20,7 @@ describe("refineBuildingPreview", () => {
     expect(result.toolKind).toBe("refine");
     expect(result.blockCount).toBeGreaterThan(0);
     expect(result.blueprint).toBeDefined();
-    const updatedRoom = findRootRoom(result.blueprint!)!;
+    const updatedRoom = findRootRoom(assertGenericBuildingBlueprintV2(result.blueprint))!;
     expect(updatedRoom.wallHeight).toBe(room.wallHeight + 1);
   });
 

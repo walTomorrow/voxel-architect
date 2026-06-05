@@ -8,14 +8,12 @@ import {
 } from "@/src/lib/builder/callWorkersAiChat";
 
 import type {
-
   BuilderChatErrorResponse,
-
   BuilderChatSuccessResponse,
-
   BuilderChatWithToolSuccessResponse,
-
 } from "@/src/lib/builder/builderChatTypes";
+
+import { BUILDER_MAX_REQUEST_BODY_BYTES } from "@/src/lib/builder/builderChatTypes";
 
 import { parseBuilderChatRequestBody } from "@/src/lib/builder/validateChatRequest";
 
@@ -31,9 +29,7 @@ import {
 
 } from "@/src/lib/builder/runBuilderChatTurn";
 
-
-
-const MAX_BODY_BYTES = 4 * 1024 * 1024;
+const MAX_BODY_BYTES = BUILDER_MAX_REQUEST_BODY_BYTES;
 
 
 
@@ -79,7 +75,7 @@ export async function POST(request: Request): Promise<Response> {
 
 
 
-  const { messages, attachment, currentBlueprint, currentBlockCount } = parsed.data;
+  const { messages, attachments, currentBlueprint, currentBlockCount } = parsed.data;
 
   const chatAiContext = {
     currentBlueprint,
@@ -90,7 +86,7 @@ export async function POST(request: Request): Promise<Response> {
 
   if (
 
-    shouldUseRefinementJsonTurn(messages, currentBlueprint, attachment) &&
+    shouldUseRefinementJsonTurn(messages, currentBlueprint, attachments) &&
 
     currentBlueprint != null
 
@@ -100,7 +96,7 @@ export async function POST(request: Request): Promise<Response> {
 
       messages,
 
-      attachment,
+      attachments,
 
       currentBlueprint,
 
@@ -134,9 +130,9 @@ export async function POST(request: Request): Promise<Response> {
 
 
 
-  if (shouldUseGenerationJsonTurn(messages, currentBlueprint, attachment)) {
+  if (shouldUseGenerationJsonTurn(messages, currentBlueprint, attachments)) {
 
-    const turn = await runBuilderGenerationChatTurn(messages, attachment);
+    const turn = await runBuilderGenerationChatTurn(messages, attachments);
 
     if (!turn.ok) {
 
@@ -166,7 +162,7 @@ export async function POST(request: Request): Promise<Response> {
 
 
 
-  if (shouldStreamBuilderChat(attachment)) {
+  if (shouldStreamBuilderChat(attachments)) {
 
     const streamResult = await streamWorkersAiChat(messages, chatAiContext);
 
@@ -196,7 +192,7 @@ export async function POST(request: Request): Promise<Response> {
 
 
 
-  const result = await callWorkersAiChat(messages, attachment, chatAiContext);
+  const result = await callWorkersAiChat(messages, attachments, chatAiContext);
 
   if (!result.ok) {
 

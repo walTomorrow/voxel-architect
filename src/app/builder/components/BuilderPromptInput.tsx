@@ -4,10 +4,12 @@ import { useRef, useState } from "react";
 import {
   BUILDER_IMAGE_MIME_TYPES,
   BUILDER_MAX_IMAGE_BYTES,
+  BUILDER_MAX_IMAGES_PER_MESSAGE,
   type BuilderImageMimeType,
 } from "@/src/lib/builder/builderChatTypes";
 
 export type PendingImageReference = {
+  readonly id: string;
   readonly file: File;
   readonly previewUrl: string;
   readonly mimeType: BuilderImageMimeType;
@@ -16,7 +18,7 @@ export type PendingImageReference = {
 
 type Props = {
   readonly disabled?: boolean;
-  readonly onSend: (text: string, image: PendingImageReference | null) => void;
+  readonly onSend: (text: string, images: readonly PendingImageReference[]) => void;
 };
 
 function fileToMimeType(file: File): BuilderImageMimeType | null {
@@ -30,22 +32,40 @@ function defaultPastedFileName(mimeType: BuilderImageMimeType): string {
   return "pasted-reference.webp";
 }
 
+function newImageId(): string {
+  return `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 const MAX_IMAGE_MB = Math.round(BUILDER_MAX_IMAGE_BYTES / (1024 * 1024));
 
 export function BuilderPromptInput({ disabled, onSend }: Props) {
   const [value, setValue] = useState("");
-  const [pendingImage, setPendingImage] = useState<PendingImageReference | null>(null);
+  const [pendingImages, setPendingImages] = useState<PendingImageReference[]>([]);
   const [pickError, setPickError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  function clearPendingImage() {
-    if (pendingImage?.previewUrl) {
-      URL.revokeObjectURL(pendingImage.previewUrl);
-    }
-    setPendingImage(null);
+  function revokePreview(url: string) {
+    URL.revokeObjectURL(url);
   }
 
-  function attachImageFile(file: File, name?: string) {
+  function removePendingImage(id: string) {
+    setPendingImages((prev) => {
+      const target = prev.find((img) => img.id === id);
+      if (target?.previewUrl) revokePreview(target.previewUrl);
+      return prev.filter((img) => img.id !== id);
+    });
+  }
+
+  function clearPendingImages() {
+    setPendingImages((prev) => {
+      for (const img of prev) {
+        if (img.previewUrl) revokePreview(img.previewUrl);
+      }
+      return [];
+    });
+  }
+
+  function attachImageFile(file: File, name?: string): boolean {
     setPickError(null);
     const mimeType = fileToMimeType(file);
     if (!mimeType) {
@@ -53,24 +73,37 @@ export function BuilderPromptInput({ disabled, onSend }: Props) {
       return false;
     }
     if (file.size > BUILDER_MAX_IMAGE_BYTES) {
-      setPickError(`Image must be under ${MAX_IMAGE_MB} MB.`);
+      setPickError(`Each image must be under ${MAX_IMAGE_MB} MB.`);
       return false;
     }
 
-    clearPendingImage();
-    setPendingImage({
-      file,
-      mimeType,
-      name: name?.trim() || file.name || defaultPastedFileName(mimeType),
-      previewUrl: URL.createObjectURL(file),
+    setPendingImages((prev) => {
+      if (prev.length >= BUILDER_MAX_IMAGES_PER_MESSAGE) {
+        setPickError(`You can attach up to ${BUILDER_MAX_IMAGES_PER_MESSAGE} images per message.`);
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          id: newImageId(),
+          file,
+          mimeType,
+          name: name?.trim() || file.name || defaultPastedFileName(mimeType),
+          previewUrl: URL.createObjectURL(file),
+        },
+      ];
     });
     return true;
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const files = e.target.files;
     e.target.value = "";
-    if (file) attachImageFile(file);
+    if (!files?.length) return;
+    for (const file of Array.from(files)) {
+      if (pendingImages.length >= BUILDER_MAX_IMAGES_PER_MESSAGE) break;
+      attachImageFile(file);
+    }
   }
 
   function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
@@ -95,37 +128,45 @@ export function BuilderPromptInput({ disabled, onSend }: Props) {
 
   function submit() {
     const trimmed = value.trim();
-    if ((!trimmed && !pendingImage) || disabled) return;
-    onSend(trimmed, pendingImage);
+    if ((!trimmed && pendingImages.length === 0) || disabled) return;
+    onSend(trimmed, pendingImages);
     setValue("");
-    clearPendingImage();
+    clearPendingImages();
     setPickError(null);
   }
 
-  const canSend = !disabled && (value.trim().length > 0 || pendingImage != null);
+  const canSend = !disabled && (value.trim().length > 0 || pendingImages.length > 0);
+  const atImageCap = pendingImages.length >= BUILDER_MAX_IMAGES_PER_MESSAGE;
 
   return (
     <div className="shrink-0 border-t border-zinc-800/90 bg-zinc-950/95 p-3">
-      {pendingImage ? (
-        <div className="mb-2 flex items-center gap-2 rounded-lg border border-zinc-700/70 bg-zinc-900/80 p-2">
-          {/* eslint-disable-next-line @next/next/no-img-element -- blob preview URL */}
-          <img
-            src={pendingImage.previewUrl}
-            alt=""
-            className="h-12 w-12 shrink-0 rounded-md object-cover"
-          />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[11px] text-zinc-300">{pendingImage.name}</p>
-            <p className="text-[10px] text-zinc-600">Reference image · not stored</p>
-          </div>
-          <button
-            type="button"
-            disabled={disabled}
-            className="shrink-0 rounded-md px-2 py-1 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-            onClick={clearPendingImage}
-          >
-            Remove
-          </button>
+      {pendingImages.length > 0 ? (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {pendingImages.map((img) => (
+            <div
+              key={img.id}
+              className="flex items-center gap-2 rounded-lg border border-zinc-700/70 bg-zinc-900/80 p-2"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- blob preview URL */}
+              <img
+                src={img.previewUrl}
+                alt=""
+                className="h-12 w-12 shrink-0 rounded-md object-cover"
+              />
+              <div className="min-w-0 max-w-[8rem]">
+                <p className="truncate text-[11px] text-zinc-300">{img.name}</p>
+                <p className="text-[10px] text-zinc-600">Reference</p>
+              </div>
+              <button
+                type="button"
+                disabled={disabled}
+                className="shrink-0 rounded-md px-2 py-1 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+                onClick={() => removePendingImage(img.id)}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
         </div>
       ) : null}
       {pickError ? (
@@ -136,7 +177,7 @@ export function BuilderPromptInput({ disabled, onSend }: Props) {
           rows={3}
           value={value}
           disabled={disabled}
-          placeholder="Describe your building or paste / attach a reference image…"
+          placeholder="Describe your building or paste / attach reference images…"
           className="min-h-[5.5rem] w-full resize-y rounded-xl border border-zinc-700/80 bg-zinc-900/90 px-3 py-2.5 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/30 disabled:opacity-50"
           onChange={(e) => setValue(e.target.value)}
           onPaste={handlePaste}
@@ -152,21 +193,22 @@ export function BuilderPromptInput({ disabled, onSend }: Props) {
             ref={fileInputRef}
             type="file"
             accept="image/png,image/jpeg,image/webp"
+            multiple
             className="hidden"
-            disabled={disabled}
+            disabled={disabled || atImageCap}
             onChange={handleFileChange}
           />
           <button
             type="button"
-            disabled={disabled || pendingImage != null}
+            disabled={disabled || atImageCap}
             title={
-              pendingImage
-                ? "One image per message — remove the current image first"
-                : "Attach reference image (PNG, JPEG, WebP)"
+              atImageCap
+                ? `Maximum ${BUILDER_MAX_IMAGES_PER_MESSAGE} images per message`
+                : "Attach reference images (PNG, JPEG, WebP)"
             }
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-700/80 bg-zinc-900/80 text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200 disabled:opacity-40"
             onClick={() => fileInputRef.current?.click()}
-            aria-label="Attach reference image"
+            aria-label="Attach reference images"
           >
             <svg
               className="h-4 w-4"
@@ -184,7 +226,8 @@ export function BuilderPromptInput({ disabled, onSend }: Props) {
             </svg>
           </button>
           <p className="min-w-0 flex-1 text-[10px] leading-snug text-zinc-600">
-            Paste or attach one image · PNG, JPEG, WebP · max {MAX_IMAGE_MB} MB
+            Up to {BUILDER_MAX_IMAGES_PER_MESSAGE} images · PNG, JPEG, WebP · max {MAX_IMAGE_MB} MB
+            each
           </p>
           <button
             type="button"
